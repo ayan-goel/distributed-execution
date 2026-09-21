@@ -19,6 +19,8 @@ mod files;
 pub use asynchronous::AsyncJournal;
 mod session;
 pub use session::StoredSession;
+mod uploads;
+pub use uploads::OutputUpload;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum JournalError {
@@ -82,6 +84,8 @@ struct Record {
     completion: Option<CompleteAttemptRequest>,
     #[prost(message, optional, tag = "6")]
     completion_response: Option<CompleteAttemptResponse>,
+    #[prost(message, repeated, tag = "7")]
+    outputs: Vec<OutputUpload>,
 }
 
 pub struct RecoveredAttempt(Record);
@@ -112,6 +116,9 @@ impl RecoveredAttempt {
     }
     pub fn completion_response(&self) -> Option<&CompleteAttemptResponse> {
         self.0.completion_response.as_ref()
+    }
+    pub fn outputs(&self) -> &[OutputUpload] {
+        &self.0.outputs
     }
 }
 
@@ -198,6 +205,7 @@ impl Journal {
             phase_reports: Vec::new(),
             completion: None,
             completion_response: None,
+            outputs: Vec::new(),
         };
         record.validate(&self.worker_id, &a.attempt_id)?;
         if let Some(saved) = self.load_attempt(&a.attempt_id)? {
@@ -439,6 +447,7 @@ impl Record {
             previous = r.phase;
         }
         self.validate_completion()?;
+        self.validate_outputs()?;
         Ok(())
     }
 

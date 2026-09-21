@@ -1494,3 +1494,15 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   component path is not yet connected to live acquisition/execution: durable upload
   intent/version recovery, authority-aware orchestration, multipart, and remaining
   v0.1 features and release gates are still required.
+
+### D11u: Persist output upload declarations and exact-version evidence
+
+- Added journal records for declared output uploads, stable grant scope, exact
+  finalization requests, and matching artifact acknowledgements. Reopening retains
+  request IDs and evidence; conflicting retries are rejected. Signed capabilities
+  are omitted from disk, and journal/RPC paths share object validation.
+- Added reopen and mutation-rejection tests, including asynchronous access and
+  capability omission. `make test lint smoke` passed before committing this saved
+  slice at the user's request. Updated `docs/worker-journal.md` with its contract.
+- The broader build remains paused. Upload-specific process-death testing and
+  live transfer/execution coordination remain unfinished.

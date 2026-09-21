@@ -34,6 +34,27 @@ returning it. Repeated calls, including after reopening or reaching a later phas
 return the original request. The caller must retry that request unchanged after an
 uncertain RPC response. Container and exit evidence cannot be rebound or rewritten.
 
+## Durable output upload evidence (D11u)
+
+The journal now stores one upload declaration per declared output, followed by its
+stable upload ID/key, exact finalization request, and validated artifact reply.
+`prepare_output` and `prepare_output_finalization` generate and sync request UUIDs
+before returning them. Identical retries reuse those requests; changed content,
+scope, object versions, or acknowledgement identities conflict. Signed URLs and
+headers are never persisted. New upload progress requires local FINALIZING evidence
+and is sealed once a completion request is stored; exact retries remain readable.
+
+The records are revalidated against the assignment and shared RPC validators on
+every load. Existing record and directory byte limits still apply, with at most
+64 output records. New binaries read records without the optional upload field;
+older binaries reject records containing it rather than silently dropping evidence.
+
+Tests cover reopening pending and acknowledged evidence, asynchronous journal
+access, rejected mutations, and omission of signed capabilities from saved files.
+This is storage support only: the live transfer coordinator, upload-specific
+process-death tests, and execution integration remain unfinished. Recovered records
+do not restore a lease or authorize publication under an old session.
+
 ## Pending completion evidence (D11o)
 
 `persist_completion` writes the entire `CompleteAttemptRequest` through the same

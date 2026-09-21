@@ -23,6 +23,7 @@ mod uploads;
 pub(crate) use completion::validate_request as validate_completion_request;
 pub(crate) use completion::validate_response as validate_completion_response;
 pub use completion::CompletionStatus;
+pub(crate) use uploads::{scoped_key, validate_artifact, validate_finalization};
 pub(crate) use uploads::{valid_version, validate_create, validate_grant};
 mod phase;
 pub use completion_payload::completion_digest;

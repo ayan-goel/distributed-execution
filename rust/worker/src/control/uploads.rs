@@ -28,22 +28,7 @@ impl ControlClient {
         &mut self,
         request: &FinalizeUploadRequest,
     ) -> Result<FinalizeUploadResponse, ClientError> {
-        let a = request
-            .authority
-            .as_ref()
-            .filter(|a| valid_authority(a))
-            .ok_or(ClientError::Configuration)?;
-        let o = request.object.as_ref().ok_or(ClientError::Configuration)?;
-        if !canonical_uuid(&request.request_id)
-            || !canonical_uuid(&request.upload_id)
-            || !request.parts.is_empty()
-            || !scoped_key(&o.key, a, &request.upload_id)
-            || o.size_bytes > 64 << 20
-            || !lower_hash(&o.sha256)
-            || !valid_version(&o.version_id)
-        {
-            return Err(ClientError::Configuration);
-        }
+        validate_finalization(request)?;
         let response = tokio::time::timeout(
             RPC_TIMEOUT,
             self.inner.finalize_upload(rpc_request(request.clone())),
@@ -54,11 +39,39 @@ impl ControlClient {
         .into_inner();
         // A reply acknowledges only this immutable object version. It grants no
         // new execution authority and does not mean that a job result is accepted.
-        if !canonical_uuid(&response.artifact_id) || response.object != request.object {
-            return Err(ClientError::Response);
-        }
+        validate_artifact(request, &response)?;
         Ok(response)
     }
+}
+
+pub(crate) fn validate_finalization(request: &FinalizeUploadRequest) -> Result<(), ClientError> {
+    let a = request
+        .authority
+        .as_ref()
+        .filter(|a| valid_authority(a))
+        .ok_or(ClientError::Configuration)?;
+    let o = request.object.as_ref().ok_or(ClientError::Configuration)?;
+    if !canonical_uuid(&request.request_id)
+        || !canonical_uuid(&request.upload_id)
+        || !request.parts.is_empty()
+        || !scoped_key(&o.key, a, &request.upload_id)
+        || o.size_bytes > 64 << 20
+        || !lower_hash(&o.sha256)
+        || !valid_version(&o.version_id)
+    {
+        return Err(ClientError::Configuration);
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_artifact(
+    request: &FinalizeUploadRequest,
+    response: &FinalizeUploadResponse,
+) -> Result<(), ClientError> {
+    if !canonical_uuid(&response.artifact_id) || response.object != request.object {
+        return Err(ClientError::Response);
+    }
+    Ok(())
 }
 
 fn valid_authority(a: &AttemptAuthority) -> bool {
@@ -90,7 +103,7 @@ pub(crate) fn validate_create(r: &CreateUploadRequest) -> Result<(), ClientError
     }
     Ok(())
 }
-fn scoped_key(key: &str, a: &AttemptAuthority, upload: &str) -> bool {
+pub(crate) fn scoped_key(key: &str, a: &AttemptAuthority, upload: &str) -> bool {
     let parts: Vec<_> = key.split('/').collect();
     parts.len() == 8
         && parts[0] == "projects"
