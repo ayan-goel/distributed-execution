@@ -16,6 +16,8 @@ use std::{
 
 const RPC_TIMEOUT: Duration = Duration::from_secs(5);
 mod config;
+mod recovery;
+pub use recovery::{RecoveredContainer, RecoveryRuntime};
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum RuntimeError {
@@ -27,6 +29,7 @@ pub enum RuntimeError {
     Transport,
     Daemon(u16),
     Terminal,
+    InventoryLimit,
 }
 impl fmt::Display for RuntimeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

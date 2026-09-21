@@ -26,7 +26,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D07 acquisition | D03,D06 | Atomic assignment/reservations; concurrent quota/capacity races; acquisition replay | store, RPC, and Rust client gates passed; production agent loop pending |
 | D08 Docker adapter | D04 | Real bounded create/start/inspect/stop; ambiguous create reconciles one identity | spec, cached-image lifecycle, and phase store/RPC/Rust client gates passed; image staging and strict workspace integration pending |
 | D09 leases | D06,D07 | Fresh DB-time expiry checks; delayed grants; local monotonic deadline enforcement | local deadline, store, RPC, and Rust renewal client gates passed; production loop, reaper, and supervisor pending |
-| D10 worker recovery | D08,D09 | Durable journal; agent kill/restart stops old containers before new capacity | attempt journal gates passed; session persistence and runtime recovery pending |
+| D10 worker recovery | D08,D09 | Durable journal; agent kill/restart stops old containers before new capacity | attempt journal and runtime discovery/cleanup gates passed; session persistence and agent recovery pending |
 | D11 artifacts | D03,D04 | Scoped grants; verified exact versions; stale publication rejection | pending |
 | D12 first real job | D05–D11 | CLI submit → gRPC → Docker → verified output → CLI download | pending |
 | D13 loss/retry | D09,D12 | Reaper/reconciliation; recorded retry; backoff/deadlines; nonretryable failure | pending |
@@ -711,3 +711,31 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   verification, and limitations in `docs/worker-journal.md`. These tests establish
   process/error recovery, not power-loss durability. Session persistence, production
   supervision, old-container cleanup, completion retention, and full v0.1 remain open.
+
+### D10b: runtime discovery and old-session cleanup
+
+- Added bounded worker-label inventory with fresh full-ID inspection, stable ordering,
+  exact ownership/image/spec/profile validation, and a distinct cleanup-only handle.
+  More than 1024 entries, duplicates, malformed metadata, and daemon failures cannot
+  become a complete snapshot. Listing plus inspection has one five-second deadline.
+- Added idempotent previous-session forced removal after ownership revalidation;
+  current-session containers are refused. Forced removal handles paused executions
+  without resuming them, disables volume deletion, and verifies actual absence.
+  Callers must establish server fencing before using this path and repeat inventory
+  before reporting reconciliation complete.
+- The acceptance test first failed because the recovery API did not exist. Real
+  Docker tests now discover and remove paused, created, and exited old containers
+  through a fresh client while preserving current-session and foreign-worker work.
+  Fixtures use isolated job/worker identities and retain the existing narrow cleanup.
+- Unix-socket fault tests cover truncated/duplicate/foreign inventory, ten malformed
+  identity cases, changed ownership, missing containers, uncertain delete replies,
+  false delete success, and stalled discovery. An initial parallel test exposed
+  timestamp collisions in fixture names; an atomic counter removes that ambiguity.
+- `make test lint smoke`, `sh scripts/test-runtime.sh`, the final focused native
+  recovery/clippy gate, and `sh scripts/test-worker-linux.sh` passed. Checked the
+  pinned Bollard query source for list limits/filtering and forced-delete semantics.
+  Documented caller preconditions, bounds, retention, and evidence in
+  `docs/docker-runtime.md`.
+- This verifies the runtime recovery component, not the full agent restart protocol.
+  Session persistence, registration/heartbeat orchestration, supervisor integration,
+  storage/publication, and the remaining v0.1 acceptance gates stay open.

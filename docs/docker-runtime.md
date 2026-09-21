@@ -98,6 +98,44 @@ add a separate hard byte limit to its JSON metadata responses or individual fram
 OOM classification reads Docker's `OOMKilled` state. Exit code 137 alone is not
 sufficient: an explicit SIGKILL can produce the same exit code without an OOM.
 
+## Startup inventory and fenced-session cleanup
+
+`RecoveryRuntime::inventory(worker_id)` discovers this worker's containers directly
+from Docker, including created, paused, and exited containers. It does not require
+the journal to have received the container ID before an earlier process died.
+Discovery filters by the exact worker label, requests at most 1025 summaries, and
+rejects more than 1024 instead of treating truncation as a complete snapshot. One
+five-second deadline covers listing and all inspections. Returned snapshots are
+sorted by full container ID; duplicate IDs, malformed metadata, and errors fail
+the entire call. Only an explicit inspect 404 means a listed container disappeared.
+
+Each container is inspected by full ID. Required labels bind worker, session, job,
+attempt, generation, spec hash, and the supported scratch profile; the deterministic
+container name and local image ID are checked too. Unexpected same-worker metadata
+requires operator investigation rather than guessing ownership. Labels authenticate
+ownership only within the trusted local Docker boundary: a user with Docker/root
+access can forge them and is already able to control workloads.
+
+The result is a `RecoveredContainer`, distinct from a launchable `ContainerHandle`.
+It exposes identity and observed status but cannot be passed to `Runtime::start`.
+This preserves the v0.1 policy of stopping old executions rather than adopting them.
+
+After successful registration has fenced the previous incarnation, the caller may
+use `remove_previous(container, current_session)`. It refuses the current session,
+re-inspects the full ID, and compares the saved identity/image/spec/profile before
+mutation. It forcibly removes the old container, including paused workloads, without
+unpausing it. Each daemon operation has a five-second bound. Success requires a
+404 on the full ID from removal or subsequent inspection. A lost reply is uncertain;
+retrying the same handle rechecks reality and treats absence idempotently.
+
+Volume deletion is disabled; bind-mounted outputs, the attempt journal, and separate
+volume data remain for their retention workflow. Container-local logs disappear on
+removal, so accepted-result/log retention must not use this fenced-session path.
+Mutable resource limits are not part of cleanup authorization. This API neither
+registers a session nor certifies server fencing: its caller must establish that
+precondition and repeat inventory after cleanup before reporting reconciliation.
+It must continue heartbeats with reconciliation incomplete during a long cleanup.
+
 ## Verification
 
 `sh scripts/test-runtime.sh` creates a unique workspace and job identity, uses the
@@ -124,9 +162,22 @@ Observed on Docker Desktop 28.2.2, Linux arm64, using the macOS Rust client:
   recovered one ID with one create. Concurrent start replay initially exposed a
   duplicate-start race; the serialization regression test now passes.
 - A stalled image-inspection request ended at its short local authority deadline.
+- A fresh runtime client, without creation handles or journal container bindings,
+  discovered paused, never-started, and exited old-session containers. It removed
+  those containers, rejected current-session cleanup, and left both current-session
+  and foreign-worker workloads running. Repeated removal was idempotent.
+- Recovery fault tests reject overflow, duplicate IDs, foreign/malformed labels,
+  changed ownership between discovery and cleanup, and a stalled inventory call.
+  A lost delete reply is retried safely; a daemon reporting deletion while inspection
+  still finds the container does not produce success. Native and Linux tests cover
+  these cases. Parallel fixture creation uses a counter to avoid clock-resolution
+  collisions observed during the first fault-test run.
 
 These checks do not establish independent Linux worker hosts, strict scratch quotas,
 durable agent recovery, live lease supervision, or the complete v0.1 execution flow.
+The new recovery test replaces the runtime client, not the actual worker process.
+Durable incarnation state and the agent's registration/cleanup/readiness sequence
+remain necessary before claiming the spec's agent-kill/restart acceptance gate.
 
 ## References
 

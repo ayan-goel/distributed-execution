@@ -6,6 +6,7 @@ mkdir -p .local
 workspace=$(mktemp -d "$repo/.local/runtime.XXXXXX")
 export DISPATCH_TEST_WORKSPACE="$workspace"
 export DISPATCH_TEST_JOB_ID=$(python3 -c 'import uuid; print(uuid.uuid4())')
+export DISPATCH_TEST_WORKER_ID=$(python3 -c 'import uuid; print(uuid.uuid4())')
 export DISPATCH_TEST_ATTEMPT_ID=$(python3 -c 'import uuid; print(uuid.uuid4())')
 cleanup() {
     # Only this run's unpredictable job label is eligible for cleanup. Preserve

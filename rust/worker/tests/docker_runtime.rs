@@ -2,7 +2,7 @@ use dispatch_protocol::v1::{Assignment, AttemptAuthority, Resources};
 use dispatch_worker::{
     execution::ExecutionSpec,
     lease::{AuthorityWindow, MonoTime},
-    runtime::{DockerRuntime, PreparedWorkspace, Runtime, RuntimeError},
+    runtime::{DockerRuntime, PreparedWorkspace, RecoveryRuntime, Runtime, RuntimeError},
 };
 use ring::digest::{digest, SHA256};
 
@@ -42,7 +42,7 @@ fn execution(image: &str, command: &[&str]) -> ExecutionSpec {
 
 fn authority() -> AttemptAuthority {
     AttemptAuthority {
-        worker_id: "00000000-0000-0000-0000-000000000001".into(),
+        worker_id: std::env::var("DISPATCH_TEST_WORKER_ID").unwrap(),
         session_id: "00000000-0000-0000-0000-000000000002".into(),
         job_id: std::env::var("DISPATCH_TEST_JOB_ID").unwrap(),
         attempt_id: std::env::var("DISPATCH_TEST_ATTEMPT_ID").unwrap(),
@@ -236,6 +236,137 @@ async fn refuses_remote_or_relative_docker_endpoints() {
             Err(RuntimeError::Configuration)
         ));
     }
+}
+
+#[tokio::test]
+#[ignore = "requires scripts/test-runtime.sh and its isolated Docker fixture"]
+async fn fresh_runtime_discovers_and_removes_only_previous_session_containers() {
+    let socket = std::env::var("DISPATCH_TEST_DOCKER_SOCKET").unwrap();
+    let runtime = DockerRuntime::connect(&socket).await.unwrap();
+    let workspace =
+        PreparedWorkspace::soft_development(std::env::var("DISPATCH_TEST_WORKSPACE").unwrap())
+            .unwrap();
+    let spec = execution(
+        &std::env::var("DISPATCH_TEST_IMAGE").unwrap(),
+        &["sleep", "60"],
+    );
+    let mut old = authority();
+    old.worker_id = old.job_id.clone();
+    old.attempt_id.replace_range(24..36, "00000000000d");
+    let mut current = old.clone();
+    current.session_id = "00000000-0000-0000-0000-000000000003".into();
+    current.attempt_id.replace_range(24..36, "00000000000e");
+    let mut foreign = old.clone();
+    foreign.worker_id = "00000000-0000-0000-0000-000000000099".into();
+    foreign.attempt_id.replace_range(24..36, "00000000000f");
+    let old_handle = runtime
+        .create(&old, &spec, &workspace, &lease())
+        .await
+        .unwrap();
+    let current_handle = runtime
+        .create(&current, &spec, &workspace, &lease())
+        .await
+        .unwrap();
+    let foreign_handle = runtime
+        .create(&foreign, &spec, &workspace, &lease())
+        .await
+        .unwrap();
+    runtime.start(&old_handle, &lease()).await.unwrap();
+    runtime.start(&current_handle, &lease()).await.unwrap();
+    runtime.start(&foreign_handle, &lease()).await.unwrap();
+    let admin = bollard::Docker::connect_with_socket(&socket, 5, bollard::API_DEFAULT_VERSION)
+        .unwrap()
+        .negotiate_version()
+        .await
+        .unwrap();
+    admin.pause_container(old_handle.id()).await.unwrap();
+    let mut created = old.clone();
+    created.attempt_id.replace_range(24..36, "000000000010");
+    let created_handle = runtime
+        .create(&created, &spec, &workspace, &lease())
+        .await
+        .unwrap();
+    let mut exited = old.clone();
+    exited.attempt_id.replace_range(24..36, "000000000011");
+    let fast = execution(&std::env::var("DISPATCH_TEST_IMAGE").unwrap(), &["true"]);
+    let exited_handle = runtime
+        .create(&exited, &fast, &workspace, &lease())
+        .await
+        .unwrap();
+    runtime.start(&exited_handle, &lease()).await.unwrap();
+    assert_eq!(
+        runtime.wait(&exited_handle).await.unwrap().exit_code,
+        Some(0)
+    );
+    drop(runtime);
+
+    // A new client has no creation handles or journal binding. Recovery must
+    // discover labels on the daemon, then restrict cleanup to fenced sessions.
+    let replacement = DockerRuntime::connect(&socket).await.unwrap();
+    let inventory = replacement.inventory(&old.worker_id).await.unwrap();
+    assert_eq!(inventory.len(), 4);
+    let previous = inventory
+        .iter()
+        .find(|c| c.id() == old_handle.id())
+        .unwrap();
+    assert_eq!(previous.authority(), &old);
+    assert_eq!(
+        previous.status().state,
+        dispatch_worker::runtime::ContainerState::Paused
+    );
+    assert_eq!(
+        inventory
+            .iter()
+            .find(|c| c.id() == created_handle.id())
+            .unwrap()
+            .status()
+            .state,
+        dispatch_worker::runtime::ContainerState::Created
+    );
+    assert_eq!(
+        inventory
+            .iter()
+            .find(|c| c.id() == exited_handle.id())
+            .unwrap()
+            .status()
+            .exit_code,
+        Some(0)
+    );
+    let retained = inventory
+        .iter()
+        .find(|c| c.id() == current_handle.id())
+        .unwrap();
+    assert_eq!(
+        replacement
+            .remove_previous(retained, &current.session_id)
+            .await,
+        Err(RuntimeError::Identity)
+    );
+    replacement
+        .remove_previous(previous, &current.session_id)
+        .await
+        .unwrap();
+    for container in &inventory {
+        if container.authority().session_id != current.session_id {
+            replacement
+                .remove_previous(container, &current.session_id)
+                .await
+                .unwrap();
+        }
+    }
+    replacement
+        .remove_previous(previous, &current.session_id)
+        .await
+        .unwrap();
+    let after = replacement.inventory(&old.worker_id).await.unwrap();
+    assert_eq!(after.len(), 1);
+    assert_eq!(after[0].id(), current_handle.id());
+    assert!(replacement.inspect(&current_handle).await.unwrap().running);
+    assert!(replacement.inspect(&foreign_handle).await.unwrap().running);
+    replacement.stop(&current_handle, 0).await.unwrap();
+    replacement.remove(&current_handle).await.unwrap();
+    replacement.stop(&foreign_handle, 0).await.unwrap();
+    replacement.remove(&foreign_handle).await.unwrap();
 }
 
 #[cfg(unix)]
