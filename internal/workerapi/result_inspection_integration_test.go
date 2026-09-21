@@ -37,7 +37,7 @@ func TestCompletedResultInspectionIsProjectScopedAndReplayConsistent(t *testing.
 			}
 			// No resolver or storage adapter is configured. Existing results and submission
 			// recovery must remain readable without reaching either external dependency.
-			server := httptest.NewServer(api.New(pool, nil))
+			server := httptest.NewServer(api.New(pool, nil, nil))
 			defer server.Close()
 			makeClient := func(token string) *client.Client {
 				c, err := client.New(server.URL, token, true, nil)

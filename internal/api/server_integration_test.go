@@ -121,7 +121,7 @@ func TestHTTPSubmissionRecoveryAndAuthorization(t *testing.T) {
 			return "", admission.ErrImageUnavailable
 		}
 		return "registry.example.org/eval@sha256:" + strings.Repeat("a", 64), nil
-	}))
+	}), nil)
 	body := jobBody(t)
 	for _, test := range []struct {
 		token  string
@@ -192,7 +192,7 @@ func TestHTTPBoundariesAndSanitizedErrors(t *testing.T) {
 	}
 	h := New(pool, resolverFunc(func(context.Context, string) (string, error) {
 		return "", errors.New("private credentials must never leak")
-	}))
+	}), nil)
 	for _, test := range []struct {
 		body   []byte
 		key    string

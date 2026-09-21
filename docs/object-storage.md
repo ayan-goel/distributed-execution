@@ -8,7 +8,8 @@ verification, and scoped downloads. It uses the official AWS SDK for Go v2 S3 mo
 S3-compatible; it does not require an AWS account. The
 [durable upload declaration and authenticated grant API](artifact-uploads.md) use
 this adapter. [Authenticated finalization](verified-artifacts.md) registers verified
-exact versions; terminal result publication remains pending.
+exact versions; [completion](completion.md) publishes the accepted manifest, and
+[artifact downloads](artifact-downloads.md) expose scoped exact-version GET grants.
 
 The verified local backend is SeaweedFS 4.47, pinned as:
 
@@ -106,8 +107,9 @@ Empty files and files at the configured byte limit are uploaded and verified too
 Tampered checksum, byte count, key, and expired upload grants are rejected. Verification
 rejects an incorrect version's content and a specifically deleted original version.
 Suspending versioning prevents new upload grants. These tests establish storage
-compatibility; pending records, worker transfer plumbing, fenced publication,
-multipart uploads, retention, and terminal completion remain pending.
+compatibility. Durable upload/verification records, fenced completion, and public
+download grants have separate integration gates. Worker transfer plumbing,
+multipart uploads, and retention remain pending.
 
 `scripts/test-objectstore.sh` also accepts a command to run while its isolated
 backend is available. `make integration` uses

@@ -132,6 +132,15 @@ func uploadRPCFixtureWithStorage(t *testing.T, objects *objectstore.Store) (*pgx
 }
 
 func TestRealMTLSUploadAndFinalizationPinVerifiedVersion(t *testing.T) {
+	realMTLSArtifactFlow(t, false)
+}
+
+func TestRealAcceptedDownloadReturnsOriginalVerifiedVersion(t *testing.T) {
+	realMTLSArtifactFlow(t, true)
+}
+
+func realMTLSArtifactFlow(t *testing.T, complete bool) {
+	t.Helper()
 	endpoint := os.Getenv("DISPATCH_TEST_S3_ENDPOINT")
 	if endpoint == "" {
 		t.Skip("requires the combined PostgreSQL and object storage fixture")
@@ -215,6 +224,10 @@ func TestRealMTLSUploadAndFinalizationPinVerifiedVersion(t *testing.T) {
 	other.UploadUrl = strings.Replace(other.UploadUrl, grant.UploadId, uuid.NewString(), 1)
 	if code, _ := put(other, body); code == http.StatusOK {
 		t.Fatal("wire grant authorized another object key")
+	}
+	if complete {
+		verifyAcceptedDownload(t, pool, client, objects, request.Authority, verified, body)
+		return
 	}
 	if _, err := pool.Exec(ctx, "UPDATE jobs SET state='CANCELLING',cancel_requested=true"); err != nil {
 		t.Fatal(err)

@@ -163,4 +163,5 @@ response uploads declared bytes, which the storage adapter verifies by exact ver
 Changing checksum or key fails. Cancellation prevents new grants, while reuse of an
 existing URL creates a distinct version and leaves the original bytes intact. This
 is extended by the [finalization gate](verified-artifacts.md) to prove durable
-verified-artifact registration. Result publication remains pending.
+verified-artifact registration. [Completion](completion.md) now publishes accepted
+results; [artifact downloads](artifact-downloads.md) serve version-pinned grants.

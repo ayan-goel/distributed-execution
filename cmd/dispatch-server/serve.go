@@ -116,7 +116,11 @@ func serve(ctx context.Context, pool *pgxpool.Pool, c serveConfig, out io.Writer
 		return err
 	}
 	images := admission.RegistryResolver{Allowed: c.registries, AuthHosts: c.authHosts, AllowLoopbackHTTP: c.dev}
-	server := &http.Server{Handler: api.New(pool, images), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 20 * time.Second, WriteTimeout: 20 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10, TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13}}
+	var downloads api.DownloadSigner
+	if objects != nil {
+		downloads = objects
+	}
+	server := &http.Server{Handler: api.New(pool, images, downloads), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 20 * time.Second, WriteTimeout: 20 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10, TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13}}
 	// Validate both TLS configurations before opening either listener. Startup
 	// must not advertise a working HTTP service when worker credentials are broken.
 	if c.cert != "" {

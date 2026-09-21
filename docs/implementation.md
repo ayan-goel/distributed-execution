@@ -20,14 +20,14 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D01 build foundation | none | Pinned Go/Cargo builds, binary smoke checks, CI configuration | local gate passed; remote CI pending |
 | D02 job and sweep contracts | D01 | Strict schema, unsafe input rejection, stable canonical hash, deterministic expansion | parser/expansion gates passed; published schemas pending |
 | D03 database invariants | D01 | Real PostgreSQL migrations up/down/upgrade; uniqueness, references, checks | core schema and migration runner gates passed; later feature tables pending |
-| D04 worker protocol | D01 | Generated Go/Rust gRPC bindings; cross-language golden round-trip, drift check | wire generation/round-trip passed; service boundary tests pending |
+| D04 worker protocol | D01 | Generated Go/Rust gRPC bindings; cross-language golden round-trip, drift check | wire and implemented mTLS service boundary gates passed; remaining handlers/client integration pending |
 | D05 durable submission | D02,D03 | HTTP/CLI submission; 100 identical requests yield one job; changed payload conflicts | input-free job admission, auth, image resolution, HTTP/CLI gates passed; datasets depend on D16 |
 | D06 worker identities | D03,D04 | Authenticated registration, session takeover/recovery; stale-session rejection | control-plane, Rust client, and worker startup/health loop gates passed; active-job supervision pending |
 | D07 acquisition | D03,D06 | Atomic assignment/reservations; concurrent quota/capacity races; acquisition replay | store, RPC, and Rust client gates passed; production agent loop pending |
 | D08 Docker adapter | D04 | Real bounded create/start/inspect/stop; ambiguous create reconciles one identity | cached launch, RUNNING/FINALIZING coordination, and phase store/RPC/client gates passed; agent integration, staging, and strict workspaces pending |
 | D09 leases | D06,D07 | Fresh DB-time expiry checks; delayed grants; local monotonic deadline enforcement | deadline, store/RPC/client, watchdog, periodic renewal, and execution refresh gates passed; reaper and production agent integration pending |
 | D10 worker recovery | D08,D09 | Durable journal; agent kill/restart stops old containers before new capacity | journal, discovery/cleanup, and actual startup process gates passed; agent-owned job kill/restart gate pending |
-| D11 artifacts | D03,D04 | Scoped grants; verified exact versions; stale publication rejection | grants, verification, completion, and public result metadata gates passed; downloads and worker transfers pending |
+| D11 artifacts | D03,D04 | Scoped grants; verified exact versions; stale publication rejection | grants, verification, completion, public metadata, and HTTP download gates passed; CLI downloads and Rust transfers pending |
 | D12 first real job | D05–D11 | CLI submit → gRPC → Docker → verified output → CLI download | pending |
 | D13 loss/retry | D09,D12 | Reaper/reconciliation; recorded retry; backoff/deadlines; nonretryable failure | pending |
 | D14 cancellation | D12,D13 | Both completion/cancellation race orders, repeat requests, uncertain cleanup | pending |
@@ -1239,3 +1239,30 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   receives 404. Client and CLI tests preserve integers above 2^53.
 - Updated HTTP/completion contracts and implementation status. Rust transfers,
   completion delivery, and the complete workload-to-download gate remain open.
+
+### D11j: authorized exact-version artifact download grants
+
+- Added `GET /v1/jobs/{id}/artifacts`, projecting only accepted outputs from the
+  immutable completion manifest. Responses include exact object metadata and
+  60-second GET capabilities. Pending/failed jobs expose empty arrays; missing and
+  foreign jobs return 404. The existing explicit storage configuration now supplies
+  both worker transfer APIs and HTTP download signing.
+- Signing happens without a state transaction; token/project authorization is
+  rechecked before returning any URL. A signing failure cannot emit a partial page,
+  and error responses omit backend diagnostics and capability URLs. Already issued
+  URLs remain bearer capabilities until expiry; revocation cannot recall them.
+- Initial endpoint tests failed for the missing API/configuration. The first native
+  command hit the sandbox's local-listener restriction; the socket-enabled native
+  `make test lint smoke` gate subsequently passed. Both `scripts/test-store.sh` and
+  the expanded `scripts/test-objectstore.sh scripts/test-store.sh` combined gate
+  passed with zero exits. No schema or Rust runtime changed.
+- Tests cover signed version/key/expiry, read-role authorization, foreign/missing
+  jobs, pending/failed output exclusion, missing storage, revocation, and redacted
+  signing failures. A controlled signer revokes a token while signing and confirms
+  revocation can commit without a retained database authorization lock; no grant is
+  returned. The real SeaweedFS flow uploads, overwrites the key, verifies the original
+  version, completes over mTLS, and downloads original accepted bytes through the
+  HTTP-issued grant. Removing the signed version parameter is rejected.
+- Added `docs/artifact-downloads.md` and refreshed HTTP/storage/operator contracts.
+  CLI download verification, Rust transfers/completion delivery, multipart objects,
+  retention, and the full multi-host release gate remain required work.

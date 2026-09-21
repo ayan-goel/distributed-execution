@@ -153,7 +153,7 @@ schema-ten-to-eleven upgrade preserves verified outputs and permits completion.
 Store fixtures use the separately verified artifact boundary. The real Rust
 workload-to-completion path remains to integrate. Public result metadata is now
 available through [job inspection](http-api.md#accepted-result-inspection-d11i);
-authorized artifact download links remain a separate slice.
+authorized artifact download links are described in [artifact downloads](artifact-downloads.md).
 
 ## Authenticated completion RPC (D11h)
 

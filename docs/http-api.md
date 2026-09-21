@@ -7,6 +7,7 @@
 | `GET /healthz` | none | Database readiness, no tenant data |
 | `POST /v1/jobs` | submit | Validate, resolve image, atomically queue a job |
 | `GET /v1/jobs/{id}` | read | Return project-scoped job state and accepted result metadata |
+| `GET /v1/jobs/{id}/artifacts` | read | Accepted outputs with exact-version, 60-second download grants |
 
 Send `Authorization: Bearer <project-token>`. Submission requires `Idempotency-Key`
 (1–128 characters) and one bounded JSON/YAML Job document. New submissions return
@@ -44,7 +45,8 @@ access nor issuing download capabilities.
 `dispatch jobs get JOB_ID --json` includes both fields; ordinary text output remains
 the job ID and state. The Go client retains the manifest as raw JSON so integers
 above 2^53 survive inspection and CLI serialization. The existing 4-MiB response
-limit remains in place. Authorized artifact download links are a subsequent slice.
+limit remains in place. [Artifact downloads](artifact-downloads.md) provide the
+separate authorized output metadata and signed transfer links.
 
 An integration test completes a verified output over mTLS, then reads it through
 the real HTTP server and Go client. It checks successful and failed jobs, matching
@@ -52,7 +54,7 @@ submission replay, missing results before completion, and 404 for another projec
 token. Client and CLI tests verify the accepted identity and exact metric text.
 
 Dataset admission currently returns an explicit 501 rather than queuing unresolved
-inputs. Job listing, cancellation, attempt history, logs, artifacts, events, sweeps,
+inputs. Job listing, cancellation, full attempt history, logs, events, sweeps,
 datasets, and worker administration remain required endpoints in later slices.
 
 ## Evidence

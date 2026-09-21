@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"dispatch.local/dispatch/internal/admission"
+	"dispatch.local/dispatch/internal/objectstore"
 	"dispatch.local/dispatch/internal/spec"
 	"dispatch.local/dispatch/internal/store"
 	"github.com/google/uuid"
@@ -20,17 +21,21 @@ import (
 type ImageResolver interface {
 	Resolve(context.Context, string) (string, error)
 }
+type DownloadSigner interface {
+	PresignDownload(context.Context, objectstore.Object, time.Duration) (objectstore.Grant, error)
+}
 type Server struct {
 	pool     *pgxpool.Pool
 	images   ImageResolver
+	objects  DownloadSigner
 	slots    chan struct{}
 	rateMu   sync.Mutex
 	window   time.Time
 	requests int
 }
 
-func New(pool *pgxpool.Pool, images ImageResolver) *Server {
-	return &Server{pool: pool, images: images, slots: make(chan struct{}, 256)}
+func New(pool *pgxpool.Pool, images ImageResolver, objects DownloadSigner) *Server {
+	return &Server{pool: pool, images: images, objects: objects, slots: make(chan struct{}, 256)}
 }
 
 type APIError struct {
@@ -103,6 +108,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.submit(w, r, p)
+	case strings.HasPrefix(r.URL.Path, "/v1/jobs/") && strings.HasSuffix(r.URL.Path, "/artifacts") && r.Method == http.MethodGet:
+		s.artifacts(w, r, p)
 	case strings.HasPrefix(r.URL.Path, "/v1/jobs/") && r.Method == http.MethodGet:
 		id := strings.TrimPrefix(r.URL.Path, "/v1/jobs/")
 		if _, err := uuid.Parse(id); err != nil {
