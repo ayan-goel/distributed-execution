@@ -86,9 +86,33 @@ I/O occurs inside this transaction.
 History currently persists for the session lifetime without automatic retention.
 Do not prune records while their UUIDs can still renew active work: deleting one
 would let an old retry look like a new operation. Safe bounded retention remains a
-release requirement. The RPC adapter, Rust renewal client/loop, supervisor, and lease
+release requirement. The Rust renewal client/loop, supervisor, and lease
 reaper remain separate work; this store slice alone does not keep containers alive
 or terminate them at expiry.
+
+## Authenticated renewal RPC (D09c)
+
+The Go worker service implements the existing `RenewLeases` RPC through the store
+transaction above. The shared mTLS boundary verifies the certificate, live database
+credential, and enclosing/nested worker and session identities. The adapter rejects
+empty/oversized batches and unsigned generations above PostgreSQL's signed bigint
+range before conversion. Store validation checks UUIDs, positive generations, and
+duplicate attempts. Existing five-second server deadlines and four-MiB message
+limits apply.
+
+Each response retains the authority tuple, decision, database timestamp, and
+remaining lease/phase durations. Durations are floored to whole milliseconds before
+unsigned conversion. An expired or submillisecond lease becomes `FENCED`; a
+submillisecond phase becomes `STOP_REQUESTED`. Rejections expose zero durations.
+Unknown decisions, invalid generations, or grants beyond the thirty-second policy
+fail closed. The client must still account for request elapsed time and the local
+safety margin; wire durations do not authorize a fresh full lease upon receipt.
+
+Malformed input maps to `InvalidArgument`, conflicting replay payloads to
+`AlreadyExists`, and fenced sessions to `FailedPrecondition / SESSION_FENCED`.
+Certificate/credential failures map to `Unauthenticated`; mismatched claimed worker
+or nested session identity maps to `PermissionDenied`. Per-attempt expiry and
+cancellation are result decisions rather than transport errors.
 
 ## Verification
 
@@ -119,8 +143,17 @@ revive an old request, without a thirty-second test sleep.
 
 `sh scripts/test-schema.sh` passed fresh apply, complete rollback, and reapply with
 the seventh migration. `make test lint smoke` passed after enabling local sockets
-needed by existing HTTP and runtime fixture tests. These results cover the store
-boundary, not the pending renewal RPC or production worker loop.
+needed by existing HTTP and runtime fixture tests.
+
+The real mTLS service integration test additionally renews an acquired attempt,
+restarts the Go gRPC service, retries the same renewal identity, and verifies the
+durable expiry did not change. It checks oversized/empty/duplicate batches,
+generation overflow, cross-worker/session claims, changed payload conflicts,
+expired leases, session takeover, and credential revocation on an established
+connection. Unit tests cover signed duration flooring and invalid store outcomes.
+The full race-enabled PostgreSQL/mTLS suite and `make test lint smoke` passed after
+the RPC implementation. The Rust renewal client, production loop, supervisor, and
+container stop-at-deadline behavior remain unverified pending implementation.
 
 ## Source references
 

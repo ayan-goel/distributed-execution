@@ -141,6 +141,6 @@ fixture delays a grant beyond its usable local lifetime and confirms the client
 rejects execution authority despite receiving a successful RPC response.
 
 The store, RPCs, and Rust acquisition/recovery client are implemented.
-The production agent loop, Docker execution, renewal/reaper, sweep limits, and final
+The production agent loop, integrated Docker execution, Rust renewal loop/reaper, sweep limits, and final
 fair scheduling remain required. Two registered database identities are not evidence
 for the release gate requiring execution on two independent Linux hosts.

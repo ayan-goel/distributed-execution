@@ -25,7 +25,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D06 worker identities | D03,D04 | Authenticated registration, session takeover/recovery; stale-session rejection | control-plane, executable, and Rust client gates passed; runtime/agent loop pending |
 | D07 acquisition | D03,D06 | Atomic assignment/reservations; concurrent quota/capacity races; acquisition replay | store, RPC, and Rust client gates passed; production agent loop pending |
 | D08 Docker adapter | D04 | Real bounded create/start/inspect/stop; ambiguous create reconciles one identity | spec and cached-image lifecycle gates passed; image staging and strict workspace integration pending |
-| D09 leases | D06,D07 | Fresh DB-time expiry checks; delayed grants; local monotonic deadline enforcement | local deadline and renewal store gates passed; renewal RPC/loop, reaper, and supervisor pending |
+| D09 leases | D06,D07 | Fresh DB-time expiry checks; delayed grants; local monotonic deadline enforcement | local deadline, renewal store, and RPC gates passed; Rust renewal client/loop, reaper, and supervisor pending |
 | D10 worker recovery | D08,D09 | Durable journal; agent kill/restart stops old containers before new capacity | pending |
 | D11 artifacts | D03,D04 | Scoped grants; verified exact versions; stale publication rejection | pending |
 | D12 first real job | D05–D11 | CLI submit → gRPC → Docker → verified output → CLI download | pending |
@@ -566,3 +566,23 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 - Documented behavior, locking, replay identity, verification, and pending retention
   in `docs/worker-leases.md`. Renewal RPC/client/loop, reaper, supervisor, and all
   remaining full v0.1 gates stay open.
+
+### D09c: authenticated lease renewal RPC
+
+- Wired the existing `RenewLeases` protocol method into the verified store path.
+  mTLS identity binding, live credential checks, nested session ownership, batch
+  limits, generation overflow checks, and stable RPC errors protect the boundary.
+- Converted remaining authority to signed, floored milliseconds before unsigned
+  wire encoding. Rejected and submillisecond grants expose no execution duration;
+  unknown decisions and out-of-policy grants fail closed.
+- Added failing wire tests before implementation. Unit checks now cover identity,
+  duration underflow/flooring, explicit rejection decisions, and malformed results.
+- Extended the real mTLS/PostgreSQL service test to renew a job, restart the service,
+  replay the same request, and confirm durable expiry is unchanged. It rejects
+  invalid batch sizes/duplicates, generation overflow, cross-worker/session claims,
+  changed replay payloads, expired leases, old sessions, and revoked credentials.
+- `sh scripts/test-store.sh` and `make test lint smoke` passed. Reviewed the adapter
+  and documented response/error semantics in `docs/worker-leases.md`. No protocol
+  regeneration was needed because this method already existed in the contract.
+- Next: Rust renewal client with per-attempt conservative authority windows, then
+  its production maintenance/supervision integration. Full v0.1 remains open.

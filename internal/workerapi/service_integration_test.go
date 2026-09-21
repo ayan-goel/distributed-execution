@@ -132,10 +132,48 @@ func TestMTLSRegistrationHeartbeatRestartAndTakeover(t *testing.T) {
 	if _, err := client.Heartbeat(ctx, badHeartbeat); status.Code(err) != codes.InvalidArgument {
 		t.Fatal("heartbeat sequence overflow accepted", err)
 	}
+	renewal := &pb.RenewLeasesRequest{Session: session.Session, RequestId: uuid.NewString(), Attempts: []*pb.AttemptAuthority{assignment.Authority}}
+	renewed, err := client.RenewLeases(ctx, renewal)
+	if err != nil || len(renewed.GetResults()) != 1 || renewed.Results[0].Decision != pb.Decision_ACCEPTED || renewed.Results[0].RemainingMs != 30000 || renewed.Results[0].PhaseRemainingMs == 0 || !proto.Equal(renewed.Results[0].Authority, assignment.Authority) {
+		t.Fatal("renewal RPC lost authority", renewed, err)
+	}
+	var renewedExpiry time.Time
+	if err = pool.QueryRow(ctx, "SELECT lease_expires_at FROM attempts WHERE id=$1", assignment.Authority.AttemptId).Scan(&renewedExpiry); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		change func(*pb.RenewLeasesRequest)
+		code   codes.Code
+	}{
+		{func(r *pb.RenewLeasesRequest) { r.Attempts[0].Generation = math.MaxUint64 }, codes.InvalidArgument},
+		{func(r *pb.RenewLeasesRequest) { r.Attempts = nil }, codes.InvalidArgument},
+		{func(r *pb.RenewLeasesRequest) {
+			for len(r.Attempts) < 65 {
+				r.Attempts = append(r.Attempts, r.Attempts[0])
+			}
+		}, codes.InvalidArgument},
+		{func(r *pb.RenewLeasesRequest) { r.Attempts = append(r.Attempts, r.Attempts[0]) }, codes.InvalidArgument},
+		{func(r *pb.RenewLeasesRequest) { r.Attempts[0].WorkerId = uuid.NewString() }, codes.PermissionDenied},
+		{func(r *pb.RenewLeasesRequest) { r.Attempts[0].SessionId = uuid.NewString() }, codes.PermissionDenied},
+		{func(r *pb.RenewLeasesRequest) { r.Attempts[0].Generation++ }, codes.AlreadyExists},
+	} {
+		bad := proto.Clone(renewal).(*pb.RenewLeasesRequest)
+		tc.change(bad)
+		if _, err := client.RenewLeases(ctx, bad); status.Code(err) != tc.code {
+			t.Fatal("invalid renewal crossed RPC boundary", err, tc.code)
+		}
+	}
 	stop()
 	client, _ = start()
 	if again, err := client.RegisterWorker(ctx, r); err != nil || again.GetSessionGeneration() != 1 || again.GetCleanupRequired() {
 		t.Fatal("RPC restart lost reconciled session", err)
+	}
+	if replay, err := client.RenewLeases(ctx, renewal); err != nil || len(replay.GetResults()) != 1 || replay.Results[0].Decision != pb.Decision_ACCEPTED || replay.Results[0].RemainingMs > renewed.Results[0].RemainingMs {
+		t.Fatal("restart lost renewal replay", replay, err)
+	}
+	var afterReplay time.Time
+	if err = pool.QueryRow(ctx, "SELECT lease_expires_at FROM attempts WHERE id=$1", assignment.Authority.AttemptId).Scan(&afterReplay); err != nil || !afterReplay.Equal(renewedExpiry) {
+		t.Fatal("RPC retry extended lease", afterReplay, err)
 	}
 	if replay, err := client.AcquireWork(ctx, acquire); err != nil || replay.GetAssignment().GetAuthority().GetAttemptId() != assignment.Authority.AttemptId || replay.GetAssignment().GetLeaseDurationMs() > assignment.LeaseDurationMs {
 		t.Fatal("restart lost or renewed assignment", replay, err)
@@ -160,6 +198,9 @@ func TestMTLSRegistrationHeartbeatRestartAndTakeover(t *testing.T) {
 	if expired, err := client.AcquireWork(ctx, acquire); err != nil || expired.GetRejected() != pb.Decision_FENCED {
 		t.Fatal("expired replay returned authority", expired, err)
 	}
+	if expired, err := client.RenewLeases(ctx, renewal); err != nil || len(expired.GetResults()) != 1 || expired.Results[0].Decision != pb.Decision_FENCED || expired.Results[0].RemainingMs != 0 || expired.Results[0].PhaseRemainingMs != 0 {
+		t.Fatal("expired renewal returned authority", expired, err)
+	}
 	if page, err := client.ListAssignments(ctx, listing); err != nil || len(page.GetAssignments()) != 0 {
 		t.Fatal("expired assignment appeared in inventory", page, err)
 	}
@@ -183,5 +224,14 @@ func TestMTLSRegistrationHeartbeatRestartAndTakeover(t *testing.T) {
 	}
 	if _, err := client.ListAssignments(ctx, listing); status.Code(err) != codes.FailedPrecondition {
 		t.Fatal("old session recovered inventory", err)
+	}
+	if _, err := client.RenewLeases(ctx, renewal); status.Code(err) != codes.FailedPrecondition {
+		t.Fatal("old session replayed renewal", err)
+	}
+	if err := store.RevokeWorkerCredential(ctx, pool, id.WorkerID, id.CredentialID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.RenewLeases(ctx, renewal); status.Code(err) != codes.Unauthenticated {
+		t.Fatal("revoked credential replayed renewal", err)
 	}
 }
