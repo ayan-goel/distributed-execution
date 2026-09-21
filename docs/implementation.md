@@ -208,3 +208,18 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   the registry offline, and revocation observed by the running server.
 - Added `docs/running.md`; README accurately describes the queue-only current state.
   Active execution and the full v0.1 deployment tutorial remain pending.
+
+### D05f: bounded authenticated HTTP client
+
+- Added a Go client for job submission and inspection with structured API errors,
+  20-second request deadlines, bounded responses, stable caller-supplied submission
+  keys, and validation of returned job IDs. It does not retry uncertain submissions
+  automatically; callers must retain and reuse the original key.
+- Client configuration requires HTTPS, with explicit literal-loopback HTTP for
+  development. Redirects are rejected before forwarding credentials or job bodies;
+  endpoint credentials/query strings and unsafe header values are rejected.
+- Tests first failed because the client did not exist. Race-enabled tests now pass
+  for redirect refusal, key preservation, API error fields, response size/malformed
+  response rejection, and argument validation. The loopback redirect test requires
+  network-enabled execution; `make test lint smoke` passed with that permission.
+- CLI commands and client-to-server database integration remain the next slice.
