@@ -1,10 +1,14 @@
 //! Durable evidence and retry identities, never recovered execution authority.
 use crate::{
-    control::{canonical_uuid, lower_hash, validate_completion_request, validate_phase_request},
+    control::{
+        canonical_uuid, lower_hash, validate_completion_request, validate_completion_response,
+        validate_phase_request,
+    },
     execution::ExecutionSpec,
 };
 use dispatch_protocol::v1::{
-    Assignment, AttemptState, CompleteAttemptRequest, FailureReason, ReportPhaseRequest,
+    Assignment, AttemptState, CompleteAttemptRequest, CompleteAttemptResponse, Decision,
+    FailureReason, ReportPhaseRequest,
 };
 use prost::Message;
 use ring::rand::{SecureRandom, SystemRandom};
@@ -76,6 +80,8 @@ struct Record {
     phase_reports: Vec<ReportPhaseRequest>,
     #[prost(message, optional, tag = "5")]
     completion: Option<CompleteAttemptRequest>,
+    #[prost(message, optional, tag = "6")]
+    completion_response: Option<CompleteAttemptResponse>,
 }
 
 pub struct RecoveredAttempt(Record);
@@ -103,6 +109,9 @@ impl RecoveredAttempt {
     }
     pub fn completion(&self) -> Option<&CompleteAttemptRequest> {
         self.0.completion.as_ref()
+    }
+    pub fn completion_response(&self) -> Option<&CompleteAttemptResponse> {
+        self.0.completion_response.as_ref()
     }
 }
 
@@ -188,6 +197,7 @@ impl Journal {
             exit: None,
             phase_reports: Vec::new(),
             completion: None,
+            completion_response: None,
         };
         record.validate(&self.worker_id, &a.attempt_id)?;
         if let Some(saved) = self.load_attempt(&a.attempt_id)? {
@@ -335,6 +345,43 @@ impl Journal {
             .map(|r| r.0)
             .ok_or(JournalError::Invalid)
     }
+
+    pub fn record_completion_response(
+        &mut self,
+        request: &CompleteAttemptRequest,
+        response: &CompleteAttemptResponse,
+    ) -> Result<(), JournalError> {
+        let id = &request
+            .authority
+            .as_ref()
+            .ok_or(JournalError::Invalid)?
+            .attempt_id;
+        let mut record = self.required(id)?;
+        // Bind delayed replies to every byte of the pending evidence, not just
+        // the attempt. A reply to another completion must not resolve this one.
+        if record.completion.as_ref() != Some(request) {
+            return Err(JournalError::Conflict);
+        }
+        validate_completion_response(request, response.clone())
+            .map_err(|_| JournalError::Invalid)?;
+        if let Some(saved) = &record.completion_response {
+            if saved == response {
+                return Ok(());
+            }
+            // Stop intent is irreversible on the server. It may later become
+            // fenced/terminal, but cannot turn this rejected payload into success.
+            if saved.decision != Decision::StopRequested as i32
+                || !matches!(
+                    Decision::try_from(response.decision),
+                    Ok(Decision::Fenced | Decision::AlreadyTerminal)
+                )
+            {
+                return Err(JournalError::Conflict);
+            }
+        }
+        record.completion_response = Some(response.clone());
+        self.save(id, &record)
+    }
     fn save(&mut self, id: &str, record: &Record) -> Result<(), JournalError> {
         record.validate(&self.worker_id, id)?;
         if record.encoded_len() > files::MAX_PAYLOAD {
@@ -397,7 +444,11 @@ impl Record {
 
     fn validate_completion(&self) -> Result<(), JournalError> {
         let Some(request) = &self.completion else {
-            return Ok(());
+            return if self.completion_response.is_none() {
+                Ok(())
+            } else {
+                Err(JournalError::Invalid)
+            };
         };
         validate_completion_request(request).map_err(|_| JournalError::Invalid)?;
         if request.authority != self.assignment.authority
@@ -417,6 +468,10 @@ impl Record {
                     .is_none_or(|e| e.exit_code != 0 || e.oom_killed))
         {
             return Err(JournalError::Invalid);
+        }
+        if let Some(response) = &self.completion_response {
+            validate_completion_response(request, response.clone())
+                .map_err(|_| JournalError::Invalid)?;
         }
         Ok(())
     }

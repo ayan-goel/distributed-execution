@@ -63,11 +63,34 @@ binary. An older binary rejects records containing completion evidence because i
 canonical re-encoding would lose that field; do not downgrade such a state directory.
 The existing 5 MiB record, attempt-count, and total-byte bounds still apply.
 
-This is a durable outbox entry, not an accepted result. The current slice does not
-persist completion acknowledgements or remove resolved records. Delivery/recovery
-must still journal authoritative outcomes and handle cancellation after
-`STOP_REQUESTED` without overwriting an uncertain request. Finding pending evidence
-never permits a fresh execution, restores a lease, or proves a reservation released.
+Finding pending evidence never permits a fresh execution, restores a lease, or
+proves a reservation released. Delivery/recovery must handle cancellation after
+`STOP_REQUESTED` without overwriting an uncertain request.
+
+## Durable completion replies (D11p)
+
+`record_completion_response` requires the exact stored request and validates the
+reply through the same decision/state/manifest checks as the control client. The
+reply, including original accepted manifest bytes, is synced atomically with the
+request. A delayed reply for another completion is rejected. Repeated identical
+acknowledgements are idempotent, and accepted/fenced/already-terminal outcomes are
+immutable. A stored `STOP_REQUESTED` may progress to fenced or already-terminal;
+it cannot become acceptance of that same rejected payload. Server cancellation and
+expired phase intent are irreversible, so such a change is a conflict.
+
+Recovered replies are available through `completion_response()`. They are checked
+again on read and cannot exist without a valid pending request. The optional field
+has the same downgrade restriction as completion requests. Existing record/total
+byte bounds include the response; a failed write preserves uncertainty and uses
+the journal's normal poison/reopen rules.
+
+A reply records publication status, not physical cleanup. In particular, a failed
+completion submitted with `stopped=false` still needs runtime reconciliation even
+when its failure was accepted. The journal does not delete workspaces or release
+local capacity. Resolved-record retention and the production delivery/recovery
+loop remain separate required work. Process-death tests cover both a pending
+request and a persisted accepted reply; successful manifest tests preserve the
+original formatting and exact large-integer bytes through reopening.
 
 ## Evidence cannot restore a lease
 

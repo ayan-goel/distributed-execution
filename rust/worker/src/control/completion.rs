@@ -37,7 +37,7 @@ pub(crate) fn validate_request(r: &CompleteAttemptRequest) -> Result<(), ClientE
     Ok(())
 }
 
-fn validate_response(
+pub(crate) fn validate_response(
     request: &CompleteAttemptRequest,
     response: CompleteAttemptResponse,
 ) -> Result<CompletionStatus, ClientError> {

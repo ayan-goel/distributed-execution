@@ -1,7 +1,9 @@
 #![cfg(unix)]
 
 use dispatch_protocol::v1::{Assignment, AttemptAuthority, AttemptState, Resources};
-use dispatch_protocol::v1::{CompleteAttemptRequest, FailureReason};
+use dispatch_protocol::v1::{
+    CompleteAttemptRequest, CompleteAttemptResponse, Decision, FailureReason,
+};
 use dispatch_protocol::v1::{RegisterWorkerRequest, RegisterWorkerResponse, WorkerSession};
 use dispatch_worker::control::completion_digest;
 use dispatch_worker::journal::{AsyncJournal, Journal, JournalError, JournalLimits};
@@ -114,6 +116,147 @@ fn completion() -> CompleteAttemptRequest {
     };
     request.payload_sha256 = completion_digest(&request).unwrap();
     request
+}
+
+fn completion_reply(decision: Decision, state: AttemptState) -> CompleteAttemptResponse {
+    CompleteAttemptResponse {
+        decision: decision as i32,
+        state: state as i32,
+        accepted_manifest_json: vec![],
+    }
+}
+
+#[tokio::test]
+async fn completion_acknowledgement_is_durable_bound_and_immutable() {
+    let fixture = Fixture::new();
+    let journal = AsyncJournal::new(fixture.open());
+    let request = completion();
+    let reply = completion_reply(Decision::Accepted, AttemptState::Failed);
+    journal.persist_assignment(assignment()).await.unwrap();
+    assert_eq!(
+        journal
+            .record_completion_response(request.clone(), reply.clone())
+            .await,
+        Err(JournalError::Conflict)
+    );
+    journal.persist_completion(request.clone()).await.unwrap();
+    journal
+        .record_completion_response(request.clone(), reply.clone())
+        .await
+        .unwrap();
+    journal
+        .record_completion_response(request.clone(), reply.clone())
+        .await
+        .unwrap();
+    let mut other = request.clone();
+    other.completion_id = "00000000-0000-0000-0000-000000000006".into();
+    assert_eq!(
+        journal
+            .record_completion_response(other, reply.clone())
+            .await,
+        Err(JournalError::Conflict)
+    );
+    assert_eq!(
+        journal
+            .record_completion_response(
+                request.clone(),
+                completion_reply(Decision::AlreadyTerminal, AttemptState::Failed)
+            )
+            .await,
+        Err(JournalError::Conflict)
+    );
+    drop(journal);
+    let saved = fixture.open().load_attempt(ATTEMPT).unwrap().unwrap();
+    assert_eq!(saved.completion(), Some(&request));
+    assert_eq!(saved.completion_response(), Some(&reply));
+}
+
+#[test]
+fn stop_observations_can_resolve_to_rejection_but_never_become_acceptance() {
+    for resolution in [Decision::Fenced, Decision::AlreadyTerminal] {
+        let fixture = Fixture::new();
+        let mut journal = fixture.open();
+        journal.persist_assignment(&assignment()).unwrap();
+        let request = completion();
+        journal.persist_completion(&request).unwrap();
+        let stop = completion_reply(Decision::StopRequested, AttemptState::Assigned);
+        journal.record_completion_response(&request, &stop).unwrap();
+        journal.record_completion_response(&request, &stop).unwrap();
+        assert_eq!(
+            journal.record_completion_response(
+                &request,
+                &completion_reply(Decision::Accepted, AttemptState::Failed)
+            ),
+            Err(JournalError::Conflict)
+        );
+        let final_reply = completion_reply(
+            resolution,
+            if resolution == Decision::Fenced {
+                AttemptState::Assigned
+            } else {
+                AttemptState::Lost
+            },
+        );
+        journal
+            .record_completion_response(&request, &final_reply)
+            .unwrap();
+        assert_eq!(
+            journal.record_completion_response(&request, &stop),
+            Err(JournalError::Conflict)
+        );
+        assert_eq!(
+            journal
+                .load_attempt(ATTEMPT)
+                .unwrap()
+                .unwrap()
+                .completion_response(),
+            Some(&final_reply)
+        );
+    }
+}
+
+#[test]
+fn successful_completion_reply_retains_original_manifest_bytes() {
+    let fixture = Fixture::new();
+    let mut journal = fixture.open();
+    journal.persist_assignment(&assignment()).unwrap();
+    journal
+        .prepare_phase(ATTEMPT, AttemptState::Starting)
+        .unwrap();
+    journal.bind_container(ATTEMPT, &"a".repeat(64)).unwrap();
+    journal.record_exit(ATTEMPT, 0, false).unwrap();
+    journal
+        .prepare_phase(ATTEMPT, AttemptState::Finalizing)
+        .unwrap();
+    let mut request = completion();
+    request.reason = FailureReason::Unspecified as i32;
+    request.exit_code = Some(0);
+    request.payload_sha256 = completion_digest(&request).unwrap();
+    journal.persist_completion(&request).unwrap();
+    let a = request.authority.as_ref().unwrap();
+    let raw = serde_json::to_vec_pretty(&serde_json::json!({
+        "version":1, "authority":{"jobId":a.job_id,"attemptId":a.attempt_id,"workerId":a.worker_id,"sessionId":a.session_id,"generation":a.generation},
+        "state":"SUCCEEDED", "exitCode":0,"reason":"","cleanupPending":false,"outputs":[],"metrics":{"counter":9007199254740993u64}
+    })).unwrap();
+    let mut reply = completion_reply(Decision::Accepted, AttemptState::Succeeded);
+    assert_eq!(
+        journal.record_completion_response(&request, &reply),
+        Err(JournalError::Invalid)
+    );
+    reply.accepted_manifest_json = raw;
+    journal
+        .record_completion_response(&request, &reply)
+        .unwrap();
+    drop(journal);
+    assert_eq!(
+        fixture
+            .open()
+            .load_attempt(ATTEMPT)
+            .unwrap()
+            .unwrap()
+            .completion_response(),
+        Some(&reply)
+    );
 }
 
 #[tokio::test]
@@ -756,6 +899,13 @@ fn journal_process_child() {
     j.persist_assignment(&assignment()).unwrap();
     let request = j.prepare_phase(ATTEMPT, AttemptState::Starting).unwrap();
     j.persist_completion(&completion()).unwrap();
+    if std::env::var("DISPATCH_JOURNAL_CHILD_ACK").as_deref() == Ok("1") {
+        j.record_completion_response(
+            &completion(),
+            &completion_reply(Decision::Accepted, AttemptState::Failed),
+        )
+        .unwrap();
+    }
     let marker = PathBuf::from(marker);
     let pending = marker.with_extension("pending");
     // Publish readiness only after the complete event ID is visible; the parent
@@ -777,6 +927,12 @@ fn journal_process_child() {
 
 #[test]
 fn killed_owner_releases_lock_and_preserves_acknowledged_retry_identity() {
+    for acknowledged in [false, true] {
+        killed_owner_case(acknowledged);
+    }
+}
+
+fn killed_owner_case(acknowledged: bool) {
     use std::{
         process::{Child, Command, Stdio},
         time::{Duration, Instant},
@@ -802,6 +958,10 @@ fn killed_owner_releases_lock_and_preserves_acknowledged_retry_identity() {
             ])
             .env("DISPATCH_JOURNAL_CHILD_ROOT", &root)
             .env("DISPATCH_JOURNAL_CHILD_MARKER", &marker)
+            .env(
+                "DISPATCH_JOURNAL_CHILD_ACK",
+                if acknowledged { "1" } else { "0" },
+            )
             .stdout(Stdio::null())
             .spawn()
             .unwrap(),
@@ -827,6 +987,16 @@ fn killed_owner_releases_lock_and_preserves_acknowledged_retry_identity() {
     let marker = fs::read_to_string(marker).unwrap();
     let (event, old_session) = marker.split_once('\n').unwrap();
     let mut reopened = Journal::open(root, WORKER, JournalLimits::default()).unwrap();
+    let expected_reply =
+        acknowledged.then(|| completion_reply(Decision::Accepted, AttemptState::Failed));
+    assert_eq!(
+        reopened
+            .load_attempt(ATTEMPT)
+            .unwrap()
+            .unwrap()
+            .completion_response(),
+        expected_reply.as_ref()
+    );
     assert_eq!(
         reopened
             .load_attempt(ATTEMPT)

@@ -1384,3 +1384,20 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   a rejected success request, cleanup/retention, and connecting recovered requests
   to the actual agent's delivery loop remain required. This slice stores pending
   evidence; it does not claim completion acceptance or restore execution authority.
+
+### D11p: Durable completion acknowledgements
+
+- Persist validated completion replies atomically beside their exact pending
+  request. Recovered acknowledgements preserve original manifest bytes and are
+  revalidated before use. Replies for changed/missing requests cannot resolve them.
+- Repeated replies are idempotent; accepted/fenced/already-terminal outcomes cannot
+  change. STOP_REQUESTED may advance only to a fenced/already-terminal rejection,
+  never acceptance of the same payload after irreversible stop intent.
+- Tests first failed for missing journal APIs. Native `make test lint smoke` and
+  Linux worker tests passed after implementation. Journal tests cover reply binding,
+  conflicting decisions, stop resolution, malformed successful replies, and original
+  manifest formatting/large integers. The process-death fixture runs both pending
+  and acknowledged cases and recovers the matching evidence after killing its owner.
+- Updated completion/journal documentation. No network or runtime operation occurs
+  under the journal lock. A persisted publication decision does not prove physical
+  cleanup or release local capacity; delivery integration and retention remain open.
