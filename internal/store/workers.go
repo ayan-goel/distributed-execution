@@ -34,16 +34,29 @@ type WorkerProvision struct {
 var workerName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$`)
 
 func (p WorkerProvision) validate() error {
-	r := p.Resources
+	if !workerName.MatchString(p.Name) || p.CertificateSHA256 == ([32]byte{}) || len(p.Projects) < 1 || len(p.Projects) > 64 {
+		return ErrInvalid
+	}
+	seen := map[string]bool{}
+	for _, name := range p.Projects {
+		if !workerName.MatchString(name) || seen[name] {
+			return ErrInvalid
+		}
+		seen[name] = true
+	}
+	return validateWorkerConfiguration(p.Resources, p.Slots, p.Labels)
+}
+
+func validateWorkerConfiguration(r spec.Resources, slots int, labels map[string]string) error {
 	// Bound capacities before SQL and future byte conversions. These are host
 	// ceilings, not worker claims; scheduling must also respect project quotas.
-	if !workerName.MatchString(p.Name) || p.CertificateSHA256 == ([32]byte{}) || r.CPUMillis < 1 || r.CPUMillis > 1_024_000 || r.MemoryMiB < 1 || r.MemoryMiB > 16_777_216 || r.ScratchMiB < 1 || r.ScratchMiB > 1_073_741_824 || p.Slots < 1 || p.Slots > 1000 || len(p.Projects) < 1 || len(p.Projects) > 64 || len(p.Labels) > 64 {
+	if r.CPUMillis < 1 || r.CPUMillis > 1_024_000 || r.MemoryMiB < 1 || r.MemoryMiB > 16_777_216 || r.ScratchMiB < 1 || r.ScratchMiB > 1_073_741_824 || slots < 1 || slots > 1000 || len(labels) > 64 {
 		return ErrInvalid
 	}
-	if p.Labels["os"] != "linux" || (p.Labels["architecture"] != "amd64" && p.Labels["architecture"] != "arm64") {
+	if labels["os"] != "linux" || (labels["architecture"] != "amd64" && labels["architecture"] != "arm64") {
 		return ErrInvalid
 	}
-	for key, value := range p.Labels {
+	for key, value := range labels {
 		if !workerName.MatchString(key) || len(value) == 0 || len(value) > 256 || !utf8.ValidString(value) {
 			return ErrInvalid
 		}
@@ -52,13 +65,6 @@ func (p WorkerProvision) validate() error {
 				return ErrInvalid
 			}
 		}
-	}
-	seen := map[string]bool{}
-	for _, name := range p.Projects {
-		if !workerName.MatchString(name) || seen[name] {
-			return ErrInvalid
-		}
-		seen[name] = true
 	}
 	return nil
 }

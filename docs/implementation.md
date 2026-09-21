@@ -276,3 +276,17 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   The test service only echoes authenticated identity. Real registration/session
   transitions and executable listener wiring remain next; no worker execution is
   implied by this transport gate.
+
+### D06c: durable session registration
+
+- Added immutable session registration hashes and replay records, transactionally
+  bound to the provisioned worker credential and capacity/label policy. Registration
+  starts REGISTERING and does not expose schedulable capacity.
+- Tests first failed for missing session operations. Real PostgreSQL now passes
+  32 concurrent duplicates with one session, matching-incarnation request aliases,
+  changed-claim conflicts, competing incarnation rejection, resource/label/protocol
+  validation, transaction-time credential revocation, and injected-audit rollback.
+- `make test lint smoke integration` passed, including fourth-migration rollback
+  and reapply. Reviewed lock ordering, replay identity, and policy enforcement.
+- Added `docs/worker-sessions.md`. Recovery/takeover, heartbeat reconciliation,
+  registration RPC handlers, and executable wiring remain required.
