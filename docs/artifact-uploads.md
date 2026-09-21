@@ -13,6 +13,8 @@ is integrated with the authenticated upload RPC described below. The
 [verified artifact API](verified-artifacts.md) registers exact versions separately.
 Creating a declaration neither verifies uploaded data
 nor accepts a result, renews a lease, changes phase, or releases reservations.
+The [Rust transfer components](worker-transfers.md) now exercise this path through
+real mTLS and versioned storage; production execution integration remains pending.
 
 ## Identity and replay
 

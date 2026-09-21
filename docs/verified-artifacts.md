@@ -121,5 +121,6 @@ return the same artifact. Subsequent URL reuse cannot alter the selected version
 and cancellation prevents even a verified replay from claiming current authority.
 
 Terminal manifest validation/publication is implemented in the separate completion
-store; its RPC and the Rust transfer pipeline remain required work. Multipart
-completion is still rejected explicitly.
+store and RPC. The [Rust transfer components](worker-transfers.md) now upload and
+register exact versions through this API. Durable upload recovery and live worker
+execution integration remain required. Multipart completion is still rejected explicitly.

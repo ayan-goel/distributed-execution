@@ -217,6 +217,7 @@ func realMTLSArtifactFlow(t *testing.T, complete bool) {
 	if replay, err := client.FinalizeUpload(ctx, finalize); err != nil || !proto.Equal(replay, verified) {
 		t.Fatal("finalization replay changed artifact", err)
 	}
+	verifyRustUpload(t, pool, objects, request, body)
 	if code, _ := put(grant, strings.Repeat("x", len(body))); code == http.StatusOK {
 		t.Fatal("wire grant accepted wrong checksum")
 	}

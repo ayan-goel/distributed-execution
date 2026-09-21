@@ -7,9 +7,9 @@ job files offline and download accepted artifacts with version/size/checksum che
 The worker command registers, reconciles old containers, recovers journaled completion
 requests, and reports health; its acquisition loop is still pending. The execution component is
 integration-tested through Docker exit, FINALIZING, and safe declared-file collection.
-The server supports verified
-artifact publication and atomic completion; Rust transfers and connecting live
-execution to completion delivery remain to integrate.
+The server supports verified artifact publication and atomic completion. Rust
+single-part transfers are tested through real versioned storage; durable upload
+recovery and connecting live execution to completion delivery remain to integrate.
 
 See [the specification](Dispatch_Project_Spec.md) for the product contract and
 [the verification ledger](docs/implementation.md) for completed slices and release gates.

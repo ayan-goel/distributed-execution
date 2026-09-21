@@ -1465,3 +1465,32 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   production session, lease, or locking behavior changed.
 - The complete store integration package passed after the correction, alongside
   admission, API, and worker RPC tests in the combined versioned-storage run.
+
+### D11t: Rust single-part upload and exact-version registration
+
+- Added validated Rust CreateUpload/FinalizeUpload methods with five-second local
+  and wire deadlines, caller-owned stable request IDs, scoped object keys, bounded
+  declarations/grants, and exact finalization reply binding.
+- Added streaming HTTP PUT with independent TLS, explicit loopback-only development
+  HTTP, no redirects/proxies/automatic retries, restricted signed headers, four
+  shared permits, and an expiry-bounded 30-second queue/transfer budget. Fixed-size
+  chunks recompute SHA-256 and verify length/EOF before releasing the final bytes.
+  Empty files take an explicit verification path. Responses require exactly one
+  non-null immutable version and expose no raw backend diagnostics/capabilities.
+- Tests first failed because the component was absent, then caught missing explicit
+  TLS crypto-provider initialization. Pinned reqwest 0.13.5 with default features
+  disabled and selected the existing ring-backed rustls 0.23.40 dependency. Native
+  and pinned Linux Rust 1.88 builds/tests pass with the updated lockfile.
+- Six transfer tests cover bytes across multiple chunks, empty files, invalid
+  grants, modified/truncated/grown files, redirects, response deadlines, and
+  missing/null/duplicate version headers. The real PostgreSQL/mTLS/SeaweedFS suite
+  now calls Rust grant/PUT/finalization, drops first committed replies, and verifies
+  identical retries leave one upload and one exact-version artifact.
+- `make test lint smoke`, Linux worker tests, and the complete combined object-store
+  and PostgreSQL integration suite passed. The first full run exposed the unrelated
+  lease-test observation defect corrected separately in D11s; the final run passed
+  all store, admission, API, worker RPC, and server integration packages.
+- Added `docs/worker-transfers.md`, refreshed artifact API docs and README. This
+  component path is not yet connected to live acquisition/execution: durable upload
+  intent/version recovery, authority-aware orchestration, multipart, and remaining
+  v0.1 features and release gates are still required.
