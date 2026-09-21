@@ -12,7 +12,10 @@ use std::{
     fs,
     os::unix::fs::{symlink, DirBuilderExt, PermissionsExt},
     path::PathBuf,
-    sync::atomic::{AtomicU64, Ordering},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        RwLock, RwLockReadGuard,
+    },
 };
 
 const WORKER: &str = "00000000-0000-0000-0000-000000000001";
@@ -21,9 +24,16 @@ const ATTEMPT: &str = "00000000-0000-0000-0000-000000000004";
 #[path = "journal/upload_cases.rs"]
 mod upload_cases;
 
-struct Fixture(PathBuf);
+// A spawned child can briefly inherit another test's flock descriptor before
+// exec closes it. Exclude process creation from in-process drop/reopen assertions;
+// ordinary journal tests still run concurrently with one another.
+static PROCESS_GATE: RwLock<()> = RwLock::new(());
+struct Fixture(PathBuf, Option<RwLockReadGuard<'static, ()>>);
 impl Fixture {
     fn new() -> Self {
+        Self::with_gate(Some(PROCESS_GATE.read().unwrap()))
+    }
+    fn with_gate(gate: Option<RwLockReadGuard<'static, ()>>) -> Self {
         static NEXT: AtomicU64 = AtomicU64::new(0);
         let root = std::env::temp_dir().join(format!(
             "dispatch-journal-{}-{}",
@@ -31,7 +41,7 @@ impl Fixture {
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
         fs::DirBuilder::new().mode(0o700).create(&root).unwrap();
-        Self(root.canonicalize().unwrap())
+        Self(root.canonicalize().unwrap(), gate)
     }
     fn open(&self) -> Journal {
         Journal::open(&self.0, WORKER, JournalLimits::default()).unwrap()
@@ -40,6 +50,7 @@ impl Fixture {
 impl Drop for Fixture {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);
+        self.1.take();
     }
 }
 
@@ -947,7 +958,8 @@ fn killed_owner_case(acknowledged: bool) {
             let _ = self.0.wait();
         }
     }
-    let f = Fixture::new();
+    let _exclusive = PROCESS_GATE.write().unwrap();
+    let f = Fixture::with_gate(None);
     let root = f.0.join("state");
     let marker = f.0.join("ready");
     fs::DirBuilder::new().mode(0o700).create(&root).unwrap();

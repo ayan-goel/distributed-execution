@@ -1529,3 +1529,17 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   must still register a new incarnation and fence old unfinished attempts. Live
   authority/cancellation orchestration, execution integration, multipart, and the
   remaining v0.1 features/release gates are still required.
+
+### D11w: Isolate subprocess creation from concurrent journal reopen tests
+
+- Linux verification exposed `Busy` in an existing immediate drop/reopen test.
+  Focused repetition reproduced it in another synchronous reopen case on the
+  second run. Thirty runs excluding the process-death test passed: a concurrent
+  child can briefly inherit another test's flock descriptor before exec closes it.
+- Added a test-only read/write gate. Ordinary journal fixtures share the read
+  side; process-death cases take exclusive access across child creation and
+  recovery. Journal tests still run concurrently, and production lock ownership,
+  immediate `Busy` errors, and durability behavior are unchanged.
+- Thirty complete Linux journal runs then passed, including both killed-owner
+  cases. Native journal tests, final lint, and the complete Linux worker suite
+  also passed. No retry or delay was added to production locking.
