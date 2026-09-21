@@ -1332,3 +1332,27 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 - Updated completion/protocol documentation. This verifies worker-side payload
   compatibility; completion RPC delivery, durable retry/recovery, Rust transfers,
   and the production worker job loop remain separate required work.
+
+### D11n: Rust completion RPC and lost acknowledgement recovery
+
+- Added `ControlClient::complete_attempt` using the existing mTLS transport and
+  five-second wire/local bounds. It validates the claimed digest before sending
+  caller-owned evidence and never rewrites the identity or payload on retry.
+- Validate decision/state combinations and bind accepted successful manifests to
+  the request authority, outcome, and exact output references. Retain original
+  manifest bytes with a 2 MiB bound; no metric float conversion or artifact I/O.
+- Added Rust unit tests and a Rust executable probe driven by the real Go server
+  and PostgreSQL. The fixture commits and discards the first acknowledgement for
+  success, failure, and cancellation; exact retries recover one completion/event
+  and one released reservation. Changed evidence conflicts, spoofed worker claims
+  fail authentication binding, and unknown attempts are fenced.
+- Initial tests failed for the missing client validation. Review then reproduced
+  Serde accepting a positional array as a struct; added a manifest object check
+  and a regression test. Four completion-client unit tests pass.
+- `scripts/test-store.sh`, native `make test lint smoke`, and Linux worker tests
+  passed. The first sandboxed native attempt could not bind fake-daemon Unix
+  sockets; rerunning with socket access passed. After the object check, targeted
+  PostgreSQL/mTLS tests, Linux worker tests, and `make lint smoke` passed again.
+- Updated completion documentation. Durable completion journaling/restart recovery,
+  Rust output transfers, and the production acquisition/execution/delivery loop
+  remain required; this fixture verifies transport replay, not process recovery.

@@ -211,3 +211,39 @@ int64 limits, numeric precision/exponents/subnormals/zero, byte/count limits,
 duplicate keys, malformed metrics, conflicting outputs/gaps, failure reasons, and
 missing exit evidence. This establishes payload compatibility, not worker delivery,
 artifact transfer, or completion-journal recovery.
+
+## Rust completion RPC (D11n)
+
+`ControlClient::complete_attempt` sends caller-owned evidence through the existing
+mTLS channel with a five-second local and wire deadline. Before sending, it checks
+the request's canonical digest against `payload_sha256`; it does not generate an
+identity, repair a digest, or retry with changed evidence. Transport failures retain
+the existing retryable classification. The caller must persist the request before
+delivery and decide when to retry.
+
+Acknowledgements validate decision/state combinations. Accepted state must match
+the submitted reason: SUCCEEDED for success, CANCELLED for user cancellation, and
+FAILED for other worker failures. An already-terminal response does not acknowledge
+this completion. Only accepted success can contain a manifest; all other responses
+must have empty manifest bytes.
+
+Accepted manifests must be JSON objects bounded to 2 MiB. The client checks version,
+authority, successful exit/outcome, confirmed cleanup, and the complete output
+name/artifact-ID set against the request. It retains the original bytes and does
+not deserialize metrics into floating-point values. Full manifest/schema and object
+integrity validation remain server responsibilities. The checked manifest fields
+reject duplicates, while unknown fields remain forward-compatible. Serde's alternate
+positional-array struct encoding is explicitly rejected at the manifest root.
+
+Unit tests cover malformed/oversized manifests, mismatched ownership and outputs,
+digest mismatch, inconsistent decisions, and byte preservation. The Go integration
+test runs the actual Rust `completion_probe` against PostgreSQL and the mTLS server.
+It commits the first call and replaces its acknowledgement with `Unavailable`, then
+requires unchanged retries to recover the stored result. Success, failure, and
+cancellation each produce one completion/event and release one stopped reservation.
+Changed evidence returns a conflict; a spoofed worker is denied before the handler;
+an unknown attempt is fenced. No storage request occurs after artifact verification.
+
+The probe is a protocol fixture, not a production delivery loop. Durable completion
+journaling, recovery after process restart, output transfers, and connecting these
+operations to the worker's execution loop remain required.
