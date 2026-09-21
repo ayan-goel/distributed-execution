@@ -162,3 +162,14 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   passed. The current internal admission function rejects unresolved datasets.
 - This is not a public submission endpoint yet. Project authentication, registry
   resolution, dataset manifests, HTTP integration, and CLI remain required.
+
+### D05b: hashed project tokens and permissions
+
+- Added a second migration for project-scoped API token hashes and audit events.
+  Tokens use 256-bit random secrets, returned once, with read/submit/operator roles.
+- Tests first failed with missing auth operations. Real PostgreSQL tests now pass
+  for role separation, hash-only storage, unknown/revoked tokens, project disabling,
+  cross-project revocation rejection, repeated revocation, and atomic audit records.
+- Full schema migration/rollback/reapply and race-enabled store tests passed;
+  `make test lint build` passed. No HTTP authentication endpoint is exposed yet.
+- Added `docs/security.md` with implemented boundaries and remaining release work.
