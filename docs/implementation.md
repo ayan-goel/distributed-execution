@@ -78,3 +78,17 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 - `make test lint smoke` passed locally using macOS Command Line Tools. There is
   no application behavior yet; the initial test gate is executable smoke coverage.
 - CI workflow is checked in but remote CI cannot run until a remote is configured.
+
+### D02a: job contract
+
+- Added bounded JSON/YAML parsing, typed fields, path/resource/deadline validation,
+  request normalization and SHA-256 identity, and the specification's job example.
+- Tests first failed with missing parser/types. Added negative cases for unsupported
+  GPUs/privilege/networking, traversal, overlapping outputs, duplicate keys, malformed
+  types, retry bounds, and oversized/multiple documents.
+- Two further regression tests reproduced JSON field-case acceptance and omitted
+  retry-list round-trip failure; both now pass.
+- `make test lint build` passed, including Go's race detector. A 5-second fuzz run
+  executed 16,534 inputs with no failures. This establishes parsing, not admission,
+  image resolution, authorization, or runtime containment.
+- Contract and limits documented in `docs/contracts.md`. Sweep contract remains next.

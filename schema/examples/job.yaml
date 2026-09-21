@@ -1,0 +1,45 @@
+apiVersion: dispatch.dev/v1alpha1
+kind: Job
+metadata:
+  name: antibody-evaluation
+  project: research
+  labels:
+    experiment: masking-comparison
+spec:
+  image: registry.example.org/antibody-eval:2026-09
+  command: [python, evaluate.py]
+  args: [--dataset, /inputs/antibodies, --output, /outputs]
+  env:
+    MASKING_METHOD: knn
+    LEARNING_RATE: "0.0001"
+    SEED: "1"
+  resources:
+    cpuMillis: 2000
+    memoryMiB: 4096
+    scratchMiB: 8192
+  placement:
+    labels:
+      architecture: amd64
+  inputs:
+    - dataset: antibodies-v1
+      mountPath: /inputs/antibodies
+  outputs:
+    - name: metrics
+      path: /outputs/metrics.json
+      required: true
+      maxBytes: 1048576
+    - name: predictions
+      path: /outputs/predictions.parquet
+      required: true
+      maxBytes: 536870912
+  timeouts:
+    startupSeconds: 300
+    executionSeconds: 1800
+    finalizationSeconds: 300
+  retry:
+    maxAttempts: 3
+    on: [WORKER_LOST, RUNTIME_UNAVAILABLE, TRANSFER_FAILED]
+    initialBackoffSeconds: 5
+    maxBackoffSeconds: 60
+  terminationGraceSeconds: 10
+  network: disabled
