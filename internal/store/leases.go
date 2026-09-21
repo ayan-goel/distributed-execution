@@ -49,7 +49,7 @@ func (r LeaseRenewal) hash(workerID string) (string, error) {
 	return hex.EncodeToString(digest[:]), nil
 }
 
-func requireLeaseSession(ctx context.Context, tx pgx.Tx, workerID, sessionID string) error {
+func requireCurrentWorkerSession(ctx context.Context, tx pgx.Tx, workerID, sessionID string) error {
 	var current bool
 	err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM workers w JOIN worker_sessions s ON s.worker_id=w.id AND s.id=w.current_session_id WHERE w.id=$1 AND s.id=$2 AND s.fenced_at IS NULL)`, workerID, sessionID).Scan(&current)
 	if err != nil {
@@ -184,7 +184,7 @@ func RenewLeases(ctx context.Context, pool *pgxpool.Pool, id WorkerIdentity, r L
 	if err = authorizeWorkerTx(ctx, tx, id); err != nil {
 		return nil, err
 	}
-	if err = requireLeaseSession(ctx, tx, id.WorkerID, r.SessionID); err != nil {
+	if err = requireCurrentWorkerSession(ctx, tx, id.WorkerID, r.SessionID); err != nil {
 		return nil, err
 	}
 	// Insert before ownership locks to serialize duplicate batches, including
@@ -215,7 +215,7 @@ func RenewLeases(ctx context.Context, pool *pgxpool.Pool, id WorkerIdentity, r L
 	// Recovery locks every live attempt's job before fencing its session. Holding
 	// those jobs makes this recheck stable for any authority we can grant, without
 	// taking a worker lock that would serialize independent renewal batches.
-	if err = requireLeaseSession(ctx, tx, id.WorkerID, r.SessionID); err != nil {
+	if err = requireCurrentWorkerSession(ctx, tx, id.WorkerID, r.SessionID); err != nil {
 		return nil, err
 	}
 	var now time.Time

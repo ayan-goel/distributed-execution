@@ -68,7 +68,7 @@ func TestConcurrentMigrationsAndDrift(t *testing.T) {
 		}
 	}
 	var count int
-	if err := pool.QueryRow(ctx, "SELECT count(*) FROM schema_migrations").Scan(&count); err != nil || count != 7 {
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM schema_migrations").Scan(&count); err != nil || count != 8 {
 		t.Fatalf("applied %d migrations: %v", count, err)
 	}
 	if _, err := pool.Exec(ctx, "UPDATE schema_migrations SET checksum=repeat('0',64)"); err != nil {

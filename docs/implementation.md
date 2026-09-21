@@ -24,7 +24,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D05 durable submission | D02,D03 | HTTP/CLI submission; 100 identical requests yield one job; changed payload conflicts | input-free job admission, auth, image resolution, HTTP/CLI gates passed; datasets depend on D16 |
 | D06 worker identities | D03,D04 | Authenticated registration, session takeover/recovery; stale-session rejection | control-plane, executable, and Rust client gates passed; runtime/agent loop pending |
 | D07 acquisition | D03,D06 | Atomic assignment/reservations; concurrent quota/capacity races; acquisition replay | store, RPC, and Rust client gates passed; production agent loop pending |
-| D08 Docker adapter | D04 | Real bounded create/start/inspect/stop; ambiguous create reconciles one identity | spec and cached-image lifecycle gates passed; image staging and strict workspace integration pending |
+| D08 Docker adapter | D04 | Real bounded create/start/inspect/stop; ambiguous create reconciles one identity | spec, cached-image lifecycle, and phase store gates passed; phase RPC/client, image staging, and strict workspace integration pending |
 | D09 leases | D06,D07 | Fresh DB-time expiry checks; delayed grants; local monotonic deadline enforcement | local deadline, store, RPC, and Rust renewal client gates passed; production loop, reaper, and supervisor pending |
 | D10 worker recovery | D08,D09 | Durable journal; agent kill/restart stops old containers before new capacity | pending |
 | D11 artifacts | D03,D04 | Scoped grants; verified exact versions; stale publication rejection | pending |
@@ -613,3 +613,28 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 - The production renewal loop, per-attempt supervision, durable journal, reaper,
   and remaining full v0.1 gates are still required. No container execution or
   termination-at-expiry gate is claimed from a protocol fixture.
+
+### D08c: fenced attempt phase transitions
+
+- Added migration 0008 for immutable container bindings and durable phase-report
+  identities, plus `store.ReportPhase` for startup, running, and finalization.
+  Startup acknowledgement preserves the assignment timeout; forward transitions
+  use configured deadlines without renewing leases or releasing reservations.
+- Reports validate full ownership, current session, fresh post-lock database time,
+  cancellation, container identity, and exit status. Replays return current progress
+  without regression or deadline resets. Fast-exit processes may move directly from
+  STARTING to FINALIZING with a container ID and exit status.
+- The store gate first failed for missing types/API. Real PostgreSQL tests now pass
+  for concurrent replay, cross-attempt event-ID conflicts, deadline bounds, terminal
+  outcomes, cancellation/expiry, stale authority, immutable container identity,
+  changed exit evidence, and transaction rollback on injected event-write failure.
+  An observed lock-wait expiry test proves transaction-start time is not used.
+- Confirmed phase reporting does not wait on held scheduler or worker row locks.
+  Reviewed event-claim/FK ordering and fresh-time evaluation after replay waits.
+  Shared only the existing current-session check and ownership-lock helpers with
+  renewal; the phase path does not touch capacity or publication.
+- `sh scripts/test-store.sh`, `sh scripts/test-schema.sh`, and `make test lint smoke`
+  passed. Documented semantics, replay, transitions, verification, and worker
+  integration requirements in `docs/worker-phases.md`.
+- Phase RPC/client, journaling, production renewal/supervision, and all remaining
+  v0.1 release gates stay open. A database phase report is not runtime evidence.
