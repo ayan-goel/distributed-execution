@@ -54,9 +54,9 @@ old executions before making capacity eligible. Scheduling must filter through
 
 `AuthenticateWorker` is an internal lookup for an **already verified mTLS leaf
 certificate**, not a public fingerprint-based login. A fingerprint supplied in an
-RPC body is not authentication. The mTLS listener, certificate verification,
-provisioning commands, session registration, and enforcement at worker RPCs remain
-the next required slices.
+RPC body is not authentication. The mTLS transport boundary below now verifies
+this distinction. Provisioning commands, executable listener wiring, and session
+registration remain required.
 
 Credential revocation and its audit event commit together. Repeated revocation adds
 no extra event; authentication checks the database without caching. Revocation
@@ -68,6 +68,38 @@ identity lookup, unknown/revoked credential rejection, cross-host revocation den
 project scoping, missing-project rollback, and injected audit failures that roll
 back both provisioning and revocation. Unit tests cover platform/label/resource
 bounds. All migrations pass fresh apply, rollback, and reapply.
+
+## Worker mTLS transport boundary (D06b)
+
+`internal/workerapi.NewServer` constructs a gRPC server requiring TLS 1.3 and a
+client certificate verified against explicit operator-provided client CA roots.
+After TLS verifies the chain and client-authentication purpose, the interceptor
+looks up the public leaf's SHA-256 fingerprint in PostgreSQL. It does not trust
+certificate subjects, request fields, or metadata to identify the installed host.
+
+Every unary worker method binds its worker ID to that identity. Heartbeat inventory
+may report old sessions only on the same host; renewal batches must also match the
+enclosing session. These checks supplement the required durable session/attempt
+checks, which are not implemented yet. A valid host credential does not itself
+authorize an attempt mutation.
+
+The interceptor rechecks certificate-chain validity dates and database revocation
+on every RPC, including an existing connection. Calls have a five-second deadline,
+256 global in-flight slots, 4-MiB request/response limits, and 16-KiB header limits.
+Connections allow at most 64 simultaneous streams and have a five-second handshake
+timeout. This constructor has no plaintext mode.
+
+Tests use a real gRPC/TLS listener and PostgreSQL with a test-only identity-echo
+service. They prove valid identity propagation, host impersonation rejection,
+unknown certificate rejection, live revocation on the same connection, oversized
+message rejection, and TLS refusal of missing, untrusted, and server-only client
+certificates. Invalid-certificate fingerprints are deliberately enrolled in the
+database so lookup rejection cannot hide a missing TLS check. Unit tests cover
+certificate expiry after handshake and nested inventory/renewal identity binding.
+This verifies transport authentication, not working registration or execution.
+
+References: [Go TLS configuration](https://pkg.go.dev/crypto/tls#Config) and
+[gRPC TLS peer information](https://pkg.go.dev/google.golang.org/grpc/credentials#TLSInfo).
 
 ## Still required before release
 
