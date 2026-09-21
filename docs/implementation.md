@@ -25,7 +25,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D06 worker identities | D03,D04 | Authenticated registration, session takeover/recovery; stale-session rejection | control-plane, Rust client, and worker startup/health loop gates passed; active-job supervision pending |
 | D07 acquisition | D03,D06 | Atomic assignment/reservations; concurrent quota/capacity races; acquisition replay | store, RPC, and Rust client gates passed; production agent loop pending |
 | D08 Docker adapter | D04 | Real bounded create/start/inspect/stop; ambiguous create reconciles one identity | spec, cached-image lifecycle, and phase store/RPC/Rust client gates passed; image staging and strict workspace integration pending |
-| D09 leases | D06,D07 | Fresh DB-time expiry checks; delayed grants; local monotonic deadline enforcement | local deadline, store, RPC, and Rust renewal client gates passed; production loop, reaper, and supervisor pending |
+| D09 leases | D06,D07 | Fresh DB-time expiry checks; delayed grants; local monotonic deadline enforcement | deadline, store/RPC/client, and live-container watchdog gates passed; periodic renewal, reaper, and launch integration pending |
 | D10 worker recovery | D08,D09 | Durable journal; agent kill/restart stops old containers before new capacity | journal, discovery/cleanup, and actual startup process gates passed; agent-owned job kill/restart gate pending |
 | D11 artifacts | D03,D04 | Scoped grants; verified exact versions; stale publication rejection | pending |
 | D12 first real job | D05–D11 | CLI submit → gRPC → Docker → verified output → CLI download | pending |
@@ -801,3 +801,30 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   gate still depends on acquisition and supervision. This worker reports readiness
   but does not yet acquire work. Strict scratch, signal shutdown, leases during
   active work, storage/publication, and the remaining complete v0.1 gates stay open.
+
+### D09e: live-container authority watchdog
+
+- Added a bounded watch channel for exact attempt identity and live authority.
+  Typed renewal updates cannot revive an expired window or overwrite a stop.
+  Server rejection, controller loss, expiry, and runtime uncertainty cause immediate
+  kill followed by an independent bounded inspection. Unconfirmed cleanup remains
+  explicit; the watchdog does not publish results, release reservations, or delete
+  containers and evidence.
+- Tests cover stalled and slow inspections, identity mismatch, late renewal,
+  continuing valid renewal, all three rejection decisions, and uncertain cleanup.
+  The real Docker fixture starts a sleeper, expires its synthetic local grant,
+  observes confirmed termination, and independently checks that it is stopped.
+  This is component evidence, not a real control-channel partition gate.
+- Reviewed the pinned Tokio watch implementation: `send_if_modified` serializes
+  state changes under its write lock. Runtime futures remain pinned across deadline
+  checks so slow inspections are not continually restarted. Checks use the earlier
+  of remaining authority and 100 ms; cleanup has separate five-second budgets.
+- Verification handles from the preceding turn were no longer available, so fresh
+  `make test lint smoke` and `make integration` runs supplied current evidence.
+  Native testing exposed same-tick temporary-directory collisions in the existing
+  Docker fault fixture. Added a process ID and atomic counter to its timestamp name;
+  focused fault tests, final native checks, and final Linux worker tests passed.
+  The full integration run also passed Docker, migrations, and PostgreSQL workflows.
+- Documented the component and its limits in `docs/worker-supervision.md` and linked
+  it from lease documentation. Periodic batched renewal, durable launch coordination,
+  agent acquisition, reaping, finalization, and the remaining v0.1 gates stay open.

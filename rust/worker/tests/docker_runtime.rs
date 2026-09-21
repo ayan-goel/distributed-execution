@@ -3,6 +3,7 @@ use dispatch_worker::{
     execution::ExecutionSpec,
     lease::{AuthorityWindow, MonoTime},
     runtime::{DockerRuntime, PreparedWorkspace, RecoveryRuntime, Runtime, RuntimeError},
+    supervisor::{authority_channel, supervise_running, StopReason, SupervisionOutcome},
 };
 use ring::digest::{digest, SHA256};
 
@@ -155,6 +156,24 @@ id -u; printf out; printf err >&2; printf result > /outputs/result; sleep 1
         &std::env::var("DISPATCH_TEST_IMAGE").unwrap(),
         &["/bin/sh", "-c", "sleep 30"],
     );
+    let handle = runtime
+        .create(&identity, &sleeper, &workspace, &lease())
+        .await
+        .unwrap();
+    runtime.start(&handle, &lease()).await.unwrap();
+    let now = MonoTime::now().unwrap();
+    let short = AuthorityWindow::from_grant(now, now, 30_000, 300).unwrap();
+    let (_controller, authority) = authority_channel(identity.clone(), short).unwrap();
+    assert!(matches!(
+        supervise_running(&runtime, &handle, authority).await,
+        SupervisionOutcome::Stopped {
+            reason: StopReason::AuthorityExpired,
+            confirmed: true
+        }
+    ));
+    assert!(!runtime.inspect(&handle).await.unwrap().running);
+    runtime.remove(&handle).await.unwrap();
+    identity.attempt_id.replace_range(24..36, "000000000013");
     let handle = runtime
         .create(&identity, &sleeper, &workspace, &lease())
         .await
@@ -412,12 +431,16 @@ mod faults {
     }
     impl Fixture {
         fn new(stall_image: bool) -> Self {
+            static NEXT: AtomicUsize = AtomicUsize::new(0);
+            // Same-tick parallel fixtures need a counter; the PID isolates runners.
             let root = std::env::temp_dir().join(format!(
-                "dr-{:x}",
+                "dr-{:x}-{:x}-{:x}",
+                std::process::id(),
                 SystemTime::now()
                     .duration_since(UNIX_EPOCH)
                     .unwrap()
-                    .as_nanos()
+                    .as_nanos(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
             ));
             std::fs::create_dir(&root).unwrap();
             let root = std::fs::canonicalize(root).unwrap();

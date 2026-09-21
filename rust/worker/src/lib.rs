@@ -6,3 +6,4 @@ pub mod execution;
 pub mod journal;
 pub mod lease;
 pub mod runtime;
+pub mod supervisor;

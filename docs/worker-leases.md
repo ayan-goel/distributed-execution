@@ -34,10 +34,11 @@ each response. Expired responses preserve only attempt identity for reconciliati
 they cannot return a live execution window. The mTLS delayed-grant integration test
 checks elapsed RPC time against this boundary using the actual client.
 
-The future supervisor must recheck authority before starting/continuing work and
-initiate bounded termination early enough for cleanup. This primitive is not a
-running watchdog, renewal loop, reaper, or proof that a frozen host can stop code.
-Server-side fencing remains necessary when physical termination cannot be confirmed.
+The [live-container watchdog](worker-supervision.md) now consumes these windows,
+rechecks them during runtime observation, and attempts bounded termination on loss
+of authority. Launch checks, periodic renewal, finalization, and reaping still need
+integration. Server-side fencing remains necessary when physical termination cannot
+be confirmed; a frozen host cannot prove that its workload has stopped.
 
 ## Durable batched renewal (D09b)
 
