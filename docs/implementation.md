@@ -1266,3 +1266,24 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 - Added `docs/artifact-downloads.md` and refreshed HTTP/storage/operator contracts.
   CLI download verification, Rust transfers/completion delivery, multipart objects,
   retention, and the full multi-host release gate remain required work.
+
+### D11k: verified local artifact download client
+
+- Added a bounded client path from accepted artifact metadata to a private local
+  file. Metadata validates scope, identities, counts, hashes, URL key/version,
+  expiry, method, and storage headers before transfer. The shared API request
+  reader keeps existing submission/inspection behavior and error handling intact.
+- Transfers use a separate credential-free HTTP client with no proxies, redirects,
+  or decompression. Version, byte count, and SHA-256 must match before the temporary
+  file is synced and published without overwriting existing paths. Directory-relative
+  operations preserve the opened directory across parent renames; the final link
+  rejects competing destinations. Receipts omit capabilities and credentials.
+- Tests initially failed for the missing download method. Client race tests and
+  native `make test lint smoke` passed. The combined PostgreSQL/SeaweedFS gate also
+  passed after adding the real client to the overwritten-key/original-version flow.
+  Fixtures cover invalid metadata, empty/chunked bodies, corruption, partial/oversized
+  responses, redirects, cancellation, private permissions, existing files/symlinks,
+  competing destination creation, and parent-directory replacement.
+- Documented the 64-MiB single-part profile, transfer bounds, atomic publication,
+  filesystem requirements, and explicit errors if sync/cleanup fails after verified
+  publication. CLI command integration and Rust transfers remain subsequent slices.

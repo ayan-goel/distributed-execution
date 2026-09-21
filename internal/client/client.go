@@ -45,9 +45,10 @@ func (e *APIError) Error() string {
 }
 
 type Client struct {
-	endpoint string
-	token    string
-	http     *http.Client
+	endpoint    string
+	token       string
+	http        *http.Client
+	devInsecure bool
 }
 
 func New(endpoint, token string, devInsecure bool, transport http.RoundTripper) (*Client, error) {
@@ -62,7 +63,7 @@ func New(endpoint, token string, devInsecure bool, transport http.RoundTripper) 
 	if !visibleASCII(token, 4096) {
 		return nil, errors.New("DISPATCH_TOKEN must contain a nonempty bearer token")
 	}
-	return &Client{endpoint: strings.TrimSuffix(u.String(), "/"), token: token, http: &http.Client{
+	return &Client{endpoint: strings.TrimSuffix(u.String(), "/"), token: token, devInsecure: devInsecure, http: &http.Client{
 		Timeout: 20 * time.Second, Transport: transport,
 		// Never forward credentials or a submission body to a redirect target,
 		// even when net/http considers it within the same trust domain.
@@ -90,9 +91,24 @@ func (c *Client) GetJob(ctx context.Context, id string) (Job, error) {
 }
 
 func (c *Client) request(ctx context.Context, method, path string, body []byte, key string) (Job, error) {
+	b, err := c.requestBody(ctx, method, path, body, key)
+	if err != nil {
+		return Job{}, err
+	}
+	var j Job
+	if json.Unmarshal(b, &j) != nil || j.State == "" {
+		return Job{}, errors.New("invalid job response")
+	}
+	if _, err := uuid.Parse(j.ID); err != nil {
+		return Job{}, errors.New("invalid job ID in response")
+	}
+	return j, nil
+}
+
+func (c *Client) requestBody(ctx context.Context, method, path string, body []byte, key string) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, method, c.endpoint+path, bytes.NewReader(body))
 	if err != nil {
-		return Job{}, errors.New("could not construct request")
+		return nil, errors.New("could not construct request")
 	}
 	req.Header.Set("Authorization", "Bearer "+c.token)
 	req.Header.Set("Accept", "application/json")
@@ -103,35 +119,28 @@ func (c *Client) request(ctx context.Context, method, path string, body []byte, 
 	resp, err := c.http.Do(req)
 	if err != nil {
 		if ctx.Err() != nil {
-			return Job{}, ctx.Err()
+			return nil, ctx.Err()
 		}
 		// Transport errors may contain proxy URLs or credentials. Submission
 		// callers retain the key because a transport failure is an uncertain commit.
-		return Job{}, errors.New("request failed; check connectivity and TLS configuration")
+		return nil, errors.New("request failed; check connectivity and TLS configuration")
 	}
 	defer resp.Body.Close()
 	b, err := io.ReadAll(io.LimitReader(resp.Body, MaxResponseBytes+1))
 	if err != nil || len(b) > MaxResponseBytes {
-		return Job{}, errors.New("server response unreadable or exceeds 4 MiB")
+		return nil, errors.New("server response unreadable or exceeds 4 MiB")
 	}
 	if resp.StatusCode != http.StatusOK && !(method == http.MethodPost && resp.StatusCode == http.StatusCreated) {
 		var envelope struct {
 			Error APIError `json:"error"`
 		}
 		if json.Unmarshal(b, &envelope) != nil || envelope.Error.Code == "" {
-			return Job{}, fmt.Errorf("HTTP %d: invalid API error response", resp.StatusCode)
+			return nil, fmt.Errorf("HTTP %d: invalid API error response", resp.StatusCode)
 		}
 		envelope.Error.Status = resp.StatusCode
-		return Job{}, &envelope.Error
+		return nil, &envelope.Error
 	}
-	var j Job
-	if json.Unmarshal(b, &j) != nil || j.State == "" {
-		return Job{}, errors.New("invalid job response")
-	}
-	if _, err := uuid.Parse(j.ID); err != nil {
-		return Job{}, errors.New("invalid job ID in response")
-	}
-	return j, nil
+	return b, nil
 }
 
 func visibleASCII(value string, max int) bool {

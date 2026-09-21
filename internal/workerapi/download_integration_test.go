@@ -10,12 +10,15 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	pb "dispatch.local/dispatch/gen/dispatch/worker/v1"
 	"dispatch.local/dispatch/internal/api"
+	"dispatch.local/dispatch/internal/client"
 	"dispatch.local/dispatch/internal/objectstore"
 	"dispatch.local/dispatch/internal/store"
 	"github.com/google/uuid"
@@ -166,6 +169,19 @@ func verifyAcceptedDownload(t *testing.T, pool *pgxpool.Pool, worker pb.WorkerSe
 	}
 	server := httptest.NewServer(api.New(pool, nil, objects))
 	defer server.Close()
+	consumer, err := client.New(server.URL, token, true, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	destination := filepath.Join(t.TempDir(), "verified-output")
+	receipt, err := consumer.DownloadArtifact(ctx, authority.JobId, "result", destination)
+	if err != nil || receipt.ArtifactID != artifact.ArtifactId || receipt.Version != artifact.Object.VersionId {
+		t.Fatal("client did not verify accepted download", err)
+	}
+	local, err := os.ReadFile(destination)
+	if err != nil || string(local) != body {
+		t.Fatal("client published different bytes", err)
+	}
 	r, err := http.NewRequestWithContext(ctx, http.MethodGet, server.URL+"/v1/jobs/"+authority.JobId+"/artifacts", nil)
 	if err != nil {
 		t.Fatal(err)

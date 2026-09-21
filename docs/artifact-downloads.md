@@ -74,3 +74,43 @@ Native tests, lint, protocol round-trips, and executable smoke checks also pass.
 This establishes authenticated output retrieval at the HTTP boundary. Rust transfer
 orchestration, the artifact download CLI, multipart objects, and the complete
 multi-host workload-to-download release gate remain separate required work.
+
+## Verified local download client (D11k)
+
+`client.DownloadArtifact` resolves a named output through the authenticated artifact
+endpoint, then transfers it with a separate HTTP client. Metadata is bounded to
+4 MiB and 64 entries. It validates job/accepted-attempt/artifact identities, unique
+output names, object key/version/hash/size, GET method, expiry, and agreement between
+the signed URL's key/version and accepted metadata. The current single-part profile
+supports outputs through 64 MiB, including empty files. Multipart support remains
+required for larger v0.1 outputs.
+
+Storage traffic carries no project bearer token or cookies and ignores proxy
+environment variables. HTTPS is required except explicit development mode on a
+literal loopback IP; `localhost` HTTP is not accepted by this client profile. It
+refuses redirects and automatic decompression, permits only matching Host and
+bounded S3 signature headers, and caps response headers at 64 KiB. The transfer has
+a two-minute total timeout and honors caller cancellation. Failed transfers require
+a new call to obtain a fresh grant; no retry reuses an uncertain local file.
+
+A destination must name a new file in an existing directory controlled by the
+invoking user. The client opens that directory once, streams into a random 0600
+partial file relative to it, checks the returned version, counts at most the expected
+bytes plus one, and verifies SHA-256. Only after verification and file sync does it
+publish through an atomic hard link that cannot overwrite an existing file or
+symlink. It removes the temporary name and syncs the directory. Filesystems must
+support hard links and directory sync; no unsafe overwrite fallback is provided.
+A parent-directory rename cannot redirect publication into its replacement.
+
+Normal integrity, transport, and cancellation failures clean up temporary data and
+leave the destination absent. Existing or concurrently created destinations remain
+untouched. If cleanup or directory sync fails after verified publication, the error
+explicitly says that the verified output was already published. The client returns
+a receipt with identities, destination, version, size, and hash, never the signed
+URL or storage headers. The CLI command is the next integration slice.
+
+Client tests cover metadata rejection before storage access, wrong hashes/versions,
+short/oversized and chunked bodies, empty files, redirects, cancellation, private
+permissions, existing files/symlinks, competing destination creation, and replacement
+of the parent directory during transfer. The combined PostgreSQL/SeaweedFS fixture
+also uses this client to publish the originally accepted version to a local file.
