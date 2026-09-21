@@ -54,6 +54,38 @@ heartbeat can release quarantined resources. Successful registration is never pr
 of physical cleanup. Old registration requests remain fenced, and retries of the new
 request cannot manufacture another session or retry event.
 
+## Heartbeat readiness and reconciliation (D06e)
+
+Each report carries a positive, increasing sequence within the session, a request
+UUID, health flags, and at most 1,024 inventory entries. Container IDs are full
+64-character lowercase hex IDs. The canonical hash sorts inventory by container
+ID, so enumeration order does not change report identity. The database retains only
+the latest sequence/request/hash and enforces monotonic updates.
+
+An exact latest-report retry returns current instructions without refreshing
+liveness, reapplying cleanup, or overwriting health. An older sequence is stale; a
+changed request/payload at the same sequence conflicts. Heartbeats recheck both the
+credential and current unfenced session inside the ownership transaction.
+
+The server returns stop instructions for unknown, mismatched, old, expired, or
+cancel-requested executions. Missing inventory never implies job completion and
+never releases active reservations or renews a lease. A missing RUNNING execution
+requests reconciliation; ASSIGNED work may legitimately lack a container before
+delivery/startup. Server reservations remain authoritative.
+
+Only a newer incarnation can clear older **fenced, terminal** quarantined attempts,
+after a healthy report states reconciliation complete and contains no execution
+requiring stop. It releases the reservations and clears `cleanup_pending` atomically
+with the report. A session's own uncertain reservation cannot be freed through a
+possibly stale snapshot; it requires fencing and a new incarnation. The lease-loss
+path must enforce that recovery protocol when it is implemented.
+
+Healthy, reconciled workers become READY, or DRAINING when the operator requested
+drain. Incomplete reconciliation remains REGISTERING. Runtime failure or disk
+pressure makes the worker QUARANTINED and blocks acquisition. State changes create
+audit events; ordinary heartbeat ticks do not. These are authenticated agent reports,
+not direct observations of Docker: the Rust worker must perform the actual cleanup.
+
 ## Transaction ordering
 
 Reservation-changing paths start with transaction advisory lock `1146310734`,
@@ -78,5 +110,10 @@ replacement, exact-target approval, cancellation/retry/exhaustion, irreversible
 fencing, and rollback of ownership/approval after an injected job-event failure.
 A regression test observes registration blocked on a real job lock, ends the lease
 after that transaction began, and verifies recovery uses fresh time after the wait.
-Unit tests verify stable, capped, distributed retry jitter. Both migrations passed
-fresh apply, rollback, and reapply. Heartbeat and physical cleanup remain next.
+Unit tests verify stable, capped, distributed retry jitter. Heartbeat tests cover
+readiness, health/disk-pressure/drain behavior, duplicate/stale/changed reports,
+old-session rejection, cleanup gating, unchanged leases/active reservations,
+same-session quarantine protection, bounded inventory, canonical ordering, and
+rollback of both cleanup and sequence after an injected state-audit failure.
+All session migrations passed fresh apply, rollback, and reapply. RPC wiring and
+physical runtime cleanup remain required.

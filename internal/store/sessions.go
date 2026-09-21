@@ -192,7 +192,7 @@ func RegisterSession(ctx context.Context, pool *pgxpool.Pool, identity WorkerIde
 	capsJSON, _ := json.Marshal(caps)
 	// Registration creates session identity, not execution permission. Capacity
 	// remains ineligible until the new agent proves local cleanup by heartbeat.
-	if _, err = tx.Exec(ctx, `UPDATE workers SET current_session_id=$2,state='REGISTERING',reconciliation_complete=false,last_heartbeat_at=clock_timestamp(),
+	if _, err = tx.Exec(ctx, `UPDATE workers SET current_session_id=$2,state='REGISTERING',reconciliation_complete=false,runtime_healthy=false,disk_pressure=false,last_heartbeat_at=clock_timestamp(),
 	cpu_millis=$3,memory_mib=$4,scratch_mib=$5,slots=$6,capabilities=$7 WHERE id=$1`, identity.WorkerID, r.SessionID, r.Resources.CPUMillis, r.Resources.MemoryMiB, r.Resources.ScratchMiB, r.Slots, capsJSON); err != nil {
 		return Session{}, err
 	}

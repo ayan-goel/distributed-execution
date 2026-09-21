@@ -22,7 +22,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D03 database invariants | D01 | Real PostgreSQL migrations up/down/upgrade; uniqueness, references, checks | core schema and migration runner gates passed; later feature tables pending |
 | D04 worker protocol | D01 | Generated Go/Rust gRPC bindings; cross-language golden round-trip, drift check | wire generation/round-trip passed; service boundary tests pending |
 | D05 durable submission | D02,D03 | HTTP/CLI submission; 100 identical requests yield one job; changed payload conflicts | input-free job admission, auth, image resolution, HTTP/CLI gates passed; datasets depend on D16 |
-| D06 worker identities | D03,D04 | Authenticated registration, session takeover/recovery; stale-session rejection | provisioning and mTLS transport gates passed; executable wiring and session handling pending |
+| D06 worker identities | D03,D04 | Authenticated registration, session takeover/recovery; stale-session rejection | provisioning, mTLS, durable sessions/recovery/heartbeat gates passed; RPC/executable wiring pending |
 | D07 acquisition | D03,D06 | Atomic assignment/reservations; concurrent quota/capacity races; acquisition replay | pending |
 | D08 Docker adapter | D04 | Real bounded create/start/inspect/stop; ambiguous create reconciles one identity | pending |
 | D09 leases | D06,D07 | Fresh DB-time expiry checks; delayed grants; local monotonic deadline enforcement | pending |
@@ -319,3 +319,22 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   passed, including cross-language round-trip and generated-code drift checks.
 - Documented sequence range and replay rules in `docs/protocol.md`. Database and
   handler enforcement are the next slice; the wire field alone grants no behavior.
+
+### D06e: ordered heartbeat readiness and cleanup
+
+- Added bounded, canonical inventory reports with durable monotonic sequence
+  enforcement. Exact replay cannot refresh liveness or reapply cleanup; stale and
+  changed reports are rejected. Credential/session authorization is rechecked.
+- Readiness now depends on health, disk pressure, drain, and reconciliation.
+  Unknown/old/expired/cancelled executions receive stop instructions. Only a newer
+  session's complete healthy reconciliation can release fenced predecessors'
+  quarantined reservations; a session cannot release its own uncertain capacity.
+- Tests first failed for missing heartbeat operations. Real PostgreSQL tests pass
+  for readiness/health/drain, ordered replay, old-session rejection, cleanup gating,
+  unchanged leases/active reservations, same-session quarantine preservation, and
+  injected-audit rollback of cleanup and report identity. Unit tests cover inventory
+  bounds and order-independent hashes.
+- `make test lint smoke integration` passed, including sixth-migration rollback
+  and reapply. Reviewed lock order, replay effects, physical-capacity preservation,
+  and the separation between heartbeat liveness and execution leases. Documented
+  contracts and pending runtime/RPC enforcement in `docs/worker-sessions.md`.

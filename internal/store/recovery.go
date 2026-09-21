@@ -74,7 +74,7 @@ type recoveryAttempt struct {
 func lockWorkerAttempts(ctx context.Context, tx pgx.Tx, workerID string) ([]recoveryAttempt, error) {
 	// The cluster lock is already held. Lock every affected job in stable order
 	// before attempts so renewal/completion races cannot invert ownership locks.
-	rows, err := tx.Query(ctx, `SELECT j.id FROM jobs j WHERE EXISTS(SELECT 1 FROM attempts a WHERE a.job_id=j.id AND a.worker_id=$1 AND a.state IN ('ASSIGNED','STARTING','RUNNING','FINALIZING')) ORDER BY j.id FOR UPDATE OF j`, workerID)
+	rows, err := tx.Query(ctx, `SELECT j.id FROM jobs j WHERE EXISTS(SELECT 1 FROM attempts a JOIN reservations r ON r.attempt_id=a.id WHERE a.job_id=j.id AND a.worker_id=$1 AND (a.state IN ('ASSIGNED','STARTING','RUNNING','FINALIZING') OR r.state='quarantined')) ORDER BY j.id FOR UPDATE OF j`, workerID)
 	if err != nil {
 		return nil, err
 	}
