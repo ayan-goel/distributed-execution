@@ -105,3 +105,10 @@ Migration 0009 adds immutable upload declarations, generated attempt-specific ob
 keys, and composite project/attempt authority foreign keys. See
 [artifact upload transactions](artifact-uploads.md) for replay, locking, budget,
 rollback, and populated-upgrade evidence. No object I/O occurs in these transactions.
+
+## Verified artifact registration (D11d)
+
+Migration 0010 separates replay-stable finalization requests from immutable verified
+artifacts. One artifact version is selected per upload. See
+[verified artifact registration](verified-artifacts.md) for authority checks before
+and after storage verification, request budgets, and atomic event recording.

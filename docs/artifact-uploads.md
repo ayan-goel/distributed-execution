@@ -9,8 +9,9 @@ lowercase SHA-256, and `part_count=1`. It returns the durable upload ID and gene
 object key only after the transaction commits with current authority.
 
 This method performs no storage/network I/O. The [versioned storage adapter](object-storage.md)
-is integrated with the authenticated upload RPC described below. Exact-version
-finalization remains pending. Creating a declaration neither verifies uploaded data
+is integrated with the authenticated upload RPC described below. The
+[verified artifact store](verified-artifacts.md) is implemented separately; its RPC
+integration remains pending. Creating a declaration neither verifies uploaded data
 nor accepts a result, renews a lease, changes phase, or releases reservations.
 
 ## Identity and replay
@@ -36,9 +37,8 @@ Workers cannot supply a shared key or put a logical filename into this path.
 Composite foreign keys bind the actual project's job and the complete attempt
 authority. An AFTER UPDATE trigger prevents rebinding an existing declaration;
 it compares rows after PostgreSQL computes the generated key so no-op updates
-remain valid. Verified
-versions will reference the declaration through a separate immutable record; there
-is no verified-artifact or terminal-publication state in this slice.
+remain valid. Verified versions reference the declaration through a separate
+immutable artifact record. Creating a declaration alone never marks it verified.
 
 ## Authorization, phases, and bounds
 
@@ -105,7 +105,7 @@ expires the lease before acquisition and verifies the fresh-time check. A separa
 test holds scheduler and worker locks while upload creation succeeds.
 
 Migration tests apply, roll back, and reapply the complete schema. A populated
-eight-to-nine upgrade retains an active attempt's identity, phase, and deadlines and
+eight-to-current upgrade retains an active attempt's identity, phase, and deadlines and
 allows its first upload declaration afterward. `make test lint smoke` and
 `make integration` cover the project; `scripts/test-store.sh` runs the database and
 authenticated executable suites with the Go race detector.

@@ -27,7 +27,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D08 Docker adapter | D04 | Real bounded create/start/inspect/stop; ambiguous create reconciles one identity | cached launch, RUNNING/FINALIZING coordination, and phase store/RPC/client gates passed; agent integration, staging, and strict workspaces pending |
 | D09 leases | D06,D07 | Fresh DB-time expiry checks; delayed grants; local monotonic deadline enforcement | deadline, store/RPC/client, watchdog, periodic renewal, and execution refresh gates passed; reaper and production agent integration pending |
 | D10 worker recovery | D08,D09 | Durable journal; agent kill/restart stops old containers before new capacity | journal, discovery/cleanup, and actual startup process gates passed; agent-owned job kill/restart gate pending |
-| D11 artifacts | D03,D04 | Scoped grants; verified exact versions; stale publication rejection | versioned storage, durable declarations, and authenticated grant gates passed; fenced verification/publication and worker transfers pending |
+| D11 artifacts | D03,D04 | Scoped grants; verified exact versions; stale publication rejection | storage, upload grants, and fenced verified-artifact store gates passed; finalization RPC, publication, and worker transfers pending |
 | D12 first real job | D05–D11 | CLI submit → gRPC → Docker → verified output → CLI download | pending |
 | D13 loss/retry | D09,D12 | Reaper/reconciliation; recorded retry; backoff/deadlines; nonretryable failure | pending |
 | D14 cancellation | D12,D13 | Both completion/cancellation race orders, repeat requests, uncertain cleanup | pending |
@@ -1095,3 +1095,32 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   `docs/artifact-uploads.md`, and the combined fixture in `docs/object-storage.md`.
   `FinalizeUpload`, immutable verified-artifact records, terminal publication,
   worker transfer integration, multipart support, and remaining v0.1 gates stay open.
+
+### D11d: fenced exact-version artifact registration
+
+- Added immutable finalization intents and verified artifacts in migration 0010.
+  Replay hashes bind the complete authority, upload, key, version, size, and checksum.
+  Foreign keys tie each artifact to its exact finalization/upload/version, and an
+  upload can select only one artifact. Attempts retain at most 1024 finalization
+  request identities; exact retries do not consume more history.
+- `store.FinalizeUpload` commits a preflight intent, invokes a trusted exact-object
+  verifier without database locks, then rechecks current authority in a new
+  transaction before committing the artifact and event together. No public store
+  method bypasses the verifier callback. Storage failures preserve retry identity;
+  expired/cancelled/revoked/taken-over attempts cannot register verified data.
+- Concurrent equal verifications return one artifact/event. Different candidates
+  can be read concurrently, but the first committed version wins and cannot be
+  rebound. Replays of the selected object use the durable verified record without
+  repeating storage I/O. Job success, reservations, phases, and leases are unchanged.
+- Initial unit tests failed for missing request/object types. Passing unit and real
+  PostgreSQL tests cover malformed objects, 16 concurrent verifications, competing
+  versions, immutable records, exact-version foreign keys, request-budget races,
+  storage retry, event rollback, and authorization changes during verification.
+  Populated upgrades preserve active schema-eight ownership and schema-nine uploads.
+- `make test lint smoke` and full `make integration` passed with zero exits. The
+  gates include native/Linux workers, Docker, schema rollback/reapply, SeaweedFS,
+  and race-enabled database/mTLS/executable checks. Store verifier fixtures isolate
+  concurrency; they do not replace the real object-storage compatibility evidence.
+- Documented the transaction/replay/retention contract in `docs/verified-artifacts.md`.
+  Real `FinalizeUpload` RPC verification, terminal manifest publication, worker
+  transfers, multipart support, and the rest of v0.1 remain required.

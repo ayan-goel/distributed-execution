@@ -39,20 +39,22 @@ func TestUploadMigrationPreservesAnExistingActiveAttempt(t *testing.T) {
 	ctx := context.Background()
 	// Restore the actual previous schema while retaining its active job/session.
 	// Reapplying the new migration must not replace ownership or extend authority.
-	down, err := os.ReadFile("../../migrations/0009_artifact_uploads.down.sql")
-	if err != nil {
-		t.Fatal(err)
-	}
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer rollback(tx)
-	if _, err = tx.Exec(ctx, string(down)); err != nil {
-		t.Fatal(err)
-	}
-	if _, err = tx.Exec(ctx, "DELETE FROM schema_migrations WHERE name='0009_artifact_uploads.up.sql'"); err != nil {
-		t.Fatal(err)
+	for _, name := range []string{"0010_verified_artifacts", "0009_artifact_uploads"} {
+		down, err := os.ReadFile("../../migrations/" + name + ".down.sql")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err = tx.Exec(ctx, string(down)); err != nil {
+			t.Fatal(err)
+		}
+		if _, err = tx.Exec(ctx, "DELETE FROM schema_migrations WHERE name=$1", name+".up.sql"); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err = tx.Commit(ctx); err != nil {
 		t.Fatal(err)
