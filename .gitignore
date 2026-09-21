@@ -1,0 +1,11 @@
+.DS_Store
+.tools/
+.local/
+target/
+bin/
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+coverage.out

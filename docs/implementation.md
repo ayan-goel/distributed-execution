@@ -1,0 +1,72 @@
+# Dispatch v0.1 implementation and verification ledger
+
+The contract is `Dispatch_Project_Spec.md`, sections 1–26. This ledger tracks
+implementation evidence; unchecked items remain required work. GPU execution is
+v0.2. Storage uses configurable S3-compatible endpoints and exact object versions;
+development and testing must not require an AWS account.
+
+## Working rule
+
+For each atomic slice: define the acceptance test, observe the failure, implement,
+run relevant tests and build/lint checks, inspect the diff, record evidence, commit.
+Do not start implementing the next slice until the current gate passes. Split the
+tasks below into smaller commits whenever they cross independently testable boundaries.
+Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
+
+## Ordered slices
+
+| Task | Dependencies | Required acceptance evidence | Status |
+| --- | --- | --- | --- |
+| D01 build foundation | none | Pinned Go/Cargo builds, binary smoke checks, CI configuration | pending |
+| D02 job and sweep contracts | D01 | Strict schema, unsafe input rejection, stable canonical hash, deterministic expansion | pending |
+| D03 database invariants | D01 | Real PostgreSQL migrations up/down/upgrade; uniqueness, references, checks | pending |
+| D04 worker protocol | D01 | Generated Go/Rust gRPC bindings; cross-language golden round-trip, drift check | pending |
+| D05 durable submission | D02,D03 | HTTP/CLI submission; 100 identical requests yield one job; changed payload conflicts | pending |
+| D06 worker identities | D03,D04 | Authenticated registration, session takeover/recovery; stale-session rejection | pending |
+| D07 acquisition | D03,D06 | Atomic assignment/reservations; concurrent quota/capacity races; acquisition replay | pending |
+| D08 Docker adapter | D04 | Real bounded create/start/inspect/stop; ambiguous create reconciles one identity | pending |
+| D09 leases | D06,D07 | Fresh DB-time expiry checks; delayed grants; local monotonic deadline enforcement | pending |
+| D10 worker recovery | D08,D09 | Durable journal; agent kill/restart stops old containers before new capacity | pending |
+| D11 artifacts | D03,D04 | Scoped grants; verified exact versions; stale publication rejection | pending |
+| D12 first real job | D05–D11 | CLI submit → gRPC → Docker → verified output → CLI download | pending |
+| D13 loss/retry | D09,D12 | Reaper/reconciliation; recorded retry; backoff/deadlines; nonretryable failure | pending |
+| D14 cancellation | D12,D13 | Both completion/cancellation race orders, repeat requests, uncertain cleanup | pending |
+| D15 logs | D08,D11 | Bounded queues/spool, noisy-job truncation, stream cursors, reconnect | pending |
+| D16 datasets | D11 | Immutable registration/cache; corruption rejection; pin-aware eviction | pending |
+| D17 sweeps/metrics | D05,D13,D16 | Atomic 27-child sweep; 1000 cap; concurrency; fail-fast; finite scalar export | pending |
+| D18 placement | D07,D17 | Project fairness/aging, blockers, two real independent hosts without oversubscription | pending |
+| D19 faults/benchmarks | D14–D18 | Spec §21/22 runtime matrix, 27-job worker kill, stale result, measured benchmarks | pending |
+| D20 release | D19 | TLS/auth/permissions, retention, migrations/backups, packaging, tutorial, actual research run | pending |
+
+## Release audit (all required)
+
+- [ ] All CLI and HTTP interfaces in §4, §15 work, with authorization, pagination,
+  machine-readable output, stable error codes, and documented wait exit codes.
+- [ ] Every gRPC mutation in §16 validates identity and documents replay behavior;
+  protocol versions and bounds are enforced.
+- [ ] All eight §7.3 invariants hold under generated interleavings and real DB races.
+- [ ] All twelve §17 fault scenarios have observed evidence.
+- [ ] All ten §21.4 end-to-end gates have observed evidence.
+- [ ] Runtime tests cover OOM, disk pressure, startup/execution/finalization timeouts,
+  unsafe/missing outputs, control-channel partition, and agent restart.
+- [ ] Security boundary in §18 is enforced, including non-root containers, no Docker
+  socket exposure, read-only inputs/root, network policy, scoped transfers, and limits.
+- [ ] Strict scratch quotas verified on supported dedicated Linux filesystem/profile.
+- [ ] All §20 root tasks and generated-binding drift checks work; CI covers declared
+  Linux architectures. Benchmarks record conditions and actual results (§22).
+- [ ] Deployment/upgrade/backup/restore/retention instructions verified (§19).
+- [ ] Real research evaluation and second-user tutorial completed (§23, §26.3).
+
+## Current environment and decisions
+
+- Initial workspace contains only the specification; no prior implementation.
+- Development host: macOS arm64. Docker Desktop is available. Its one daemon can
+  verify integration but is not two independent workers and cannot prove that gate.
+- Installed Rust 1.88.0; Go will be installed locally under ignored `.tools/`.
+- Local PostgreSQL and object-store test instances must be isolated from existing
+  user services. No production accounts or credentials are needed for development.
+- Repository/license choice remains open; do not invent a public repository or license.
+
+## Verification log
+
+Implementation has not yet passed a slice gate.
