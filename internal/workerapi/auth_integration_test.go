@@ -36,7 +36,8 @@ func (identityService) RegisterWorker(ctx context.Context, r *pb.RegisterWorkerR
 	return &pb.RegisterWorkerResponse{Session: &pb.WorkerSession{WorkerId: id.WorkerID}}, nil
 }
 
-func TestMTLSWorkerIdentityAndLiveRevocation(t *testing.T) {
+func workerTestPool(t *testing.T) *pgxpool.Pool {
+	t.Helper()
 	ctx := context.Background()
 	dsn := os.Getenv("DISPATCH_TEST_DATABASE_URL")
 	if dsn == "" {
@@ -73,6 +74,12 @@ func TestMTLSWorkerIdentityAndLiveRevocation(t *testing.T) {
 	if _, err := pool.Exec(ctx, "INSERT INTO projects(name,cpu_quota,memory_quota_mib,concurrency_quota) VALUES('research',4000,8192,4)"); err != nil {
 		t.Fatal(err)
 	}
+	return pool
+}
+
+func TestMTLSWorkerIdentityAndLiveRevocation(t *testing.T) {
+	ctx := context.Background()
+	pool := workerTestPool(t)
 	ca, roots := testCA(t)
 	serverCert := testLeaf(t, ca, x509.ExtKeyUsageServerAuth)
 	clientCert := testLeaf(t, ca, x509.ExtKeyUsageClientAuth)

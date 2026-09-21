@@ -99,6 +99,36 @@ Transactions use a two-second lock timeout and four-second statement timeout;
 RPC calls have the transport's five-second deadline. No registry, runtime, object
 store, or remote RPC belongs inside a database ownership transaction.
 
+## gRPC service (D06f)
+
+`workerapi.NewService` implements `RegisterWorker` and `Heartbeat` using the store
+transitions above. `workerapi.NewServer` supplies mTLS identity and bounded RPCs.
+The handlers also require that identity when invoked directly; request fields alone
+cannot authorize an operation. Memory and scratch claims must be exact whole MiB,
+and unsigned sequence/generation values must fit PostgreSQL's positive signed range.
+Unsupported protocol/capability/resource values return `INVALID_ARGUMENT`.
+
+Store failures map to stable gRPC status/reason pairs without exposing driver text:
+
+| gRPC status | Reason | Meaning |
+| --- | --- | --- |
+| InvalidArgument | INVALID_ARGUMENT | Invalid or unsupported request/claim |
+| AlreadyExists | REQUEST_CONFLICT | Replay identity reused with changed content |
+| FailedPrecondition | SESSION_ACTIVE | A live incarnation needs explicit takeover |
+| FailedPrecondition | SESSION_FENCED | Stop using this old incarnation |
+| Aborted | STALE_HEARTBEAT | A newer report was already accepted |
+| Unauthenticated | UNAUTHORIZED_WORKER | Credential missing/revoked inside the operation |
+| Unavailable | DATABASE_UNAVAILABLE | No definitive mutation result; retry the same identity |
+
+Cancellation and deadline errors retain their corresponding gRPC status. Transport
+identity mismatch remains PermissionDenied. Registration retries return current
+cleanup requirements without manufacturing another session or refreshing liveness.
+Other worker methods still return Unimplemented until their execution slices land.
+
+The service constructor is verified through real listeners but is not yet wired to
+`dispatch-server` commands. Operator provisioning/takeover commands and the Rust
+registration/heartbeat client remain required before a user can run a worker.
+
 ## Verification
 
 Real PostgreSQL tests cover 32 identical concurrent registrations with one session
@@ -115,5 +145,8 @@ readiness, health/disk-pressure/drain behavior, duplicate/stale/changed reports,
 old-session rejection, cleanup gating, unchanged leases/active reservations,
 same-session quarantine protection, bounded inventory, canonical ordering, and
 rollback of both cleanup and sequence after an injected state-audit failure.
-All session migrations passed fresh apply, rollback, and reapply. RPC wiring and
-physical runtime cleanup remain required.
+All session migrations passed fresh apply, rollback, and reapply. A real mTLS gRPC
+test now covers registration, heartbeat readiness, malformed byte/sequence bounds,
+server restart with durable session recovery, live-session conflict, approved
+takeover, and old-session rejection. Executable wiring and physical runtime cleanup
+remain required.

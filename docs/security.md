@@ -55,8 +55,9 @@ old executions before making capacity eligible. Scheduling must filter through
 `AuthenticateWorker` is an internal lookup for an **already verified mTLS leaf
 certificate**, not a public fingerprint-based login. A fingerprint supplied in an
 RPC body is not authentication. The mTLS transport boundary below now verifies
-this distinction. Provisioning commands, executable listener wiring, and session
-registration remain required.
+this distinction. Session registration/recovery and heartbeat state transitions
+are implemented as described in [worker sessions](worker-sessions.md). Provisioning
+commands and executable listener wiring remain required.
 
 Credential revocation and its audit event commit together. Repeated revocation adds
 no extra event; authentication checks the database without caching. Revocation
@@ -79,9 +80,9 @@ certificate subjects, request fields, or metadata to identify the installed host
 
 Every unary worker method binds its worker ID to that identity. Heartbeat inventory
 may report old sessions only on the same host; renewal batches must also match the
-enclosing session. These checks supplement the required durable session/attempt
-checks, which are not implemented yet. A valid host credential does not itself
-authorize an attempt mutation.
+enclosing session. Registration and heartbeat now enforce durable session state in
+their transactions. Attempt mutation methods remain unimplemented; a valid host
+credential does not itself authorize an attempt mutation.
 
 The interceptor rechecks certificate-chain validity dates and database revocation
 on every RPC, including an existing connection. Calls have a five-second deadline,
@@ -96,7 +97,9 @@ message rejection, and TLS refusal of missing, untrusted, and server-only client
 certificates. Invalid-certificate fingerprints are deliberately enrolled in the
 database so lookup rejection cannot hide a missing TLS check. Unit tests cover
 certificate expiry after handshake and nested inventory/renewal identity binding.
-This verifies transport authentication, not working registration or execution.
+This test verifies transport authentication. A separate service integration test
+now verifies actual registration, heartbeat readiness, server restart replay, and
+approved takeover through the same mTLS boundary. Neither test proves execution.
 
 References: [Go TLS configuration](https://pkg.go.dev/crypto/tls#Config) and
 [gRPC TLS peer information](https://pkg.go.dev/google.golang.org/grpc/credentials#TLSInfo).
