@@ -22,7 +22,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D03 database invariants | D01 | Real PostgreSQL migrations up/down/upgrade; uniqueness, references, checks | core schema and migration runner gates passed; later feature tables pending |
 | D04 worker protocol | D01 | Generated Go/Rust gRPC bindings; cross-language golden round-trip, drift check | wire generation/round-trip passed; service boundary tests pending |
 | D05 durable submission | D02,D03 | HTTP/CLI submission; 100 identical requests yield one job; changed payload conflicts | input-free job admission, auth, image resolution, HTTP/CLI gates passed; datasets depend on D16 |
-| D06 worker identities | D03,D04 | Authenticated registration, session takeover/recovery; stale-session rejection | pending |
+| D06 worker identities | D03,D04 | Authenticated registration, session takeover/recovery; stale-session rejection | provisioning/credential store gate passed; mTLS and session handling pending |
 | D07 acquisition | D03,D06 | Atomic assignment/reservations; concurrent quota/capacity races; acquisition replay | pending |
 | D08 Docker adapter | D04 | Real bounded create/start/inspect/stop; ambiguous create reconciles one identity | pending |
 | D09 leases | D06,D07 | Fresh DB-time expiry checks; delayed grants; local monotonic deadline enforcement | pending |
@@ -241,3 +241,20 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 - Expanded `docs/running.md` with the current CLI workflow and uncertainty recovery.
   This establishes durable admission only; jobs still cannot execute. D06 worker
   identities and session fencing are next, with remaining CLI commands tracked above.
+
+### D06a: provisioned worker identities and policy storage
+
+- Added a third migration for host resource/label policy, explicit project access,
+  public certificate fingerprints, and worker audit events. Provisioning starts in
+  REGISTERING and cannot itself make a host eligible for scheduling.
+- Tests first failed because provisioning/authentication operations were absent.
+  Real PostgreSQL tests now pass for 16 concurrent duplicate certificate enrollments
+  with exactly one complete host, bounded project membership, unknown/revoked identity
+  rejection, cross-host revocation denial, and idempotent revocation.
+- Injected audit failures prove provisioning and revocation roll back completely.
+  Platform/resource/label validation tests pass. `make test lint smoke integration`
+  passed, including full migration rollback/reapply and all previous HTTP/CLI tests.
+- Reviewed transaction scope, uniqueness, audit atomicity, credential separation,
+  and the distinction between identity and execution authority. Documented the
+  remaining mTLS/session enforcement in `docs/security.md`; this is an internal
+  storage slice, not a running worker registration service.

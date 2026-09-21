@@ -14,7 +14,7 @@ import (
 )
 
 var (
-	ErrConflict = errors.New("idempotency key already used with a different request")
+	ErrConflict = errors.New("conflicting request or identity")
 	ErrNotFound = errors.New("not found")
 	ErrQuota    = errors.New("job exceeds project resource quota")
 	ErrDisabled = errors.New("project disabled")
