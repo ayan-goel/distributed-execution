@@ -6,7 +6,8 @@ authenticated HTTP/CLI submission, and job inspection. The CLI can validate
 job files offline and download accepted artifacts with version/size/checksum checks.
 The worker command registers, reconciles old containers, recovers journaled completion
 requests, and reports health; its acquisition loop is still pending. The execution component is
-integration-tested through Docker exit and FINALIZING. The server supports verified
+integration-tested through Docker exit, FINALIZING, and safe declared-file collection.
+The server supports verified
 artifact publication and atomic completion; Rust transfers and connecting live
 execution to completion delivery remain to integrate.
 

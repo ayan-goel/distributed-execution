@@ -1430,3 +1430,25 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   Live acquisition/execution still needs output verification and delivery wiring;
   safe cancellation supersession, local cleanup/retention, and remaining v0.1
   features/release gates are still required.
+
+### D11r: Safe declared output collection after real container exit
+
+- Added a bounded Rust collector that walks only validated declarations through
+  directory descriptors. It rejects symlinks at every level, hard links, and
+  non-regular files, and enforces required outputs and file/aggregate byte limits.
+- Hashes fixed-size chunks, checks for changes during reads, and returns rewound
+  open handles with names, sizes, and SHA-256. Path replacement cannot redirect a
+  later read; open handles do not freeze contents, so upload checksum and immutable
+  version verification remain necessary. No new dependencies were introduced.
+- The integration assertion first failed with missing output evidence. Both real
+  Docker execution/finalization scenarios now collect a workload-written `abc`
+  file after confirmed exit and check its name, length, and known hash. The existing
+  lost FINALIZING and uncertain RUNNING acknowledgement checks remain intact.
+- Native `make test lint smoke`, Linux worker tests, and targeted PostgreSQL/mTLS/
+  Docker `TestRustExecution` integration tests passed. Four filesystem tests cover
+  empty files, missing outputs, exact limits, aggregate bytes, retained inode
+  identity after path replacement, and unsafe path/file rejection.
+- Added `docs/output-collection.md` and updated execution/README status. Collection
+  currently uses the initial 64 MiB single-part limit; multipart, Rust transfer
+  and durable upload evidence, live execution wiring, and remaining v0.1 release
+  gates remain required. Collection alone neither accepts results nor frees capacity.

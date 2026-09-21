@@ -165,8 +165,9 @@ func testRustLaunchScenario(t *testing.T, mode string) {
 	job.Spec.Image = image
 	job.Spec.Command = []string{"sleep", "120"}
 	if mode != "fenced" {
-		job.Spec.Command = []string{"sh", "-c", "sleep 2; exit 7"}
+		job.Spec.Command = []string{"sh", "-c", "printf abc > /outputs/result; sleep 2; exit 7"}
 	}
+	job.Spec.Outputs = []spec.Output{{Name: "result", Path: "/outputs/result", Required: true, MaxBytes: 3}}
 	job.Spec.Args = nil
 	job.Spec.Resources = resources
 	job.Spec.Placement.Labels["architecture"] = architecture
@@ -225,6 +226,11 @@ func testRustLaunchScenario(t *testing.T, mode string) {
 		Container string `json:"container_id"`
 		Exit      int    `json:"exit_code"`
 		OOM       bool   `json:"oom_killed"`
+		Outputs   []struct {
+			Name   string `json:"name"`
+			Size   int64  `json:"size_bytes"`
+			SHA256 string `json:"sha256"`
+		} `json:"outputs"`
 	}
 	if err := json.Unmarshal(output, &result); err != nil {
 		t.Fatal(err)
@@ -245,6 +251,9 @@ func testRustLaunchScenario(t *testing.T, mode string) {
 	wantState, wantCount := "RUNNING", 2
 	if mode != "fenced" {
 		wantState, wantCount = "FINALIZING", 3
+		if len(result.Outputs) != 1 || result.Outputs[0].Name != "result" || result.Outputs[0].Size != 3 || result.Outputs[0].SHA256 != "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad" {
+			t.Fatal("missing verified workload output", result.Outputs)
+		}
 		if !service.finalReplayed || !service.finalRenewed || result.Exit != 7 || result.OOM {
 			t.Fatal("missing finalization retry, fresh authority, or real exit evidence", service.finalReplayed, service.finalRenewed, result)
 		}

@@ -5,8 +5,10 @@ use dispatch_protocol::{
 };
 use dispatch_worker::{
     control::{ControlClient, WorkOutcome},
+    execution::ExecutionSpec,
     journal::{AsyncJournal, Journal, JournalLimits},
     launch::{execute, launch},
+    outputs::{collect_outputs, CollectionLimits},
     runtime::{DockerRuntime, PreparedWorkspace, RecoveryRuntime, Runtime},
     supervisor::{authority_channel, supervise_running, StopReason, SupervisionOutcome},
 };
@@ -131,11 +133,21 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         {
             return Err("finalization did not preserve durable runtime evidence".into());
         }
+        let execution = ExecutionSpec::from_assignment(grant.assignment())?;
+        // Hashing can read large files; keep it off the independent lease task.
+        let outputs = tokio::task::spawn_blocking(move || {
+            collect_outputs(&workspace, &execution, CollectionLimits::default())
+        })
+        .await??;
+        let outputs: Vec<_> = outputs.iter().map(|output| serde_json::json!({
+            "name": output.name(), "size_bytes": output.size_bytes(), "sha256": output.sha256()
+        })).collect();
         println!(
             "{}",
             serde_json::json!({
                 "attempt_id":identity.attempt_id,"container_id":finalizing.handle().id(),
-                "exit_code":finalizing.exit().exit_code,"oom_killed":finalizing.exit().oom_killed
+                "exit_code":finalizing.exit().exit_code,"oom_killed":finalizing.exit().oom_killed,
+                "outputs": outputs
             })
         );
         // The fixture ends before artifact publication. Stop its renewal task

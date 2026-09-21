@@ -151,5 +151,7 @@ that exits 7. Both lose and replay the committed FINALIZING reply, then require 
 renewal and inspect matching durable/runtime exit evidence. One also withholds the
 committed RUNNING reply until client cancellation, proving observation and finalization
 can continue through that uncertainty. Database history retains exactly three phase
-records and FINALIZING with exit code 7. These fixtures stop before artifact upload
+records and FINALIZING with exit code 7. Both also collect the container's declared
+three-byte result and verify its exact size and checksum through the
+[safe output collector](output-collection.md). These fixtures stop before artifact upload
 and terminal publication; production acquisition and full release gates remain open.

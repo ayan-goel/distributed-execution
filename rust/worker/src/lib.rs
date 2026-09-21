@@ -9,5 +9,7 @@ pub mod journal;
 #[cfg(unix)]
 pub mod launch;
 pub mod lease;
+#[cfg(unix)]
+pub mod outputs;
 pub mod runtime;
 pub mod supervisor;
