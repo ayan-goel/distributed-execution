@@ -112,11 +112,12 @@ and a lowercase SHA-256 hash. Unknown or missing outcomes fail closed. Recovery 
 page counts, strict job ordering, unique jobs, and forward cursor progress; expired
 items retain their identities without blocking traversal of the remaining page.
 
-These are protocol checks, not complete execution-spec validation. Parsing canonical
-JSON, verifying its checksum and agreement with duplicated wire fields, staging inputs,
-and enforcing runtime settings remain prerequisites before Docker execution. Inputs
-are rejected until D16 staging support. A returned window must be rechecked before
-acting; it is not a running watchdog or a durable journal entry.
+The client additionally [parses and validates execution settings](execution-spec.md),
+checks the SHA-256 of the original JSON bytes, and verifies agreement with duplicated
+wire fields. It rechecks authority after parsing. Staging inputs and enforcing runtime
+settings remain prerequisites before Docker execution; inputs are rejected until D16
+staging support. A returned window must be rechecked before acting; it is not a running
+watchdog or a durable journal entry.
 
 `rust/worker/examples/work_probe.rs` exercises acquisition, exact replay, and incremental
 single-item recovery pages against the Go service. It pauses acquisitions during the

@@ -1,4 +1,5 @@
 use super::{rpc_request, ClientError, ControlClient, RPC_TIMEOUT};
+use crate::execution::ExecutionSpec;
 use crate::lease::{AuthorityWindow, LeaseError, MonoTime};
 use dispatch_protocol::v1::{
     acquire_work_response, AcquireWorkRequest, AcquireWorkResponse, Assignment, AttemptAuthority,
@@ -9,6 +10,7 @@ use dispatch_protocol::v1::{
 pub struct GrantedAssignment {
     assignment: Box<Assignment>,
     authority: AuthorityWindow,
+    execution: Box<ExecutionSpec>,
 }
 impl GrantedAssignment {
     pub fn assignment(&self) -> &Assignment {
@@ -16,6 +18,9 @@ impl GrantedAssignment {
     }
     pub fn authority(&self) -> &AuthorityWindow {
         &self.authority
+    }
+    pub fn execution(&self) -> &ExecutionSpec {
+        &self.execution
     }
 }
 
@@ -156,6 +161,8 @@ fn check_assignment(
     {
         return Err(ClientError::Response);
     }
+    let execution =
+        ExecutionSpec::from_assignment(&assignment).map_err(|_| ClientError::Response)?;
     // Expiry preserves only the authority tuple for reconciliation/cleanup. It
     // never returns a live window that a caller could use to start the workload.
     match AuthorityWindow::from_grant(
@@ -163,10 +170,17 @@ fn check_assignment(
         received,
         assignment.lease_duration_ms,
         assignment.phase_remaining_ms,
-    ) {
+    )
+    .and_then(|authority| {
+        // Parsing consumes local time too; a grant that expires during validation
+        // must not leave this method as live authority.
+        authority.remaining()?;
+        Ok(authority)
+    }) {
         Ok(authority) => Ok(WorkOutcome::Assignment(GrantedAssignment {
             assignment,
             authority,
+            execution: Box::new(execution),
         })),
         Err(LeaseError::Expired) => Ok(WorkOutcome::Expired(a.clone())),
         Err(LeaseError::Clock) => Err(ClientError::Clock),
@@ -255,6 +269,25 @@ mod tests {
     }
     fn assignment() -> Assignment {
         let session = session();
+        let raw = serde_json::to_vec(&serde_json::json!({
+            "apiVersion":"dispatch.dev/v1alpha1", "kind":"Job",
+            "metadata":{"name":"test", "project":"research"},
+            "spec": {
+                "image":format!("example.org/test@sha256:{}", "a".repeat(64)),
+                "command":["true"],
+                "resources":{"cpuMillis":2000,"memoryMiB":4096,"scratchMiB":8192},
+                "placement":{}, "network":"disabled",
+                "timeouts":{"startupSeconds":300,"executionSeconds":1800,"finalizationSeconds":300},
+                "retry":{"maxAttempts":1,"initialBackoffSeconds":5,"maxBackoffSeconds":60},
+                "terminationGraceSeconds":10
+            }
+        }))
+        .unwrap();
+        let hash = ring::digest::digest(&ring::digest::SHA256, &raw)
+            .as_ref()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
         Assignment {
             authority: Some(AttemptAuthority {
                 worker_id: session.worker_id,
@@ -270,8 +303,8 @@ mod tests {
             }),
             image_digest: format!("example.org/test@sha256:{}", "a".repeat(64)),
             argv: vec!["true".into()],
-            canonical_job_spec_json: b"{\"kind\":\"Job\"}".to_vec(),
-            spec_sha256: "b".repeat(64),
+            canonical_job_spec_json: raw,
+            spec_sha256: hash,
             lease_duration_ms: 30_000,
             phase_remaining_ms: 300_000,
             ..Default::default()

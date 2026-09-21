@@ -97,6 +97,7 @@ func TestRustAcquisitionAndRecoveryThroughControlPlane(t *testing.T) {
 	job.Spec.Placement.Labels["architecture"] = "arm64"
 	job.Spec.Image = "example.org/test@sha256:" + strings.Repeat("a", 64)
 	job.Spec.Resources = spec.Resources{CPUMillis: 1, MemoryMiB: 1, ScratchMiB: 1}
+	job.Spec.Env["MESSAGE"] = "<tag> & λ \u2028"
 	_, hash, err := job.Canonical()
 	if err != nil {
 		t.Fatal(err)
@@ -132,9 +133,20 @@ type delayedGrantService struct {
 }
 
 func (delayedGrantService) AcquireWork(ctx context.Context, r *pb.AcquireWorkRequest) (*pb.AcquireWorkResponse, error) {
+	job := spec.Job{APIVersion: spec.APIVersion, Kind: "Job", Metadata: spec.Metadata{Name: "late-grant", Project: "research"}, Spec: spec.JobSpec{
+		Image: "example.org/test@sha256:" + strings.Repeat("a", 64), Command: []string{"true"},
+		Resources:               spec.Resources{CPUMillis: 1, MemoryMiB: 1, ScratchMiB: 1},
+		Timeouts:                spec.Timeouts{StartupSeconds: 300, ExecutionSeconds: 1800, FinalizationSeconds: 300},
+		Retry:                   spec.Retry{MaxAttempts: 1, InitialBackoffSeconds: 5, MaxBackoffSeconds: 60},
+		TerminationGraceSeconds: 10, Network: "disabled",
+	}}
+	raw, hash, err := job.Canonical()
+	if err != nil {
+		return nil, err
+	}
 	// The stale sample leaves only 100 ms after the lease margin. Delivery is
 	// intentionally later, but still well within the five-second RPC timeout.
-	reply := &pb.AcquireWorkResponse{Outcome: &pb.AcquireWorkResponse_Assignment{Assignment: &pb.Assignment{Authority: &pb.AttemptAuthority{JobId: uuid.NewString(), AttemptId: uuid.NewString(), Generation: 1, WorkerId: r.GetSession().GetWorkerId(), SessionId: r.GetSession().GetSessionId()}, Resources: &pb.Resources{CpuMillis: 1, MemoryBytes: 1 << 20, ScratchBytes: 1 << 20}, ImageDigest: "example.org/test@sha256:" + strings.Repeat("a", 64), Argv: []string{"true"}, CanonicalJobSpecJson: []byte(`{"kind":"Job"}`), SpecSha256: strings.Repeat("b", 64), LeaseDurationMs: 5100, PhaseRemainingMs: 300000}}}
+	reply := &pb.AcquireWorkResponse{Outcome: &pb.AcquireWorkResponse_Assignment{Assignment: &pb.Assignment{Authority: &pb.AttemptAuthority{JobId: uuid.NewString(), AttemptId: uuid.NewString(), Generation: 1, WorkerId: r.GetSession().GetWorkerId(), SessionId: r.GetSession().GetSessionId()}, Resources: &pb.Resources{CpuMillis: 1, MemoryBytes: 1 << 20, ScratchBytes: 1 << 20}, ImageDigest: job.Spec.Image, Argv: job.Spec.Command, CanonicalJobSpecJson: raw, SpecSha256: hash, LeaseDurationMs: 5100, PhaseRemainingMs: 300000}}}
 	timer := time.NewTimer(200 * time.Millisecond)
 	defer timer.Stop()
 	select {

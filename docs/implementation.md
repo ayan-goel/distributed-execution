@@ -24,7 +24,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D05 durable submission | D02,D03 | HTTP/CLI submission; 100 identical requests yield one job; changed payload conflicts | input-free job admission, auth, image resolution, HTTP/CLI gates passed; datasets depend on D16 |
 | D06 worker identities | D03,D04 | Authenticated registration, session takeover/recovery; stale-session rejection | control-plane, executable, and Rust client gates passed; runtime/agent loop pending |
 | D07 acquisition | D03,D06 | Atomic assignment/reservations; concurrent quota/capacity races; acquisition replay | store, RPC, and Rust client gates passed; production agent loop pending |
-| D08 Docker adapter | D04 | Real bounded create/start/inspect/stop; ambiguous create reconciles one identity | pending |
+| D08 Docker adapter | D04 | Real bounded create/start/inspect/stop; ambiguous create reconciles one identity | execution-spec preflight verified; Docker operations pending |
 | D09 leases | D06,D07 | Fresh DB-time expiry checks; delayed grants; local monotonic deadline enforcement | local deadline primitive verified; renewal/reaper/supervisor pending |
 | D10 worker recovery | D08,D09 | Durable journal; agent kill/restart stops old containers before new capacity | pending |
 | D11 artifacts | D03,D04 | Scoped grants; verified exact versions; stale publication rejection | pending |
@@ -489,3 +489,23 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   workspace checks passed again after the image-validation fix. Documented contracts
   and remaining full spec validation, journal, runtime, and supervisor requirements
   in `docs/acquisition.md`, `docs/worker-leases.md`, and `docs/worker-sessions.md`.
+
+### D08a: validated worker execution settings
+
+- Added strict, bounded execution JSON decoding with exact-byte SHA-256 verification,
+  typed runtime settings, and agreement checks against the image/argv/resource wire
+  fields. Both Rust acquisition paths require validation and recheck authority after
+  parsing. Nonempty inputs remain explicitly unsupported until dataset staging.
+- Tests first failed for the missing execution module, then passed for hash and wire
+  mismatch, literal arguments/Unicode environment values, unsafe paths, overlapping
+  outputs, forbidden networking, timeout/retry bounds, reserved environment names,
+  ambiguous JSON, and payload bounds. Real Go-canonicalized specs (including escaped
+  HTML and Unicode characters) passed through the executable/PostgreSQL/mTLS fixture.
+- Reviewed resource conversion bounds, duplicate-key handling, immutable access to
+  validated settings, environment-safe errors, input rejection, and lease expiry
+  during parsing. Pinned Serde/JSON dependencies and reused the existing ring version
+  for hashing; the lockfile does not upgrade existing dependency versions.
+- `make test lint smoke` and the expanded race-enabled PostgreSQL/mTLS suite passed.
+  Recorded contracts, sources, and remaining runtime enforcement requirements in
+  `docs/execution-spec.md`. Docker operations, the journal, and supervision are next;
+  no container-execution or full v0.1 release gate is claimed by this slice.
