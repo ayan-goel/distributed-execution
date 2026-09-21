@@ -25,7 +25,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D06 worker identities | D03,D04 | Authenticated registration, session takeover/recovery; stale-session rejection | control-plane, executable, and Rust client gates passed; runtime/agent loop pending |
 | D07 acquisition | D03,D06 | Atomic assignment/reservations; concurrent quota/capacity races; acquisition replay | store, acquisition RPC, and paginated inventory gates passed; Rust integration pending |
 | D08 Docker adapter | D04 | Real bounded create/start/inspect/stop; ambiguous create reconciles one identity | pending |
-| D09 leases | D06,D07 | Fresh DB-time expiry checks; delayed grants; local monotonic deadline enforcement | pending |
+| D09 leases | D06,D07 | Fresh DB-time expiry checks; delayed grants; local monotonic deadline enforcement | local deadline primitive verified; renewal/reaper/supervisor pending |
 | D10 worker recovery | D08,D09 | Durable journal; agent kill/restart stops old containers before new capacity | pending |
 | D11 artifacts | D03,D04 | Scoped grants; verified exact versions; stale publication rejection | pending |
 | D12 first real job | D05–D11 | CLI submit → gRPC → Docker → verified output → CLI download | pending |
@@ -455,3 +455,18 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 - `make generate generate-check test lint smoke` and the expanded race-enabled
   PostgreSQL/mTLS suite passed, including full traversal of byte-limited pages with
   no skipped or repeated assignments.
+
+### D09a: conservative local authority windows
+
+- Added a send-time-based lease/phase deadline primitive ahead of Rust acquisition
+  so incoming grants cannot start a fresh lease on receipt. It applies the specified
+  five-second lease margin, preserves short phase timeouts, and rejects late grants,
+  invalid ranges, backwards time, and arithmetic overflow.
+- Linux uses suspend-aware CLOCK_BOOTTIME through the existing pinned libc version.
+  Non-Linux builds remain protocol-development fixtures. Tests first failed for
+  missing clock/deadline types, then passed for deterministic delay/expiry/clock
+  cases and the actual OS clock path.
+- `make test lint smoke` passed. The exact module also compiled and passed its five
+  tests inside the pinned official Rust 1.88.0 Linux arm64 container with no network.
+  Added that platform check to `make integration` and documented sources, semantics,
+  platform limitations, and remaining supervision/renewal work in `docs/worker-leases.md`.

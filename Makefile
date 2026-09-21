@@ -26,6 +26,7 @@ smoke:
 	sh scripts/smoke.sh
 
 integration:
+	sh scripts/test-worker-clock.sh
 	sh scripts/test-schema.sh
 	sh scripts/test-store.sh
 

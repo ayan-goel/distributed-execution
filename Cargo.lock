@@ -126,6 +126,7 @@ name = "dispatch-worker"
 version = "0.1.0-dev"
 dependencies = [
  "dispatch-protocol",
+ "libc",
  "prost",
  "tokio",
  "tonic",

@@ -5,6 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+libc = "=0.2.189"
 dispatch-protocol = { path = "../protocol" }
 prost = "=0.14.3"
 tonic = { version = "=0.14.6", features = ["tls-ring"] }
