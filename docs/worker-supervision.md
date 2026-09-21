@@ -4,15 +4,16 @@
 supervision. It observes an already-started runtime handle and terminates execution
 when local authority expires, the server rejects ownership, or the authority
 controller disappears. The [periodic renewal task](worker-leases.md#periodic-renewal-task-d09f)
-now feeds this channel. Launch journaling, phase reporting, and result finalization
-still need integration with these components.
+now feeds this channel. The [execution coordinator](worker-launch.md) connects durable
+launch, phase reporting, exit observation, and fresh finalization authority. Artifact
+publication and the production agent acquisition loop remain separate work.
 
 ## Authority channel
 
 The caller creates `authority_channel` with the attempt's complete identity and a
 fresh `AuthorityWindow` from the validated acquisition response. The initial window
 must still be live. The runtime handle and authority tuple must refer to the same
-attempt; the future launch coordinator owns that association.
+attempt; the launch/execution coordinator owns that association.
 
 The returned controller accepts the existing client's typed `RenewalOutcome`.
 Every update must match worker, session, job, attempt, and generation exactly.
@@ -77,7 +78,7 @@ inspects the container as no longer running. This uses synthetic grant timing to
 isolate the watchdog; it is not a control-channel partition test. Linux tests exercise
 the production clock path; the macOS Docker fixture remains development evidence.
 
-The next integration must connect durable assignment/phase ordering, launch checks,
-the verified periodic renewal producer, this watchdog, and finalization. The current
-worker startup command still does not acquire jobs. Real channel-partition,
+The execution coordinator now connects durable assignment/phase ordering, launch
+checks, the periodic renewal producer, authority observation, and FINALIZING. The
+current worker startup command still does not acquire jobs. Real channel-partition,
 cancellation, active-job restart, and complete v0.1 execution gates remain open.

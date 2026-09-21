@@ -24,8 +24,8 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D05 durable submission | D02,D03 | HTTP/CLI submission; 100 identical requests yield one job; changed payload conflicts | input-free job admission, auth, image resolution, HTTP/CLI gates passed; datasets depend on D16 |
 | D06 worker identities | D03,D04 | Authenticated registration, session takeover/recovery; stale-session rejection | control-plane, Rust client, and worker startup/health loop gates passed; active-job supervision pending |
 | D07 acquisition | D03,D06 | Atomic assignment/reservations; concurrent quota/capacity races; acquisition replay | store, RPC, and Rust client gates passed; production agent loop pending |
-| D08 Docker adapter | D04 | Real bounded create/start/inspect/stop; ambiguous create reconciles one identity | spec, cached lifecycle/launch, and phase store/RPC/client gates passed; staging, strict workspaces, and execution-phase orchestration pending |
-| D09 leases | D06,D07 | Fresh DB-time expiry checks; delayed grants; local monotonic deadline enforcement | deadline, store/RPC/client, watchdog, and periodic batch renewal gates passed; reaper and launch integration pending |
+| D08 Docker adapter | D04 | Real bounded create/start/inspect/stop; ambiguous create reconciles one identity | cached launch, RUNNING/FINALIZING coordination, and phase store/RPC/client gates passed; agent integration, staging, and strict workspaces pending |
+| D09 leases | D06,D07 | Fresh DB-time expiry checks; delayed grants; local monotonic deadline enforcement | deadline, store/RPC/client, watchdog, periodic renewal, and execution refresh gates passed; reaper and production agent integration pending |
 | D10 worker recovery | D08,D09 | Durable journal; agent kill/restart stops old containers before new capacity | journal, discovery/cleanup, and actual startup process gates passed; agent-owned job kill/restart gate pending |
 | D11 artifacts | D03,D04 | Scoped grants; verified exact versions; stale publication rejection | pending |
 | D12 first real job | D05–D11 | CLI submit → gRPC → Docker → verified output → CLI download | pending |
@@ -957,3 +957,39 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 - Production RUNNING/FINALIZING coordination still needs conservative local bounds
   while phase commits and replies are uncertain. Acquisition, finalization output
   publication, reaping, and the remaining full v0.1 release gates remain open.
+
+### D08h: supervised execution through fresh FINALIZING authority
+
+- Added `launch::execute`, which owns an authority receiver, uses the verified durable
+  launch, observes its bound runtime handle, journals/reports RUNNING, and proceeds
+  through observed exit to durable FINALIZING. Runtime inspection remains active
+  while journal writes, phase retries, and refresh barriers wait. Fast exits skip
+  RUNNING; exit during an uncertain RUNNING reply cancels that wait and advances
+  safely through the server's existing phase rules.
+- Added conservative local phase bounds using the existing suspend-aware clock.
+  They start before possible phase commits and persist across retries and refresh.
+  An old startup window or continuing renewal cannot bypass a shorter, uncertain
+  execution phase. After fresh authority arrives, its server phase bound applies.
+- Exit code and the separately observed OOM flag are durable before FINALIZING.
+  Exact phase payloads survive transient retries. Success retains the handle,
+  identity, exit evidence, and authority consumer for future artifact work. Errors
+  retain evidence and use bounded kill/confirmation without releasing reservations
+  or claiming a terminal result. Aborting the future still cannot run async cleanup.
+- Tests first failed for the missing execution API. Six execution tests and a clock
+  test now cover normal and fast exit, OOM evidence, finalization replay, uncertain
+  RUNNING replies, finalization rejection, missing fresh grants, and one-second
+  execution bounds despite continuing long renewal grants. The missing-grant test
+  uses a one-second initial window so its real journal writes reach FINALIZING
+  before testing expiry; a 100-ms window initially expired during startup work.
+- Extended the existing real PostgreSQL/mTLS/Docker fixture with exit-code-7
+  workloads. Both new cases lose and replay a committed FINALIZING reply, preserve
+  exactly three phase records, and obtain fresh authority. One withholds RUNNING's
+  committed reply; FINALIZING must arrive before that RPC's deadline, proving runtime
+  observation does not serialize behind the stalled call.
+- `make test lint smoke` and `make integration` passed with zero exits. Native and
+  Linux worker libraries each passed 52 tests; real Docker lifecycle/recovery,
+  migrations, and race-enabled database/service/executable checks passed. After
+  strengthening the before-deadline assertion, `scripts/test-store.sh` passed again.
+- Updated the component docs, overview, and ledger statuses. Production acquisition,
+  staging/image pulling, strict workspaces, artifacts/completion, reaping, and all
+  remaining v0.1 acceptance gates stay open.

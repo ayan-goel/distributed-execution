@@ -17,6 +17,14 @@ pub struct RenewedLease {
 }
 
 impl RenewedLease {
+    #[cfg(test)]
+    pub(crate) fn fixture(identity: AttemptAuthority, authority: AuthorityWindow) -> Self {
+        Self {
+            identity,
+            authority,
+        }
+    }
+
     pub fn identity(&self) -> &AttemptAuthority {
         &self.identity
     }

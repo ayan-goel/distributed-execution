@@ -1,4 +1,4 @@
-//! Combined launch fixture; production acquisition and finalization are separate work.
+//! Combined execution fixture; production acquisition and artifact publication remain separate.
 use dispatch_protocol::{
     v1::{AcquireWorkRequest, AttemptState, HeartbeatRequest, RegisterWorkerRequest},
     MAX_MESSAGE_BYTES,
@@ -6,7 +6,7 @@ use dispatch_protocol::{
 use dispatch_worker::{
     control::{ControlClient, WorkOutcome},
     journal::{AsyncJournal, Journal, JournalLimits},
-    launch::launch,
+    launch::{execute, launch},
     runtime::{DockerRuntime, PreparedWorkspace, RecoveryRuntime, Runtime},
     supervisor::{authority_channel, supervise_running, StopReason, SupervisionOutcome},
 };
@@ -108,6 +108,43 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut renewal_client = client.clone();
     let renewal =
         tokio::spawn(async move { renewal_client.maintain_leases(vec![controller]).await });
+    if std::env::var("DISPATCH_LAUNCH_MODE").as_deref() == Ok("finalize") {
+        let finalizing = execute(
+            &runtime,
+            &mut client,
+            &journal,
+            &grant,
+            &session,
+            &workspace,
+            authority,
+        )
+        .await?;
+        let saved = journal
+            .load_attempt(identity.attempt_id.clone())
+            .await?
+            .ok_or("missing journal")?;
+        if saved.exit() != Some(finalizing.exit())
+            || saved.container_id() != Some(finalizing.handle().id())
+            || runtime.inspect(finalizing.handle()).await?.running
+            || saved.phase_reports().last().map(|r| r.phase)
+                != Some(AttemptState::Finalizing as i32)
+        {
+            return Err("finalization did not preserve durable runtime evidence".into());
+        }
+        println!(
+            "{}",
+            serde_json::json!({
+                "attempt_id":identity.attempt_id,"container_id":finalizing.handle().id(),
+                "exit_code":finalizing.exit().exit_code,"oom_killed":finalizing.exit().oom_killed
+            })
+        );
+        // The fixture ends before artifact publication. Stop its renewal task
+        // after dropping the finalization consumer; no live workload remains.
+        drop(finalizing);
+        renewal.abort();
+        let _ = renewal.await;
+        return Ok(());
+    }
     let handle = launch(
         &runtime,
         &mut client,

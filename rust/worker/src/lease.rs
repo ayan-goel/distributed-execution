@@ -61,6 +61,31 @@ pub struct AuthorityWindow {
     deadline: MonoTime,
 }
 
+pub(crate) struct PhaseDeadline(AuthorityWindow);
+impl PhaseDeadline {
+    pub(crate) fn start(seconds: u64) -> Result<Self, LeaseError> {
+        Self::at(MonoTime::now()?, seconds)
+    }
+
+    fn at(sent: MonoTime, seconds: u64) -> Result<Self, LeaseError> {
+        if !(1..=604_800).contains(&seconds) {
+            return Err(LeaseError::Invalid);
+        }
+        // This additional bound starts before a phase mutation can commit. It
+        // limits uncertain acknowledgements but never grants or renews a lease.
+        let deadline = MonoTime(
+            sent.0
+                .checked_add(Duration::from_secs(seconds))
+                .ok_or(LeaseError::Invalid)?,
+        );
+        Ok(Self(AuthorityWindow { sent, deadline }))
+    }
+
+    pub(crate) fn remaining(&self) -> Result<Duration, LeaseError> {
+        self.0.remaining()
+    }
+}
+
 impl AuthorityWindow {
     pub fn from_grant(
         sent: MonoTime,
@@ -176,5 +201,21 @@ mod tests {
         let first = MonoTime::now().unwrap();
         let second = MonoTime::now().unwrap();
         assert!(second >= first);
+    }
+
+    #[test]
+    fn uncertain_phase_bound_includes_pauses_and_cannot_restart_on_retry() {
+        let deadline = PhaseDeadline::at(tick(100), 1).unwrap();
+        assert_eq!(
+            deadline.0.remaining_at(tick(100)),
+            Ok(Duration::from_secs(1))
+        );
+        assert_eq!(deadline.0.remaining_at(tick(101)), Err(LeaseError::Expired));
+        assert_eq!(deadline.0.remaining_at(tick(160)), Err(LeaseError::Expired));
+        assert_eq!(deadline.0.remaining_at(tick(99)), Err(LeaseError::Clock));
+        assert!(PhaseDeadline::at(tick(100), 0).is_err());
+        assert!(PhaseDeadline::at(tick(100), 604_801).is_err());
+        assert!(PhaseDeadline::at(MonoTime(Duration::MAX), 1).is_err());
+        assert!(PhaseDeadline::at(tick(100), 604_800).is_ok());
     }
 }

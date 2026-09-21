@@ -259,9 +259,9 @@ Refresh continues checking the existing local deadline and sticky stop state whi
 waiting. Fencing, expiry, or loss of the producer ends it with a stop reason. Cancelling
 the refresh waiter can leave a pending request for the producer to satisfy; it does
 not cancel the producer or revoke an otherwise live grant. The parent must keep
-runtime supervision independent while awaiting the barrier. In particular, reporting
-a shorter RUNNING phase requires a conservative local phase bound while the report
-and fresh grant remain uncertain; that execution coordinator is still pending.
+runtime supervision independent while awaiting the barrier. `launch::execute` now
+enforces a conservative local phase bound while RUNNING/FINALIZING reports and their
+fresh grants remain uncertain; see [execution coordination](worker-launch.md).
 
 Tests cover waking the normal period without an extra RPC, exact replay before a
 post-request grant, expiry without a producer, and rejection during refresh. The real

@@ -94,9 +94,10 @@ Docker daemon itself. An acknowledged phase is not a new lease grant. After chan
 phases, obtain a fresh renewal batch to learn remaining authority for the new phase;
 an old renewal replay remains bounded by its original phase deadline.
 
-Durable journaling, production
-supervision/renewal, reaping, artifact publication, and completion remain required
-before this becomes a complete worker execution path.
+The [execution coordinator](worker-launch.md) now connects durable journaling,
+runtime observation, phase reports, and fresh renewal. Production acquisition,
+reaping, artifact publication, and completion remain required before this becomes
+a complete worker execution path.
 
 ## Verification
 

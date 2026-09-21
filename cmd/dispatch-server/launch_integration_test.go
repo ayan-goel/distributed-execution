@@ -28,25 +28,30 @@ import (
 
 type launchService struct {
 	pb.WorkerServiceServer
-	pool                      *pgxpool.Pool
-	t                         *testing.T
-	mu                        sync.Mutex
-	starting                  *pb.ReportPhaseRequest
-	replayed, running, fenced bool
+	pool                           *pgxpool.Pool
+	t                              *testing.T
+	mu                             sync.Mutex
+	starting                       *pb.ReportPhaseRequest
+	replayed, running, fenced      bool
+	mode                           string
+	finalizing                     *pb.ReportPhaseRequest
+	finalReplayed, finalRenewed    bool
+	runningDeadline                time.Time
+	finalizedBeforeRunningDeadline bool
 }
 
 func (s *launchService) ReportPhase(ctx context.Context, r *pb.ReportPhaseRequest) (*pb.MutationResponse, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	reply, err := s.WorkerServiceServer.ReportPhase(ctx, r)
 	if err != nil {
 		return nil, err
 	}
+	s.mu.Lock()
 	if r.Phase == pb.AttemptState_STARTING {
 		if s.starting == nil {
 			// Lose a reply only after the real state transition commits. Launch must
 			// replay the journaled event before creating its container.
 			s.starting = proto.Clone(r).(*pb.ReportPhaseRequest)
+			s.mu.Unlock()
 			return nil, status.Error(codes.Unavailable, "injected lost STARTING reply")
 		}
 		if !proto.Equal(s.starting, r) {
@@ -56,13 +61,36 @@ func (s *launchService) ReportPhase(ctx context.Context, r *pb.ReportPhaseReques
 	}
 	if r.Phase == pb.AttemptState_RUNNING && reply.Decision == pb.Decision_ACCEPTED {
 		s.running = true
+		if s.mode == "uncertain_running" {
+			// Commit RUNNING, then withhold its reply until the Rust coordinator
+			// observes process exit and cancels this RPC to report FINALIZING.
+			s.runningDeadline, _ = ctx.Deadline()
+			s.mu.Unlock()
+			<-ctx.Done()
+			return nil, status.FromContextError(ctx.Err()).Err()
+		}
 	}
+	if r.Phase == pb.AttemptState_FINALIZING && reply.Decision == pb.Decision_ACCEPTED {
+		if s.finalizing == nil {
+			if s.mode == "uncertain_running" {
+				s.finalizedBeforeRunningDeadline = !s.runningDeadline.IsZero() && time.Now().Before(s.runningDeadline)
+			}
+			s.finalizing = proto.Clone(r).(*pb.ReportPhaseRequest)
+			s.mu.Unlock()
+			return nil, status.Error(codes.Unavailable, "injected lost FINALIZING reply")
+		}
+		if !proto.Equal(s.finalizing, r) {
+			s.t.Error("FINALIZING retry changed durable identity")
+		}
+		s.finalReplayed = true
+	}
+	s.mu.Unlock()
 	return reply, nil
 }
 func (s *launchService) RenewLeases(ctx context.Context, r *pb.RenewLeasesRequest) (*pb.RenewLeasesResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.running {
+	if s.running && s.mode == "fenced" {
 		if _, err := s.pool.Exec(ctx, "UPDATE attempts SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE worker_id=$1", r.GetSession().GetWorkerId()); err != nil {
 			return nil, err
 		}
@@ -73,12 +101,28 @@ func (s *launchService) RenewLeases(ctx context.Context, r *pb.RenewLeasesReques
 			if result.Decision == pb.Decision_FENCED {
 				s.fenced = true
 			}
+			if result.Decision == pb.Decision_ACCEPTED && s.finalReplayed {
+				s.finalRenewed = true
+			}
 		}
 	}
 	return reply, err
 }
 
 func TestRustDurableLaunchAndRenewalStopsRealContainerAfterFencing(t *testing.T) {
+	testRustLaunchScenario(t, "fenced")
+}
+
+func TestRustExecutionReplaysFinalizationAndRetainsRealExitEvidence(t *testing.T) {
+	testRustLaunchScenario(t, "finalize")
+}
+
+func TestRustExecutionObservesExitWhileRunningReplyIsUncertain(t *testing.T) {
+	testRustLaunchScenario(t, "uncertain_running")
+}
+
+func testRustLaunchScenario(t *testing.T, mode string) {
+	t.Helper()
 	configureServerTestDatabase(t)
 	p := testWorkerPKI(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -120,6 +164,9 @@ func TestRustDurableLaunchAndRenewalStopsRealContainerAfterFencing(t *testing.T)
 	job.Spec.Inputs = nil
 	job.Spec.Image = image
 	job.Spec.Command = []string{"sleep", "120"}
+	if mode != "fenced" {
+		job.Spec.Command = []string{"sh", "-c", "sleep 2; exit 7"}
+	}
 	job.Spec.Args = nil
 	job.Spec.Resources = resources
 	job.Spec.Placement.Labels["architecture"] = architecture
@@ -139,6 +186,11 @@ func TestRustDurableLaunchAndRenewalStopsRealContainerAfterFencing(t *testing.T)
 	t.Setenv("DISPATCH_LAUNCH_STATE", filepath.Join(root, "state"))
 	t.Setenv("DISPATCH_LAUNCH_WORK", filepath.Join(root, "work"))
 	t.Setenv("DISPATCH_LAUNCH_SOCKET", socket)
+	if mode != "fenced" {
+		t.Setenv("DISPATCH_LAUNCH_MODE", "finalize")
+	} else {
+		t.Setenv("DISPATCH_LAUNCH_MODE", "launch")
+	}
 	t.Cleanup(func() {
 		// Remove only this fixture's unpredictable worker identity. Other Docker
 		// workloads, images, volumes, and workspaces are outside this cleanup.
@@ -151,7 +203,7 @@ func TestRustDurableLaunchAndRenewalStopsRealContainerAfterFencing(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	service := &launchService{WorkerServiceServer: workerapi.NewService(pool, store.AcquisitionPolicy{AllowSoftScratch: true}), pool: pool, t: t}
+	service := &launchService{WorkerServiceServer: workerapi.NewService(pool, store.AcquisitionPolicy{AllowSoftScratch: true}), pool: pool, t: t, mode: mode}
 	server, err := workerapi.NewServer(pool, certificate, p.roots, service)
 	if err != nil {
 		t.Fatal(err)
@@ -171,6 +223,8 @@ func TestRustDurableLaunchAndRenewalStopsRealContainerAfterFencing(t *testing.T)
 	var result struct {
 		Attempt   string `json:"attempt_id"`
 		Container string `json:"container_id"`
+		Exit      int    `json:"exit_code"`
+		OOM       bool   `json:"oom_killed"`
 	}
 	if err := json.Unmarshal(output, &result); err != nil {
 		t.Fatal(err)
@@ -183,12 +237,26 @@ func TestRustDurableLaunchAndRenewalStopsRealContainerAfterFencing(t *testing.T)
 	}
 	service.mu.Lock()
 	defer service.mu.Unlock()
-	if !service.replayed || !service.running || !service.fenced {
+	if !service.replayed || !service.running || (mode == "fenced" && !service.fenced) {
 		t.Fatal("launch missed replay, running, or fencing", service.replayed, service.running, service.fenced)
 	}
 	var phaseCount int
 	var state string
-	if err := pool.QueryRow(ctx, "SELECT state,(SELECT count(*) FROM attempt_phase_reports WHERE attempt_id=a.id) FROM attempts a WHERE id=$1", result.Attempt).Scan(&state, &phaseCount); err != nil || state != "RUNNING" || phaseCount != 2 {
+	wantState, wantCount := "RUNNING", 2
+	if mode != "fenced" {
+		wantState, wantCount = "FINALIZING", 3
+		if !service.finalReplayed || !service.finalRenewed || result.Exit != 7 || result.OOM {
+			t.Fatal("missing finalization retry, fresh authority, or real exit evidence", service.finalReplayed, service.finalRenewed, result)
+		}
+		if mode == "uncertain_running" && !service.finalizedBeforeRunningDeadline {
+			t.Fatal("finalization waited for the stalled RUNNING RPC deadline")
+		}
+		var exit int
+		if err := pool.QueryRow(ctx, "SELECT exit_code FROM attempts WHERE id=$1", result.Attempt).Scan(&exit); err != nil || exit != 7 {
+			t.Fatal("database lost exit evidence", exit, err)
+		}
+	}
+	if err := pool.QueryRow(ctx, "SELECT state,(SELECT count(*) FROM attempt_phase_reports WHERE attempt_id=a.id) FROM attempts a WHERE id=$1", result.Attempt).Scan(&state, &phaseCount); err != nil || state != wantState || phaseCount != wantCount {
 		t.Fatal("unexpected launch phase history", state, phaseCount, err)
 	}
 }

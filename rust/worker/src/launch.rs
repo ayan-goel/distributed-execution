@@ -1,4 +1,4 @@
-//! Durable launch through confirmed start; running/finalization reporting follows separately.
+//! Durable container launch and supervised execution through FINALIZING.
 use crate::{
     control::{ClientError, ControlClient, GrantedAssignment, PhaseStatus},
     execution::ExecutionSpec,
@@ -10,6 +10,9 @@ use dispatch_protocol::v1::{
     Assignment, AttemptState, Decision, ReportPhaseRequest, WorkerSession,
 };
 use std::{fmt, future::Future, time::Duration};
+
+mod run;
+pub use run::{execute, ExecutionError, FinalizingAttempt};
 
 #[derive(Debug)]
 pub enum LaunchCause {

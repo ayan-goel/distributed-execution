@@ -202,6 +202,14 @@ fn live(state: &AuthorityState) -> Result<Duration, StopReason> {
 }
 
 impl SupervisedAuthority {
+    pub(crate) fn observer(&self) -> Self {
+        Self {
+            identity: self.identity.clone(),
+            state: self.state.clone(),
+            refresh: self.refresh.clone(),
+        }
+    }
+
     /// Wait for a grant from a renewal batch constructed after this request.
     /// A phase acknowledgement alone never satisfies this barrier.
     pub async fn refresh(&mut self) -> Result<AuthorityWindow, StopReason> {

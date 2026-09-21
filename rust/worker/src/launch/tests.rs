@@ -13,7 +13,7 @@ use std::{
     fs,
     os::unix::fs::DirBuilderExt,
     path::PathBuf,
-    sync::atomic::{AtomicUsize, Ordering},
+    sync::atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 
 const WORKER: &str = "00000000-0000-0000-0000-000000000001";
@@ -140,6 +140,8 @@ impl Fixture {
             starts: AtomicUsize::new(0),
             creates: AtomicUsize::new(0),
             killed: AtomicUsize::new(0),
+            exited: AtomicBool::new(false),
+            oom: false,
         }
     }
     fn phase(&self) -> FakePhase {
@@ -214,6 +216,8 @@ struct FakeRuntime {
     creates: AtomicUsize,
     starts: AtomicUsize,
     killed: AtomicUsize,
+    exited: AtomicBool,
+    oom: bool,
 }
 impl Runtime for FakeRuntime {
     type Handle = String;
@@ -267,11 +271,13 @@ impl Runtime for FakeRuntime {
         }
     }
     async fn inspect(&self, _: &String) -> Result<ContainerStatus, RuntimeError> {
-        let exited = self.killed.load(Ordering::SeqCst) > 0 || matches!(self.mode, Mode::FastExit);
+        let exited = self.killed.load(Ordering::SeqCst) > 0
+            || self.exited.load(Ordering::SeqCst)
+            || matches!(self.mode, Mode::FastExit);
         Ok(ContainerStatus {
             running: !exited,
-            exit_code: exited.then_some(0),
-            oom_killed: false,
+            exit_code: exited.then_some(if self.oom { 137 } else { 0 }),
+            oom_killed: exited && self.oom,
             state: if exited {
                 ContainerState::Exited
             } else {
@@ -296,6 +302,8 @@ impl Runtime for FakeRuntime {
         panic!("launch must preserve container evidence")
     }
 }
+
+mod execution;
 
 #[tokio::test]
 async fn durable_launch_replays_starting_and_never_launches_duplicate_delivery() {
