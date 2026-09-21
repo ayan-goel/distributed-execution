@@ -23,7 +23,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D04 worker protocol | D01 | Generated Go/Rust gRPC bindings; cross-language golden round-trip, drift check | wire generation/round-trip passed; service boundary tests pending |
 | D05 durable submission | D02,D03 | HTTP/CLI submission; 100 identical requests yield one job; changed payload conflicts | input-free job admission, auth, image resolution, HTTP/CLI gates passed; datasets depend on D16 |
 | D06 worker identities | D03,D04 | Authenticated registration, session takeover/recovery; stale-session rejection | control-plane, executable, and Rust client gates passed; runtime/agent loop pending |
-| D07 acquisition | D03,D06 | Atomic assignment/reservations; concurrent quota/capacity races; acquisition replay | store and acquisition RPC gates passed; inventory recovery/Rust integration pending |
+| D07 acquisition | D03,D06 | Atomic assignment/reservations; concurrent quota/capacity races; acquisition replay | store, acquisition RPC, and paginated inventory gates passed; Rust integration pending |
 | D08 Docker adapter | D04 | Real bounded create/start/inspect/stop; ambiguous create reconciles one identity | pending |
 | D09 leases | D06,D07 | Fresh DB-time expiry checks; delayed grants; local monotonic deadline enforcement | pending |
 | D10 worker recovery | D08,D09 | Durable journal; agent kill/restart stops old containers before new capacity | pending |
@@ -433,3 +433,25 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 - Assignment inventory recovery and the Rust acquisition loop remain next. Reviewed
   identity binding, integer conversion, deadline semantics, and policy defaults.
   `make test lint smoke` and the real PostgreSQL/mTLS integration suite passed.
+
+### D07c: bounded assignment recovery pages
+
+- Added current-session assignment inventory with stable UUID pagination, default
+  32/maximum 64 candidates per page, conservative spec-byte budgeting, and exact
+  protobuf message limits. Pages recheck authority without renewing leases or
+  releasing reservations. Empty pages advance past non-actionable candidates.
+- Added backward-compatible request page-size/cursor and response continuation
+  fields, regenerated Go/Rust bindings, and extended the cross-language round-trip
+  fixture to preserve a recovery page's assignment and cursor.
+- Tests first failed for missing inventory operations/response conversion. Real
+  PostgreSQL tests cover ordered continuation, repeat reads without renewal, large
+  page splitting, expired/phase-expired/cancelled omission, retained reservations,
+  invalid cursors/counts, stale sessions, and revocation. mTLS tests recover after
+  server restart and reject cross-worker, oversized-count, expired, and old-session
+  requests. Unit tests enforce exact encoded message bounds.
+- Reviewed lock ordering, cursor progress, per-page authorization, bounded payloads,
+  and the distinction between omitted authority and physical cleanup. Documented
+  that the future agent must pause acquisition during recovery and process all pages.
+- `make generate generate-check test lint smoke` and the expanded race-enabled
+  PostgreSQL/mTLS suite passed, including full traversal of byte-limited pages with
+  no skipped or repeated assignments.

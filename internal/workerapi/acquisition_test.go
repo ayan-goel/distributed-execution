@@ -2,6 +2,7 @@ package workerapi
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,6 +16,17 @@ import (
 func TestAcquisitionRequiresTransportIdentity(t *testing.T) {
 	if _, err := NewService(nil, store.AcquisitionPolicy{}).AcquireWork(context.Background(), &pb.AcquireWorkRequest{}); status.Code(err) != codes.Unauthenticated {
 		t.Fatal("acquisition bypassed transport identity", err)
+	}
+	if _, err := NewService(nil, store.AcquisitionPolicy{}).ListAssignments(context.Background(), &pb.ListAssignmentsRequest{}); status.Code(err) != codes.Unauthenticated {
+		t.Fatal("assignment recovery bypassed transport identity", err)
+	}
+}
+
+func TestAssignmentPageEnforcesEncodedMessageLimit(t *testing.T) {
+	now := time.Now()
+	a := store.WorkAssignment{CanonicalSpec: []byte(strings.Repeat("x", 2<<20)), ServerTime: now, LeaseExpiresAt: now.Add(time.Second), PhaseDeadline: now.Add(time.Second)}
+	if _, err := assignmentPageResponse(store.AssignmentPage{Assignments: []store.WorkAssignment{a, a}}); status.Code(err) != codes.ResourceExhausted {
+		t.Fatal("oversized inventory escaped the message bound", err)
 	}
 }
 

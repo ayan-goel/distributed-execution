@@ -25,25 +25,30 @@ func main() {
 	if len(os.Args) != 2 {
 		panic("expected create or check")
 	}
+	var expected proto.Message = golden()
+	var actual proto.Message = &pb.Assignment{}
+	if os.Args[1] == "create-page" || os.Args[1] == "check-page" {
+		expected = &pb.ListAssignmentsResponse{Assignments: []*pb.Assignment{golden()}, NextAfterJobId: "00000000-0000-0000-0000-000000000001"}
+		actual = &pb.ListAssignmentsResponse{}
+	}
 	switch os.Args[1] {
-	case "create":
-		b, err := proto.Marshal(golden())
+	case "create", "create-page":
+		b, err := proto.Marshal(expected)
 		if err != nil {
 			panic(err)
 		}
 		if _, err = os.Stdout.Write(b); err != nil {
 			panic(err)
 		}
-	case "check":
+	case "check", "check-page":
 		b, err := io.ReadAll(io.LimitReader(os.Stdin, 4<<20))
 		if err != nil {
 			panic(err)
 		}
-		var actual pb.Assignment
-		if err = proto.Unmarshal(b, &actual); err != nil {
+		if err = proto.Unmarshal(b, actual); err != nil {
 			panic(err)
 		}
-		if !proto.Equal(golden(), &actual) {
+		if !proto.Equal(expected, actual) {
 			panic(fmt.Sprintf("round-trip changed fields: %v", &actual))
 		}
 	default:

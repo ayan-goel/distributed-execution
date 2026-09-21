@@ -21,6 +21,8 @@ import (
 
 type identityKey struct{}
 
+const maxWorkerMessageBytes = 4 << 20
+
 func Identity(ctx context.Context) (store.WorkerIdentity, bool) {
 	id, ok := ctx.Value(identityKey{}).(store.WorkerIdentity)
 	return id, ok
@@ -34,7 +36,7 @@ func NewServer(pool *pgxpool.Pool, certificate tls.Certificate, clientRoots *x50
 	// from gRPC metadata or a request field. No plaintext fallback is configured.
 	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{certificate}, ClientCAs: clientRoots.Clone(), ClientAuth: tls.RequireAndVerifyClientCert}
 	slots := make(chan struct{}, 256)
-	server := grpc.NewServer(grpc.Creds(credentials.NewTLS(tlsConfig)), grpc.MaxRecvMsgSize(4<<20), grpc.MaxSendMsgSize(4<<20), grpc.MaxHeaderListSize(16<<10), grpc.MaxConcurrentStreams(64), grpc.ConnectionTimeout(5*time.Second), grpc.UnaryInterceptor(func(ctx context.Context, request any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+	server := grpc.NewServer(grpc.Creds(credentials.NewTLS(tlsConfig)), grpc.MaxRecvMsgSize(maxWorkerMessageBytes), grpc.MaxSendMsgSize(maxWorkerMessageBytes), grpc.MaxHeaderListSize(16<<10), grpc.MaxConcurrentStreams(64), grpc.ConnectionTimeout(5*time.Second), grpc.UnaryInterceptor(func(ctx context.Context, request any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
 		// Bound database wait and handler work independently of client deadlines;
 		// overload cannot create an unbounded queue of authentication operations.
 		select {

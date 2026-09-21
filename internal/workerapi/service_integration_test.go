@@ -140,11 +140,28 @@ func TestMTLSRegistrationHeartbeatRestartAndTakeover(t *testing.T) {
 	if replay, err := client.AcquireWork(ctx, acquire); err != nil || replay.GetAssignment().GetAuthority().GetAttemptId() != assignment.Authority.AttemptId || replay.GetAssignment().GetLeaseDurationMs() > assignment.LeaseDurationMs {
 		t.Fatal("restart lost or renewed assignment", replay, err)
 	}
+	listing := &pb.ListAssignmentsRequest{Session: session.Session, PageSize: 1}
+	if page, err := client.ListAssignments(ctx, listing); err != nil || len(page.GetAssignments()) != 1 || page.Assignments[0].GetAuthority().GetAttemptId() != assignment.Authority.AttemptId || page.Assignments[0].GetLeaseDurationMs() > assignment.LeaseDurationMs || page.NextAfterJobId != "" {
+		t.Fatal("restart inventory changed authority", page, err)
+	}
+	badPage := proto.Clone(listing).(*pb.ListAssignmentsRequest)
+	badPage.PageSize = 65
+	if _, err := client.ListAssignments(ctx, badPage); status.Code(err) != codes.InvalidArgument {
+		t.Fatal("unbounded page accepted", err)
+	}
+	badPage.PageSize = 1
+	badPage.Session.WorkerId = uuid.NewString()
+	if _, err := client.ListAssignments(ctx, badPage); status.Code(err) != codes.PermissionDenied {
+		t.Fatal("cross-worker inventory accepted", err)
+	}
 	if _, err := pool.Exec(ctx, "UPDATE attempts SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE id=$1", assignment.Authority.AttemptId); err != nil {
 		t.Fatal(err)
 	}
 	if expired, err := client.AcquireWork(ctx, acquire); err != nil || expired.GetRejected() != pb.Decision_FENCED {
 		t.Fatal("expired replay returned authority", expired, err)
+	}
+	if page, err := client.ListAssignments(ctx, listing); err != nil || len(page.GetAssignments()) != 0 {
+		t.Fatal("expired assignment appeared in inventory", page, err)
 	}
 	next := proto.Clone(r).(*pb.RegisterWorkerRequest)
 	next.RequestId = uuid.NewString()
@@ -163,5 +180,8 @@ func TestMTLSRegistrationHeartbeatRestartAndTakeover(t *testing.T) {
 	}
 	if _, err := client.AcquireWork(ctx, acquire); status.Code(err) != codes.FailedPrecondition {
 		t.Fatal("old session replayed acquisition", err)
+	}
+	if _, err := client.ListAssignments(ctx, listing); status.Code(err) != codes.FailedPrecondition {
+		t.Fatal("old session recovered inventory", err)
 	}
 }

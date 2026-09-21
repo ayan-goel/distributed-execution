@@ -73,6 +73,29 @@ authority returns FENCED/STOP_REQUESTED rather than underflowing an unsigned dur
 No-work and rejection outcomes must map to known, nonzero wire enums; ambiguous or
 unknown internal results fail with Internal/INVALID_ACQUISITION_RESULT.
 
+## Assignment recovery pages (D07c)
+
+`ListAssignments` is available through the authenticated worker service. Each page
+checks the credential and current unfenced session, locks candidate jobs in UUID
+order, then their attempts and worker accounting, and reuses the same fresh-time
+authority checks as acquisition replay. It returns only actionable current attempts;
+expired, cancelled, phase-expired, or terminal authority cannot grant execution.
+Reading inventory changes no lease, reservation, job outcome, or event history.
+
+Requests accept a canonical `after_job_id` and page size (default 32, maximum 64).
+The response cursor advances over scanned candidates, including those no longer
+actionable, so an empty page can still require another request. The database holds
+at most 65 candidate job/attempt locks per page. Canonical specs share a conservative
+byte budget that allows for duplicated argv/image fields; the adapter additionally
+enforces the exact 4-MiB protobuf limit. A large individual assignment can use a page
+alone. An oversized encoded page fails with ResourceExhausted/ASSIGNMENT_PAGE_TOO_LARGE.
+
+Recovery must pause new acquisitions while following cursors, process pages without
+retaining every spec, and continue until the cursor is blank. The cursor grants no
+cross-host/session visibility. Each page can reflect newer cancellation or expiry;
+this is not a frozen snapshot and an omitted assignment is not proof of completion
+or successful container cleanup. The Rust recovery loop remains to be implemented.
+
 ## Verification and remaining integration
 
 Real PostgreSQL integration tests cover concurrent duplicate requests, fresh request
@@ -83,7 +106,7 @@ backfill, cancellation, session takeover, and injected event failure rollback.
 An expiry test observes a replay blocked on a real job lock, expires its lease after
 that transaction started, and confirms the replay rejects authority after release.
 
-The store and AcquireWork RPC are implemented. ListAssignments recovery/pagination,
-the Rust acquisition loop, Docker execution, renewal/reaper, sweep limits, and final
+The store, AcquireWork RPC, and paginated ListAssignments RPC are implemented.
+The Rust acquisition/recovery loop, Docker execution, renewal/reaper, sweep limits, and final
 fair scheduling remain required. Two registered database identities are not evidence
 for the release gate requiring execution on two independent Linux hosts.

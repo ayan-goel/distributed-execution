@@ -1465,8 +1465,12 @@ func (*AcquireWorkResponse_NoWork) isAcquireWorkResponse_Outcome() {}
 func (*AcquireWorkResponse_Rejected) isAcquireWorkResponse_Outcome() {}
 
 type ListAssignmentsRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Session       *WorkerSession         `protobuf:"bytes,1,opt,name=session,proto3" json:"session,omitempty"`
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	Session *WorkerSession         `protobuf:"bytes,1,opt,name=session,proto3" json:"session,omitempty"`
+	// Zero selects the default. Pages contain at most 64 candidates and may be
+	// smaller to honor the message limit; recovery never extends existing leases.
+	PageSize      uint32 `protobuf:"varint,2,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`
+	AfterJobId    string `protobuf:"bytes,3,opt,name=after_job_id,json=afterJobId,proto3" json:"after_job_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1508,11 +1512,27 @@ func (x *ListAssignmentsRequest) GetSession() *WorkerSession {
 	return nil
 }
 
+func (x *ListAssignmentsRequest) GetPageSize() uint32 {
+	if x != nil {
+		return x.PageSize
+	}
+	return 0
+}
+
+func (x *ListAssignmentsRequest) GetAfterJobId() string {
+	if x != nil {
+		return x.AfterJobId
+	}
+	return ""
+}
+
 type ListAssignmentsResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Assignments   []*Assignment          `protobuf:"bytes,1,rep,name=assignments,proto3" json:"assignments,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	Assignments []*Assignment          `protobuf:"bytes,1,rep,name=assignments,proto3" json:"assignments,omitempty"`
+	// Continue even when assignments is empty. A blank cursor ends this scan.
+	NextAfterJobId string `protobuf:"bytes,2,opt,name=next_after_job_id,json=nextAfterJobId,proto3" json:"next_after_job_id,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *ListAssignmentsResponse) Reset() {
@@ -1550,6 +1570,13 @@ func (x *ListAssignmentsResponse) GetAssignments() []*Assignment {
 		return x.Assignments
 	}
 	return nil
+}
+
+func (x *ListAssignmentsResponse) GetNextAfterJobId() string {
+	if x != nil {
+		return x.NextAfterJobId
+	}
+	return ""
 }
 
 type ReportPhaseRequest struct {
@@ -2700,11 +2727,15 @@ const file_dispatch_worker_v1_worker_proto_rawDesc = "" +
 	"assignment\x12;\n" +
 	"\ano_work\x18\x02 \x01(\x0e2 .dispatch.worker.v1.NoWorkReasonH\x00R\x06noWork\x12:\n" +
 	"\brejected\x18\x03 \x01(\x0e2\x1c.dispatch.worker.v1.DecisionH\x00R\brejectedB\t\n" +
-	"\aoutcome\"U\n" +
+	"\aoutcome\"\x94\x01\n" +
 	"\x16ListAssignmentsRequest\x12;\n" +
-	"\asession\x18\x01 \x01(\v2!.dispatch.worker.v1.WorkerSessionR\asession\"[\n" +
+	"\asession\x18\x01 \x01(\v2!.dispatch.worker.v1.WorkerSessionR\asession\x12\x1b\n" +
+	"\tpage_size\x18\x02 \x01(\rR\bpageSize\x12 \n" +
+	"\fafter_job_id\x18\x03 \x01(\tR\n" +
+	"afterJobId\"\x86\x01\n" +
 	"\x17ListAssignmentsResponse\x12@\n" +
-	"\vassignments\x18\x01 \x03(\v2\x1e.dispatch.worker.v1.AssignmentR\vassignments\"\xfe\x01\n" +
+	"\vassignments\x18\x01 \x03(\v2\x1e.dispatch.worker.v1.AssignmentR\vassignments\x12)\n" +
+	"\x11next_after_job_id\x18\x02 \x01(\tR\x0enextAfterJobId\"\xfe\x01\n" +
 	"\x12ReportPhaseRequest\x12B\n" +
 	"\tauthority\x18\x01 \x01(\v2$.dispatch.worker.v1.AttemptAuthorityR\tauthority\x12\x19\n" +
 	"\bevent_id\x18\x02 \x01(\tR\aeventId\x126\n" +

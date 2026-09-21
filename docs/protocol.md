@@ -26,7 +26,7 @@ mean unspecified, not authorization or success. Exit status uses presence-aware
 | Register | Same request/incarnation returns its existing session; stale sessions remain fenced |
 | Heartbeat | Positive per-session report sequence increases; retry preserves sequence/request/payload; old reports cannot refresh liveness |
 | Acquire | Same session/request returns the stored assignment or no-work outcome |
-| List assignments | Recompute remaining authority, never replay a fresh lease |
+| List assignments | Page by job UUID within the current worker/session; recompute remaining authority without renewing leases |
 | Report phase | Event identity deduplicates; phase cannot move backward |
 | Renew | Validate each item independently and return its decision/remaining duration |
 | Create/finalize upload | Request/upload identity deduplicates grants and verified versions |
@@ -45,6 +45,19 @@ This bounds heartbeat deduplication state without retaining every liveness tick.
 The worker serializes heartbeat reporting and preserves the current report across
 transport retries. The database range is 1 through 2^63−1; a new session resets it.
 
+`ListAssignmentsRequest` adds `page_size` (field 2; zero defaults to 32, maximum 64)
+and `after_job_id` (field 3; blank starts a scan). `ListAssignmentsResponse` adds
+`next_after_job_id` (field 2). An empty assignments array can still carry continuation
+when scanned candidates have expired or been cancelled. Continue until the cursor
+is blank. A page may contain fewer items than requested to preserve the 4-MiB bound.
+
+The cursor is a canonical job UUID, not authorization. Every page reauthenticates
+the worker and its current session, and all candidate queries remain scoped to both.
+The agent must pause new acquisition while recovering and process pages incrementally
+rather than accumulate unbounded specs. Pages reflect current authority, not a frozen
+snapshot: expiry/cancellation can remove entries between requests. Absence from a
+completed scan never proves that physical execution stopped or that a job succeeded.
+
 Remote authentication binds these claimed worker IDs to provisioned mTLS identities.
 Transfer URLs are sensitive bearer capabilities and must not be logged. Object
 versions/checksums identify uploaded bytes, but only a valid completion transaction
@@ -62,7 +75,8 @@ make protocol-test
 ```
 
 The round-trip fixture writes a Go assignment, decodes/re-encodes it in Rust,
-and compares all fields in Go. It exercises a generation above 2^53, resource sizes
+and compares all fields in Go. It also round-trips a recovery page and its continuation
+cursor. It exercises a generation above 2^53, resource sizes
 above 2^32, Unicode arguments, authority identity, lease duration, and JSON bytes.
 This is wire compatibility evidence, not a real worker execution or mTLS test.
 

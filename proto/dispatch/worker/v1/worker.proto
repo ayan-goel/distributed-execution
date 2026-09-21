@@ -123,8 +123,18 @@ message AcquireWorkRequest { WorkerSession session = 1; string request_id = 2; }
 message AcquireWorkResponse {
   oneof outcome { Assignment assignment = 1; NoWorkReason no_work = 2; Decision rejected = 3; }
 }
-message ListAssignmentsRequest { WorkerSession session = 1; }
-message ListAssignmentsResponse { repeated Assignment assignments = 1; }
+message ListAssignmentsRequest {
+  WorkerSession session = 1;
+  // Zero selects the default. Pages contain at most 64 candidates and may be
+  // smaller to honor the message limit; recovery never extends existing leases.
+  uint32 page_size = 2;
+  string after_job_id = 3;
+}
+message ListAssignmentsResponse {
+  repeated Assignment assignments = 1;
+  // Continue even when assignments is empty. A blank cursor ends this scan.
+  string next_after_job_id = 2;
+}
 message ReportPhaseRequest {
   AttemptAuthority authority = 1;
   string event_id = 2;
