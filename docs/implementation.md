@@ -24,7 +24,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D05 durable submission | D02,D03 | HTTP/CLI submission; 100 identical requests yield one job; changed payload conflicts | input-free job admission, auth, image resolution, HTTP/CLI gates passed; datasets depend on D16 |
 | D06 worker identities | D03,D04 | Authenticated registration, session takeover/recovery; stale-session rejection | control-plane, executable, and Rust client gates passed; runtime/agent loop pending |
 | D07 acquisition | D03,D06 | Atomic assignment/reservations; concurrent quota/capacity races; acquisition replay | store, RPC, and Rust client gates passed; production agent loop pending |
-| D08 Docker adapter | D04 | Real bounded create/start/inspect/stop; ambiguous create reconciles one identity | spec, cached-image lifecycle, and phase store/RPC gates passed; Rust phase client, image staging, and strict workspace integration pending |
+| D08 Docker adapter | D04 | Real bounded create/start/inspect/stop; ambiguous create reconciles one identity | spec, cached-image lifecycle, and phase store/RPC/Rust client gates passed; image staging and strict workspace integration pending |
 | D09 leases | D06,D07 | Fresh DB-time expiry checks; delayed grants; local monotonic deadline enforcement | local deadline, store, RPC, and Rust renewal client gates passed; production loop, reaper, and supervisor pending |
 | D10 worker recovery | D08,D09 | Durable journal; agent kill/restart stops old containers before new capacity | pending |
 | D11 artifacts | D03,D04 | Scoped grants; verified exact versions; stale publication rejection | pending |
@@ -656,3 +656,29 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   handling, enum conversion, optional-field preservation, and error mapping.
   Documented RPC semantics and evidence in `docs/worker-phases.md`.
 - Rust phase reporting, journal/supervisor integration, and full v0.1 remain open.
+
+### D08e: Rust phase client and cross-language progress replay
+
+- Added `ControlClient::report_phase` using the existing bounded mTLS transport.
+  It validates event/authority identifiers, signed generation bounds, phase-specific
+  container and exit evidence, and consistent decision/state responses. Accepted
+  replies can acknowledge later progress but cannot regress or invent completion.
+- Returned a typed progress status with no execution window. Stable event IDs and
+  exact payload retention remain the caller/journal's responsibility; the transport
+  method does not retry, renew leases, or update a supervisor implicitly.
+- Added failing Rust tests before implementation. Unit tests now check invalid
+  authority/evidence, explicit zero versus absent exit status, malformed enums,
+  regressing acknowledgements, and inconsistent terminal/active decisions.
+- Extended the real Rust/Go/PostgreSQL protocol fixture with three phases and retries
+  per attempt. Database assertions verify three finalizing attempts with zero exit
+  status and exactly nine report records/events despite duplicate delivery.
+- The delayed-renewal fault fixture initially returned an old requested phase after
+  later progress, preventing the test from reaching its intended delay. Corrected
+  the fixture to retain monotonic phase state; delayed renewal rejection now passes
+  alongside the real database workflow. Synthetic fixture evidence does not count
+  as actual container observation or the production supervisor gate.
+- `sh scripts/test-store.sh` and `make test lint smoke` passed. Reviewed transport
+  deadlines, optional evidence, state ordering, and separation from lease grants.
+  Updated `docs/worker-phases.md` and `docs/acquisition.md`.
+- Next required integration includes the durable journal and per-attempt supervisor;
+  periodic renewal, recovery/reaping, storage/publication, and full v0.1 stay open.

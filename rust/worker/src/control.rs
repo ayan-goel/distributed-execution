@@ -17,6 +17,8 @@ mod work;
 pub use work::{AssignmentPage, GrantedAssignment, WorkOutcome};
 mod renew;
 pub use renew::{RenewalOutcome, RenewedLease};
+mod phase;
+pub use phase::PhaseStatus;
 
 #[derive(Debug)]
 pub enum ClientError {

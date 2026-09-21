@@ -239,7 +239,7 @@ fn decode_page(
     Ok(page)
 }
 
-fn lower_hash(value: &str) -> bool {
+pub(super) fn lower_hash(value: &str) -> bool {
     value.len() == 64
         && value
             .bytes()

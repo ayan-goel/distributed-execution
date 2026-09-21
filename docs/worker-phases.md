@@ -70,6 +70,21 @@ and terminal state are explicit decision/state pairs. The response mapper reject
 unknown or inconsistent pairs; only `FENCED` for an unknown tuple may omit state.
 The shared five-second server deadline and message bounds apply.
 
+## Rust phase client (D08e)
+
+`ControlClient::report_phase(&ReportPhaseRequest)` validates canonical authority and
+event UUIDs, generation bounds, allowed phases, full container IDs, and optional exit
+evidence before sending. It uses the existing configured mTLS channel and five-second
+wire/outer timeout. The caller supplies stable event IDs; the method does not retry
+or allocate replacement identities automatically.
+
+The typed `PhaseStatus` contains a decision and current state, without an execution
+window. Accepted replies may name the requested phase or a later active phase, but
+cannot regress progress or invent a successful terminal result. Fenced replies may
+name an active phase or unknown state; stop requests require active state; terminal
+decisions require a terminal state. Unknown and inconsistent enums fail closed.
+Transport failures remain categorized through the existing `ClientError` policy.
+
 ## Worker integration requirements
 
 The worker must journal an assignment before acknowledging startup, inspect its own
@@ -79,7 +94,7 @@ Docker daemon itself. An acknowledged phase is not a new lease grant. After chan
 phases, obtain a fresh renewal batch to learn remaining authority for the new phase;
 an old renewal replay remains bounded by its original phase deadline.
 
-The Rust phase client is pending. Durable journaling, production
+Durable journaling, production
 supervision/renewal, reaping, artifact publication, and completion remain required
 before this becomes a complete worker execution path.
 
@@ -106,3 +121,16 @@ persisted rather than treated as missing evidence. Invalid phase enums, overflow
 short/changed container IDs, missing final exit status, cross-host identity, expired
 reports, replaced sessions, and live credential revocation are checked at this
 boundary. Response-mapping unit tests reject malformed decision/state pairs.
+
+The Rust work probe now sends and replays startup, running, and finalization reports
+for each of three acquired attempts through the real Go executable. Database checks
+verify three finalizing attempts with container bindings and explicit exit code zero,
+nine report identities, and nine transition events despite repeated delivery. An old
+startup replay acknowledges finalization without regressing it. These observations
+are synthetic protocol fixtures and do not claim that Docker ran or exited.
+
+Rust unit tests check malformed authority/evidence and invalid or regressing reply
+states. The delayed-renewal fixture initially echoed an older requested phase instead
+of retaining later progress; it now tracks monotonic phase state so the test reaches
+its intended delayed renewal and verifies the real client's local expiry rejection.
+`sh scripts/test-store.sh` and `make test lint smoke` passed with the Rust phase client.

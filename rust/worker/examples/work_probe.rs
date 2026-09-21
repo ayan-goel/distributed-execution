@@ -1,8 +1,8 @@
 //! Integration fixture: fetches authority and recovery pages, never runs containers.
 use dispatch_protocol::{
     v1::{
-        acquire_work_response, AcquireWorkRequest, AcquireWorkResponse, ListAssignmentsRequest,
-        RenewLeasesRequest,
+        acquire_work_response, AcquireWorkRequest, AcquireWorkResponse, AttemptState, Decision,
+        ListAssignmentsRequest, RenewLeasesRequest, ReportPhaseRequest,
     },
     MAX_MESSAGE_BYTES,
 };
@@ -57,6 +57,44 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 .authority
                 .as_ref()
                 .ok_or("missing authority")?;
+            // Synthetic observations exercise the protocol only. This fixture
+            // does not inspect Docker or claim runtime/supervisor verification.
+            let container_id = identity.attempt_id.replace('-', "").repeat(2);
+            let phases = [
+                ReportPhaseRequest {
+                    authority: Some(identity.clone()),
+                    event_id: identity.job_id.clone(),
+                    phase: AttemptState::Starting as i32,
+                    container_id: String::new(),
+                    exit_code: None,
+                },
+                ReportPhaseRequest {
+                    authority: Some(identity.clone()),
+                    event_id: identity.attempt_id.clone(),
+                    phase: AttemptState::Running as i32,
+                    container_id: container_id.clone(),
+                    exit_code: None,
+                },
+                ReportPhaseRequest {
+                    authority: Some(identity.clone()),
+                    event_id: request.request_id.clone(),
+                    phase: AttemptState::Finalizing as i32,
+                    container_id,
+                    exit_code: Some(0),
+                },
+            ];
+            for phase in &phases {
+                for _ in 0..2 {
+                    let status = client.report_phase(phase).await?;
+                    if status.decision != Decision::Accepted || status.state as i32 != phase.phase {
+                        return Err("phase replay changed progress".into());
+                    }
+                }
+            }
+            let replay = client.report_phase(&phases[0]).await?;
+            if replay.decision != Decision::Accepted || replay.state != AttemptState::Finalizing {
+                return Err("old phase replay regressed progress".into());
+            }
             // Request IDs are method-scoped. Reuse this one only for the same
             // renewal payload; two transport calls must persist one batch grant.
             let renewal = RenewLeasesRequest {

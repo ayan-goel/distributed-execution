@@ -10,6 +10,7 @@ import (
 	"net"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -120,6 +121,15 @@ func TestRustAcquisitionAndRecoveryThroughControlPlane(t *testing.T) {
 	if err := pool.QueryRow(ctx, "SELECT count(*) FROM attempts").Scan(&count); err != nil || count != 3 {
 		t.Fatal("Rust replay duplicated work", count, err)
 	}
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM attempts WHERE state='FINALIZING' AND exit_code=0 AND container_id IS NOT NULL").Scan(&count); err != nil || count != 3 {
+		t.Fatal("Rust phase reports lost progress or exit evidence", count, err)
+	}
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM attempt_phase_reports").Scan(&count); err != nil || count != 9 {
+		t.Fatal("Rust phase retries duplicated report history", count, err)
+	}
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM job_events WHERE type='PHASE_CHANGED'").Scan(&count); err != nil || count != 9 {
+		t.Fatal("Rust phase retries duplicated transitions", count, err)
+	}
 	if err := pool.QueryRow(ctx, "SELECT count(*) FROM worker_lease_requests").Scan(&count); err != nil || count != 3 {
 		t.Fatal("Rust renewal replay duplicated batch grants", count, err)
 	}
@@ -138,6 +148,19 @@ func TestRustAcquisitionAndRecoveryThroughControlPlane(t *testing.T) {
 type delayedGrantService struct {
 	pb.UnimplementedWorkerServiceServer
 	delayRenewal bool
+	phase        *atomic.Int32
+}
+
+func (service delayedGrantService) ReportPhase(_ context.Context, r *pb.ReportPhaseRequest) (*pb.MutationResponse, error) {
+	// The fault fixture acknowledges synthetic progress so the Rust probe reaches
+	// the deliberately delayed renewal response; no database/runtime is involved.
+	for {
+		previous := service.phase.Load()
+		if previous >= int32(r.Phase) || service.phase.CompareAndSwap(previous, int32(r.Phase)) {
+			break
+		}
+	}
+	return &pb.MutationResponse{Decision: pb.Decision_ACCEPTED, State: pb.AttemptState(service.phase.Load())}, nil
 }
 
 func (service delayedGrantService) AcquireWork(ctx context.Context, r *pb.AcquireWorkRequest) (*pb.AcquireWorkResponse, error) {
@@ -206,6 +229,7 @@ func TestRustRejectsGrantDeliveredAfterLocalAuthorityExpires(t *testing.T) {
 
 func testRustDelayedAuthority(t *testing.T, service delayedGrantService, expectedDiagnostic string) {
 	t.Helper()
+	service.phase = &atomic.Int32{}
 	p := testWorkerPKI(t)
 	cert, err := tls.LoadX509KeyPair(p.serverCert, p.serverKey)
 	if err != nil {

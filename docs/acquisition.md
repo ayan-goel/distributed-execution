@@ -122,7 +122,9 @@ watchdog or a durable journal entry.
 `rust/worker/examples/work_probe.rs` exercises acquisition, exact replay, and incremental
 single-item recovery pages against the Go service. It also renews each acquired
 attempt and retries that renewal identity, with database assertions checking that
-the retry did not extend the original grant. It pauses acquisitions during the
+the retry did not extend the original grant. Synthetic startup/running/finalization
+reports and their retries exercise the phase client; they are not observations of
+real containers. It pauses acquisitions during the
 scan and retains only IDs to check traversal. The production journal and agent loop
 are still pending; the fixture does not create containers or advertise runtime health.
 
