@@ -23,7 +23,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D04 worker protocol | D01 | Generated Go/Rust gRPC bindings; cross-language golden round-trip, drift check | wire generation/round-trip passed; service boundary tests pending |
 | D05 durable submission | D02,D03 | HTTP/CLI submission; 100 identical requests yield one job; changed payload conflicts | input-free job admission, auth, image resolution, HTTP/CLI gates passed; datasets depend on D16 |
 | D06 worker identities | D03,D04 | Authenticated registration, session takeover/recovery; stale-session rejection | control-plane, executable, and Rust client gates passed; runtime/agent loop pending |
-| D07 acquisition | D03,D06 | Atomic assignment/reservations; concurrent quota/capacity races; acquisition replay | pending |
+| D07 acquisition | D03,D06 | Atomic assignment/reservations; concurrent quota/capacity races; acquisition replay | store transaction gate passed; gRPC/inventory integration pending |
 | D08 Docker adapter | D04 | Real bounded create/start/inspect/stop; ambiguous create reconciles one identity | pending |
 | D09 leases | D06,D07 | Fresh DB-time expiry checks; delayed grants; local monotonic deadline enforcement | pending |
 | D10 worker recovery | D08,D09 | Durable journal; agent kill/restart stops old containers before new capacity | pending |
@@ -400,3 +400,21 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   passed, including both five-second stalled-transport cases.
   Documented the library contract and remaining runtime/agent-loop work in
   `docs/worker-sessions.md`. Full v0.1 scheduling/execution/release gates remain open.
+
+### D07a: transactional assignment and acquisition replay
+
+- Added credential/session-checked acquisition with resource/placement/quota filters,
+  physical quarantine accounting, strict scratch policy by default, and atomic
+  attempts/reservations/job state/events/request identity. Queue backfill selects a
+  fitting job before a blocked candidate; final fairness and sweep limits remain
+  explicit D18/D17 dependencies rather than claims of this store slice.
+- Tests first failed for missing acquisition types/operations. Real PostgreSQL
+  tests exercise 16 concurrent exact replays, concurrent fresh requests, separate
+  capacity dimensions, shared project quotas on two worker identities, stable
+  no-work replay, expired/cancelled/fenced/revoked authority, and audit rollback.
+  A lock-observed expiry race checks fresh database time after a blocked replay.
+- Documented the transaction, replay decisions, scratch policy, verification scope,
+  and remaining runtime/fairness integration in `docs/acquisition.md`.
+- Reviewed credential/session scope, replay authorization, lock order, fresh time,
+  capacity arithmetic, project accounting, and rollback boundaries. `make test lint
+  smoke` and the expanded race-enabled PostgreSQL integration suite passed.
