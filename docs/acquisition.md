@@ -54,9 +54,24 @@ Assignment replay locks the job, attempt, and worker, then reads fresh wall time
 Current active authority returns the same assignment with a new server-time sample.
 Expired or displaced ownership returns FENCED; cancellation or phase expiry returns
 STOP_REQUESTED; a terminal attempt returns ALREADY_TERMINAL. Revoked credentials and
-old sessions are rejected before returning authority. The future wire adapter must
-derive remaining durations from the deadlines and server-time sample; the agent must
-also subtract elapsed RPC time and its local safety margin.
+old sessions are rejected before returning authority. The wire adapter derives
+remaining durations from the deadlines and server-time sample; the agent must also
+subtract elapsed RPC time and its local safety margin.
+
+## Acquisition RPC (D07b)
+
+The executable worker service now implements `AcquireWork` behind the existing mTLS
+listener. The handler requires verified transport identity even on direct invocation,
+binds the request to that worker, and passes the session/request UUIDs to the store.
+The service constructor receives an explicit acquisition policy; the executable uses
+the default strict scratch policy until its development-profile flag is added.
+
+An assignment carries the same authority, canonical spec/hash, pinned image, argument
+vector, and byte-based resource limits. Remaining lease and phase durations are
+floored to milliseconds from the store's fresh time sample. Expired or submillisecond
+authority returns FENCED/STOP_REQUESTED rather than underflowing an unsigned duration.
+No-work and rejection outcomes must map to known, nonzero wire enums; ambiguous or
+unknown internal results fail with Internal/INVALID_ACQUISITION_RESULT.
 
 ## Verification and remaining integration
 
@@ -68,7 +83,7 @@ backfill, cancellation, session takeover, and injected event failure rollback.
 An expiry test observes a replay blocked on a real job lock, expires its lease after
 that transaction started, and confirms the replay rejects authority after release.
 
-This slice implements the store boundary. AcquireWork/ListAssignments gRPC handlers,
+The store and AcquireWork RPC are implemented. ListAssignments recovery/pagination,
 the Rust acquisition loop, Docker execution, renewal/reaper, sweep limits, and final
 fair scheduling remain required. Two registered database identities are not evidence
 for the release gate requiring execution on two independent Linux hosts.

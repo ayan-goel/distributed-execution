@@ -123,6 +123,7 @@ Store failures map to stable gRPC status/reason pairs without exposing driver te
 Cancellation and deadline errors retain their corresponding gRPC status. Transport
 identity mismatch remains PermissionDenied. Registration retries return current
 cleanup requirements without manufacturing another session or refreshing liveness.
+`AcquireWork` is implemented as described in [durable acquisition](acquisition.md).
 Other worker methods still return Unimplemented until their execution slices land.
 
 The service is now wired into `dispatch-server serve --worker-listen ...` with

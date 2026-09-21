@@ -16,6 +16,7 @@ import (
 
 	"dispatch.local/dispatch/internal/admission"
 	"dispatch.local/dispatch/internal/api"
+	"dispatch.local/dispatch/internal/store"
 	"dispatch.local/dispatch/internal/workerapi"
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -129,7 +130,7 @@ func serve(ctx context.Context, pool *pgxpool.Pool, c serveConfig, out io.Writer
 		if !roots.AppendCertsFromPEM(body) {
 			return errors.New("worker client CA bundle contains no valid certificates")
 		}
-		worker, err = workerapi.NewServer(pool, certificate, roots, workerapi.NewService(pool))
+		worker, err = workerapi.NewServer(pool, certificate, roots, workerapi.NewService(pool, store.AcquisitionPolicy{}))
 		if err != nil {
 			return err
 		}

@@ -5,12 +5,13 @@ import (
 	"testing"
 
 	pb "dispatch.local/dispatch/gen/dispatch/worker/v1"
+	"dispatch.local/dispatch/internal/store"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
 func TestWorkerServiceRequiresTransportIdentity(t *testing.T) {
-	s := NewService(nil)
+	s := NewService(nil, store.AcquisitionPolicy{})
 	if _, err := s.RegisterWorker(context.Background(), &pb.RegisterWorkerRequest{}); status.Code(err) != codes.Unauthenticated {
 		t.Fatal("registration bypassed identity interceptor", err)
 	}

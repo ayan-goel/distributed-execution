@@ -15,10 +15,13 @@ import (
 
 type Service struct {
 	pb.UnimplementedWorkerServiceServer
-	pool *pgxpool.Pool
+	pool   *pgxpool.Pool
+	policy store.AcquisitionPolicy
 }
 
-func NewService(pool *pgxpool.Pool) *Service { return &Service{pool: pool} }
+func NewService(pool *pgxpool.Pool, policy store.AcquisitionPolicy) *Service {
+	return &Service{pool: pool, policy: policy}
+}
 
 func (s *Service) RegisterWorker(ctx context.Context, r *pb.RegisterWorkerRequest) (*pb.RegisterWorkerResponse, error) {
 	identity, ok := Identity(ctx)

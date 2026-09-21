@@ -9,6 +9,8 @@ import (
 	"crypto/x509"
 	"math"
 	"net"
+	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -37,7 +39,7 @@ func TestMTLSRegistrationHeartbeatRestartAndTakeover(t *testing.T) {
 	}
 	start := func() (pb.WorkerServiceClient, func()) {
 		t.Helper()
-		server, err := NewServer(pool, serverCert, roots, NewService(pool))
+		server, err := NewServer(pool, serverCert, roots, NewService(pool, store.AcquisitionPolicy{}))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -68,7 +70,7 @@ func TestMTLSRegistrationHeartbeatRestartAndTakeover(t *testing.T) {
 		return pb.NewWorkerServiceClient(conn), stop
 	}
 	client, stop := start()
-	r := &pb.RegisterWorkerRequest{WorkerId: id.WorkerID, RequestId: uuid.NewString(), RequestedSessionId: uuid.NewString(), ProtocolVersion: 1, Allocatable: &pb.Resources{CpuMillis: 4000, MemoryBytes: 8192 << 20, ScratchBytes: 16384 << 20}, ExecutionSlots: 4, Labels: policy.Labels, Capabilities: []string{"docker.v1", "cpu.hard", "memory.hard", "pids.hard", "scratch.soft"}}
+	r := &pb.RegisterWorkerRequest{WorkerId: id.WorkerID, RequestId: uuid.NewString(), RequestedSessionId: uuid.NewString(), ProtocolVersion: 1, Allocatable: &pb.Resources{CpuMillis: 4000, MemoryBytes: 8192 << 20, ScratchBytes: 16384 << 20}, ExecutionSlots: 4, Labels: policy.Labels, Capabilities: []string{"docker.v1", "cpu.hard", "memory.hard", "pids.hard", "scratch.quota"}}
 	session, err := client.RegisterWorker(ctx, r)
 	if err != nil || session.GetSessionGeneration() != 1 || !session.GetCleanupRequired() {
 		t.Fatal("registration RPC failed", err)
@@ -76,6 +78,47 @@ func TestMTLSRegistrationHeartbeatRestartAndTakeover(t *testing.T) {
 	h := &pb.HeartbeatRequest{Session: session.Session, RequestId: uuid.NewString(), ReportSequence: 1, RuntimeHealthy: true, ReconciliationComplete: true}
 	if result, err := client.Heartbeat(ctx, h); err != nil || result.GetReconcile() || result.GetDrain() {
 		t.Fatal("heartbeat RPC did not make host ready", err)
+	}
+	acquire := &pb.AcquireWorkRequest{Session: session.Session, RequestId: uuid.NewString()}
+	if result, err := client.AcquireWork(ctx, acquire); err != nil || result.GetNoWork() != pb.NoWorkReason_QUEUE_EMPTY {
+		t.Fatal("empty queue RPC failed", result, err)
+	}
+	file, err := os.Open("../../schema/examples/job.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, err := spec.DecodeJob(file)
+	_ = file.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	job.Spec.Inputs = nil
+	job.Spec.Placement.Labels["architecture"] = "arm64"
+	job.Spec.Image = "registry.example.org/eval@sha256:" + strings.Repeat("a", 64)
+	canonical, hash, err := job.Canonical()
+	if err != nil {
+		t.Fatal(err)
+	}
+	queued, err := store.SubmitJob(ctx, pool, uuid.NewString(), hash, job)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result, err := client.AcquireWork(ctx, acquire); err != nil || result.GetNoWork() != pb.NoWorkReason_QUEUE_EMPTY {
+		t.Fatal("no-work replay acquired a later job", result, err)
+	}
+	acquire.RequestId = uuid.NewString()
+	assigned, err := client.AcquireWork(ctx, acquire)
+	if err != nil || assigned.GetAssignment() == nil {
+		t.Fatal("assignment RPC failed", assigned, err)
+	}
+	assignment := assigned.GetAssignment()
+	if assignment.GetAuthority().GetJobId() != queued.ID || assignment.GetAuthority().GetWorkerId() != id.WorkerID || assignment.GetAuthority().GetSessionId() != session.Session.SessionId || assignment.SpecSha256 != hash || string(assignment.CanonicalJobSpecJson) != string(canonical) || assignment.LeaseDurationMs == 0 || assignment.LeaseDurationMs > 30000 || assignment.Resources.MemoryBytes != uint64(job.Spec.Resources.MemoryMiB)<<20 {
+		t.Fatal("wire assignment changed authoritative data", assignment)
+	}
+	spoofed := proto.Clone(acquire).(*pb.AcquireWorkRequest)
+	spoofed.Session.WorkerId = uuid.NewString()
+	if _, err := client.AcquireWork(ctx, spoofed); status.Code(err) != codes.PermissionDenied {
+		t.Fatal("cross-worker acquisition accepted", err)
 	}
 	for _, change := range []func(*pb.RegisterWorkerRequest){func(r *pb.RegisterWorkerRequest) { r.Allocatable.MemoryBytes = math.MaxUint64 }, func(r *pb.RegisterWorkerRequest) { r.Allocatable.MemoryBytes++ }, func(r *pb.RegisterWorkerRequest) { r.ExecutionSlots = 1001 }, func(r *pb.RegisterWorkerRequest) { r.ProtocolVersion = 2 }} {
 		bad := proto.Clone(r).(*pb.RegisterWorkerRequest)
@@ -94,6 +137,15 @@ func TestMTLSRegistrationHeartbeatRestartAndTakeover(t *testing.T) {
 	if again, err := client.RegisterWorker(ctx, r); err != nil || again.GetSessionGeneration() != 1 || again.GetCleanupRequired() {
 		t.Fatal("RPC restart lost reconciled session", err)
 	}
+	if replay, err := client.AcquireWork(ctx, acquire); err != nil || replay.GetAssignment().GetAuthority().GetAttemptId() != assignment.Authority.AttemptId || replay.GetAssignment().GetLeaseDurationMs() > assignment.LeaseDurationMs {
+		t.Fatal("restart lost or renewed assignment", replay, err)
+	}
+	if _, err := pool.Exec(ctx, "UPDATE attempts SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE id=$1", assignment.Authority.AttemptId); err != nil {
+		t.Fatal(err)
+	}
+	if expired, err := client.AcquireWork(ctx, acquire); err != nil || expired.GetRejected() != pb.Decision_FENCED {
+		t.Fatal("expired replay returned authority", expired, err)
+	}
 	next := proto.Clone(r).(*pb.RegisterWorkerRequest)
 	next.RequestId = uuid.NewString()
 	next.RequestedSessionId = uuid.NewString()
@@ -108,5 +160,8 @@ func TestMTLSRegistrationHeartbeatRestartAndTakeover(t *testing.T) {
 	}
 	if _, err := client.Heartbeat(ctx, h); status.Code(err) != codes.FailedPrecondition || status.Convert(err).Message() != "SESSION_FENCED" {
 		t.Fatal("old session still accepted RPCs", err)
+	}
+	if _, err := client.AcquireWork(ctx, acquire); status.Code(err) != codes.FailedPrecondition {
+		t.Fatal("old session replayed acquisition", err)
 	}
 }
