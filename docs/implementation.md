@@ -27,7 +27,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D08 Docker adapter | D04 | Real bounded create/start/inspect/stop; ambiguous create reconciles one identity | cached launch, RUNNING/FINALIZING coordination, and phase store/RPC/client gates passed; agent integration, staging, and strict workspaces pending |
 | D09 leases | D06,D07 | Fresh DB-time expiry checks; delayed grants; local monotonic deadline enforcement | deadline, store/RPC/client, watchdog, periodic renewal, and execution refresh gates passed; reaper and production agent integration pending |
 | D10 worker recovery | D08,D09 | Durable journal; agent kill/restart stops old containers before new capacity | journal, discovery/cleanup, and actual startup process gates passed; agent-owned job kill/restart gate pending |
-| D11 artifacts | D03,D04 | Scoped grants; verified exact versions; stale publication rejection | grants, verification, completion, public metadata, and HTTP download gates passed; CLI downloads and Rust transfers pending |
+| D11 artifacts | D03,D04 | Scoped grants; verified exact versions; stale publication rejection | grants, verification, completion, public metadata, and verified CLI download gates passed; Rust transfers and multipart support pending |
 | D12 first real job | D05–D11 | CLI submit → gRPC → Docker → verified output → CLI download | pending |
 | D13 loss/retry | D09,D12 | Reaper/reconciliation; recorded retry; backoff/deadlines; nonretryable failure | pending |
 | D14 cancellation | D12,D13 | Both completion/cancellation race orders, repeat requests, uncertain cleanup | pending |
@@ -1287,3 +1287,23 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 - Documented the 64-MiB single-part profile, transfer bounds, atomic publication,
   filesystem requirements, and explicit errors if sync/cleanup fails after verified
   publication. CLI command integration and Rust transfers remain subsequent slices.
+
+### D11l: verified artifact download CLI
+
+- Added `dispatch artifacts download JOB_ID NAME --output FILE [--json]`, using
+  the verified download client. Output paths are explicit user inputs, never chosen
+  from server metadata. Success prints a terminal-safe text receipt or one JSON
+  receipt without transfer capabilities. Errors produce no success receipt and
+  retain the existing exit-2/error-stream behavior.
+- Initial CLI tests failed because the command was absent. CLI race tests, native
+  `make test lint smoke`, and the combined PostgreSQL/SeaweedFS integration gate
+  passed. Tests cover usage errors, text/JSON receipts, quoted filenames, absent
+  project credentials at storage, and corrupt bytes leaving no destination.
+- The real-storage test now builds a fresh CLI binary after verified completion,
+  downloads the accepted original version through the HTTP artifact endpoint,
+  compares local bytes and receipt identity/hash, and invokes the binary again to
+  prove an existing destination is preserved. This extends the real API/version
+  overwrite test to executable local publication; no schema or Rust runtime changed.
+- Updated README, operator examples, and artifact download documentation. The full
+  worker acquisition/staging/transfer/completion loop, multipart objects, and the
+  remaining multi-host v0.1 gates remain open.

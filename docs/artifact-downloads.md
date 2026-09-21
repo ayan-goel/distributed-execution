@@ -36,7 +36,7 @@ as permanent download locations. Fetch a fresh page after expiry. Project tokens
 are sent only to Dispatch, never to the object-store URL. Static storage credentials
 stay on the server. Download consumers must use the supplied method/headers, reject
 redirects, and verify the expected version, length, and SHA-256 before accepting a
-local file. The dedicated CLI transfer command remains to implement.
+local file. The CLI command below performs those checks.
 
 Authorization is checked before reading job metadata and again after signing. This
 rejects a token revoked or a project disabled while waiting for signer capacity.
@@ -71,8 +71,8 @@ sh scripts/test-objectstore.sh sh scripts/test-store.sh
 ```
 
 Native tests, lint, protocol round-trips, and executable smoke checks also pass.
-This establishes authenticated output retrieval at the HTTP boundary. Rust transfer
-orchestration, the artifact download CLI, multipart objects, and the complete
+This establishes authenticated output retrieval through the HTTP boundary and CLI.
+Rust transfer orchestration, multipart objects, and the complete
 multi-host workload-to-download release gate remain separate required work.
 
 ## Verified local download client (D11k)
@@ -107,10 +107,37 @@ leave the destination absent. Existing or concurrently created destinations rema
 untouched. If cleanup or directory sync fails after verified publication, the error
 explicitly says that the verified output was already published. The client returns
 a receipt with identities, destination, version, size, and hash, never the signed
-URL or storage headers. The CLI command is the next integration slice.
+URL or storage headers.
 
 Client tests cover metadata rejection before storage access, wrong hashes/versions,
 short/oversized and chunked bodies, empty files, redirects, cancellation, private
 permissions, existing files/symlinks, competing destination creation, and replacement
 of the parent directory during transfer. The combined PostgreSQL/SeaweedFS fixture
 also uses this client to publish the originally accepted version to a local file.
+
+## CLI command (D11l)
+
+After a job has succeeded, download a named declared output to a new local file:
+
+```sh
+bin/dispatch artifacts download JOB_UUID result --output result.json
+bin/dispatch artifacts download JOB_UUID metrics --output metrics.json --json
+```
+
+The output name must exist in that job's accepted manifest. `--output` is required;
+the parent directory must already exist. The command never chooses local paths from
+server metadata, overwrites a destination, or writes unverified bytes to stdout.
+Use the existing `DISPATCH_URL` and `DISPATCH_TOKEN` settings. Development HTTP
+requires `DISPATCH_DEV_INSECURE=1` and literal loopback IPs for both origins.
+
+Success exits 0 and prints a quoted filename, byte count, and checksum. `--json`
+prints one receipt with `jobId`, `attemptId`, `artifactId`, `name`, `path`, `version`,
+`sizeBytes`, and `sha256`. Failures exit 2 with diagnostics on stderr and no success
+receipt. If writing stdout fails after file publication, the verified file remains;
+inspect it before retrying because the command will not overwrite it.
+
+CLI tests cover JSON/text receipts, terminal-safe filenames, missing/extra arguments,
+and corrupt transfer failure without publication. The combined real-storage gate
+builds a fresh `dispatch` executable, downloads the accepted original version to a
+local file, checks its JSON receipt and bytes, and verifies a second invocation
+cannot overwrite that file.

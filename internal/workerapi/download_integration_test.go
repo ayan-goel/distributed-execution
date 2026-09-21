@@ -3,6 +3,7 @@
 package workerapi
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -11,6 +12,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -235,5 +237,53 @@ func verifyAcceptedDownload(t *testing.T, pool *pgxpool.Pool, worker pb.WorkerSe
 	_ = denied.Body.Close()
 	if denied.StatusCode == 200 {
 		t.Fatal("download capability permitted an unsigned current-version read")
+	}
+	verifyDownloadCLI(t, server.URL, token, authority.JobId, artifact, body)
+}
+
+func verifyDownloadCLI(t *testing.T, endpoint, token, jobID string, artifact *pb.FinalizeUploadResponse, body string) {
+	t.Helper()
+	dir := t.TempDir()
+	binary := filepath.Join(dir, "dispatch")
+	goTool := os.Getenv("GO")
+	if goTool == "" {
+		goTool = "go"
+	}
+	buildCtx, stopBuild := context.WithTimeout(context.Background(), time.Minute)
+	defer stopBuild()
+	build := exec.CommandContext(buildCtx, goTool, "build", "-o", binary, "./cmd/dispatch")
+	build.Dir = "../.."
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("CLI build failed: %v: %s", err, output)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	destination := filepath.Join(dir, "cli-output")
+	run := func() ([]byte, []byte, error) {
+		command := exec.CommandContext(ctx, binary, "artifacts", "download", jobID, "result", "--output", destination, "--json")
+		command.Env = append(os.Environ(), "DISPATCH_URL="+endpoint, "DISPATCH_TOKEN="+token, "DISPATCH_DEV_INSECURE=1")
+		var out, errs bytes.Buffer
+		command.Stdout, command.Stderr = &out, &errs
+		err := command.Run()
+		return out.Bytes(), errs.Bytes(), err
+	}
+	output, diagnostics, err := run()
+	if err != nil || len(diagnostics) != 0 || bytes.Contains(output, []byte(token)) || bytes.Contains(output, []byte("X-Amz")) {
+		t.Fatal("CLI download failed or exposed credentials", err)
+	}
+	var receipt client.DownloadReceipt
+	if err := json.Unmarshal(output, &receipt); err != nil || receipt.JobID != jobID || receipt.ArtifactID != artifact.ArtifactId || receipt.Version != artifact.Object.VersionId || receipt.Path != destination || receipt.SHA256 != artifact.Object.Sha256 {
+		t.Fatal("CLI receipt lost accepted identity", err)
+	}
+	content, err := os.ReadFile(destination)
+	if err != nil || string(content) != body {
+		t.Fatal("CLI did not publish accepted bytes", err)
+	}
+	if output, _, err := run(); err == nil || len(output) != 0 {
+		t.Fatal("CLI overwrite attempt did not fail")
+	}
+	content, err = os.ReadFile(destination)
+	if err != nil || string(content) != body {
+		t.Fatal("CLI overwrite attempt changed accepted bytes", err)
 	}
 }

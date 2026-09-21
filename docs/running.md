@@ -156,8 +156,9 @@ are never included in normal output. Do not enable shell tracing while loading t
 
 Submission resolves the image tag to a verified digest. The example needs no
 dataset and will eventually produce the deterministic sum 4,999,950,000, but at
-this implementation stage it only queues. Execution and artifact download are
-still pending. The server must permit Docker Hub via `--allow-registry index.docker.io`.
+this implementation stage it only queues because the worker acquisition/transfer
+loop remains to integrate. The server must permit Docker Hub via
+`--allow-registry index.docker.io`.
 
 The CLI prints `Idempotency-Key` to stderr **before** sending a submission. If you
 omit `--idempotency-key`, it generates a UUID. Save that key and reuse it with the
@@ -169,7 +170,19 @@ Options follow the file or job ID. Successful commands exit 0; validation, API,
 configuration, transport, and output errors exit 2. `--json` writes one job object
 to stdout for submit/get, or `{valid,specHash}` for validation; diagnostics stay on
 stderr. Human submit/get output includes the job UUID and quoted state. Wait,
-list, cancel, logs, datasets, and artifact commands will be added in their slices.
+list, cancel, logs, and datasets will be added in their slices.
+
+For a successfully completed job with an accepted output named `result`:
+
+```sh
+bin/dispatch artifacts download JOB_UUID result --output result.json --json
+```
+
+This checks the accepted object version, size, and SHA-256 before atomically
+publishing a new 0600 local file. The destination directory must exist, and existing
+files/symlinks are never overwritten. JSON output is a verified download receipt;
+no signed URL or storage credential is printed. See
+[artifact downloads](artifact-downloads.md) for transfer bounds and failure behavior.
 
 ## Current verification
 

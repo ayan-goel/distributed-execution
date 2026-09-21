@@ -19,6 +19,7 @@ const usage = `usage:
   dispatch validate FILE [--json]
   dispatch submit FILE [--idempotency-key KEY] [--json]
   dispatch jobs get JOB_ID [--json]
+  dispatch artifacts download JOB_ID NAME --output FILE [--json]
 
 Configure DISPATCH_URL and DISPATCH_TOKEN for server commands.
 Set DISPATCH_DEV_INSECURE=1 only for literal-loopback HTTP development.
@@ -45,6 +46,9 @@ func run(ctx context.Context, args []string, getenv func(string) string, out, er
 	}
 	if len(args) < 2 {
 		return errors.New(usage)
+	}
+	if args[0] == "artifacts" {
+		return downloadArtifact(ctx, args, getenv, out)
 	}
 	command, operand, flags := args[0], args[1], args[2:]
 	if command == "jobs" {
