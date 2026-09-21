@@ -137,6 +137,14 @@ impl Directory {
             if name == ".lock" || name == ".identity" {
                 continue;
             }
+            if name == ".session" {
+                let metadata = fs::symlink_metadata(entry.path())?;
+                metadata_safe(&metadata, false)?;
+                if metadata.len() > (super::session::MAX_SESSION + HEADER) as u64 {
+                    return Err(JournalError::Corrupt);
+                }
+                continue;
+            }
             let id = name
                 .strip_suffix(".attempt")
                 .filter(|id| canonical_uuid(id))

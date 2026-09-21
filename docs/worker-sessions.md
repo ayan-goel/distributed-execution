@@ -147,7 +147,10 @@ are bounded and must belong to the same worker; previous sessions are permitted 
 reconciliation. Actual container label/authority checks remain the runtime's job.
 
 The caller retains request payloads, session IDs, and heartbeat sequences across
-retries. The client never generates a replacement identity. Connection failures,
+retries. The [worker journal](worker-journal.md) now persists a fresh registration
+request per agent incarnation and records matching acknowledgements. Reopening
+exposes history but requires a new incarnation; it does not resume an old session
+or restore readiness. The client never generates a replacement identity. Connection failures,
 local deadlines, Unavailable, and DeadlineExceeded are retryable categories; fencing,
 revocation, conflicting payloads, and stale reports require explicit handling.
 There is no automatic retry loop yet. Transport errors omit configuration material,
@@ -158,8 +161,9 @@ a bounded protobuf registration from stdin, registers twice, sends the same hear
 twice, and writes the registration reply as protobuf. It always reports an unhealthy,
 unreconciled runtime, so it cannot make a host schedulable or release old reservations.
 `make store-test` builds all worker protocol fixtures before integration tests. The production
-agent still needs runtime discovery, durable session state, reconciliation, and its
-supervision loop before it can advertise readiness or execute jobs.
+agent still needs to integrate durable session state and runtime discovery with
+registration, reconciliation, and its supervision loop before it can advertise
+readiness or execute jobs.
 
 ## Verification
 

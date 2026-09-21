@@ -26,7 +26,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D07 acquisition | D03,D06 | Atomic assignment/reservations; concurrent quota/capacity races; acquisition replay | store, RPC, and Rust client gates passed; production agent loop pending |
 | D08 Docker adapter | D04 | Real bounded create/start/inspect/stop; ambiguous create reconciles one identity | spec, cached-image lifecycle, and phase store/RPC/Rust client gates passed; image staging and strict workspace integration pending |
 | D09 leases | D06,D07 | Fresh DB-time expiry checks; delayed grants; local monotonic deadline enforcement | local deadline, store, RPC, and Rust renewal client gates passed; production loop, reaper, and supervisor pending |
-| D10 worker recovery | D08,D09 | Durable journal; agent kill/restart stops old containers before new capacity | attempt journal and runtime discovery/cleanup gates passed; session persistence and agent recovery pending |
+| D10 worker recovery | D08,D09 | Durable journal; agent kill/restart stops old containers before new capacity | attempt/session journal and runtime discovery/cleanup gates passed; agent recovery integration pending |
 | D11 artifacts | D03,D04 | Scoped grants; verified exact versions; stale publication rejection | pending |
 | D12 first real job | D05–D11 | CLI submit → gRPC → Docker → verified output → CLI download | pending |
 | D13 loss/retry | D09,D12 | Reaper/reconciliation; recorded retry; backoff/deadlines; nonretryable failure | pending |
@@ -739,3 +739,31 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 - This verifies the runtime recovery component, not the full agent restart protocol.
   Session persistence, registration/heartbeat orchestration, supervisor integration,
   storage/publication, and the remaining v0.1 acceptance gates stay open.
+
+### D10c: durable registration and fresh incarnation identity
+
+- Added private bounded `.session` metadata using the verified journal commit path.
+  Beginning an incarnation persists generated request/session UUIDs and complete
+  registration claims before exposing the request. A handle cannot begin twice.
+  Registration acknowledgement records only matching identity and generation;
+  replay is idempotent and changed generation conflicts.
+- Reopening exposes the preceding request as history, including an uncertain
+  registration, but cannot acknowledge that old incarnation. A replacement writes
+  fresh IDs and retains the predecessor ID without modifying attempt evidence.
+  Server recovery remains responsible for fencing; saved readiness/lease authority
+  is never restored. Missing worker identity with session metadata is corruption.
+- Tests first failed for the missing API. Native and Linux tests now cover exact
+  request fields across reopen, retry/acknowledgement conflicts, invalid claims,
+  corruption without overwrite, and prior attempt preservation. The killed-owner
+  subprocess test additionally proves an unacknowledged session survives process
+  death and the replacement chooses a different incarnation.
+- Cross-checked bounds against the Go registration contract, including 128-byte
+  ASCII label keys with uppercase support, whole-MiB resources, and scratch
+  capability exclusivity. Session protobuf map ordering is intentionally not treated
+  as canonical bytes; replay preserves values and IDs and the server hashes
+  normalized claims. Session metadata adds at most 64 KiB plus framing outside the
+  attempt byte budget.
+- `make test lint smoke` and `sh scripts/test-worker-linux.sh` passed. Updated
+  `docs/worker-journal.md` and `docs/worker-sessions.md`. No worker RPC or database
+  semantics changed in this slice. Production startup orchestration, heartbeat and
+  supervisor loops, storage/publication, and all remaining v0.1 gates stay open.

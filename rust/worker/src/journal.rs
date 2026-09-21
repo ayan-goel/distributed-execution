@@ -9,6 +9,8 @@ use ring::rand::{SecureRandom, SystemRandom};
 use std::{fmt, path::Path};
 
 mod files;
+mod session;
+pub use session::StoredSession;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum JournalError {
@@ -98,6 +100,7 @@ impl RecoveredAttempt {
 pub struct Journal {
     directory: files::Directory,
     worker_id: String,
+    incarnation: Option<String>,
 }
 impl Journal {
     pub fn open(
@@ -118,7 +121,7 @@ impl Journal {
             Some(saved) if saved == worker_id.as_bytes() => {}
             Some(_) => return Err(JournalError::Identity),
             None => {
-                if !directory.inventory()?.is_empty() {
+                if !directory.inventory()?.is_empty() || directory.read(".session")?.is_some() {
                     return Err(JournalError::Corrupt);
                 }
                 directory.write(".identity", worker_id.as_bytes())?;
@@ -127,6 +130,7 @@ impl Journal {
         Ok(Self {
             directory,
             worker_id: worker_id.to_string(),
+            incarnation: None,
         })
     }
 
