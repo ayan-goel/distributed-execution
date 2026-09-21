@@ -30,7 +30,7 @@ impl ControlClient {
     }
 }
 
-fn validate_request(r: &CompleteAttemptRequest) -> Result<(), ClientError> {
+pub(crate) fn validate_request(r: &CompleteAttemptRequest) -> Result<(), ClientError> {
     if !lower_hash(&r.payload_sha256) || completion_digest(r)? != r.payload_sha256 {
         return Err(ClientError::Configuration);
     }

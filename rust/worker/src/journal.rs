@@ -1,9 +1,11 @@
 //! Durable evidence and retry identities, never recovered execution authority.
 use crate::{
-    control::{canonical_uuid, lower_hash, validate_phase_request},
+    control::{canonical_uuid, lower_hash, validate_completion_request, validate_phase_request},
     execution::ExecutionSpec,
 };
-use dispatch_protocol::v1::{Assignment, AttemptState, ReportPhaseRequest};
+use dispatch_protocol::v1::{
+    Assignment, AttemptState, CompleteAttemptRequest, FailureReason, ReportPhaseRequest,
+};
 use prost::Message;
 use ring::rand::{SecureRandom, SystemRandom};
 use std::{fmt, path::Path};
@@ -72,6 +74,8 @@ struct Record {
     exit: Option<ExitEvidence>,
     #[prost(message, repeated, tag = "4")]
     phase_reports: Vec<ReportPhaseRequest>,
+    #[prost(message, optional, tag = "5")]
+    completion: Option<CompleteAttemptRequest>,
 }
 
 pub struct RecoveredAttempt(Record);
@@ -96,6 +100,9 @@ impl RecoveredAttempt {
     }
     pub fn phase_reports(&self) -> &[ReportPhaseRequest] {
         &self.0.phase_reports
+    }
+    pub fn completion(&self) -> Option<&CompleteAttemptRequest> {
+        self.0.completion.as_ref()
     }
 }
 
@@ -157,7 +164,7 @@ impl Journal {
             .validate(&self.worker_id, id)
             .map_err(|_| JournalError::Corrupt)?;
         // Reject unknown/duplicate/noncanonical fields even with a valid checksum;
-        // future formats need an explicit version instead of silently losing data.
+        // older binaries must reject newly used tags instead of losing evidence.
         if record.encode_to_vec() != bytes {
             return Err(JournalError::Corrupt);
         }
@@ -180,6 +187,7 @@ impl Journal {
             container_id: String::new(),
             exit: None,
             phase_reports: Vec::new(),
+            completion: None,
         };
         record.validate(&self.worker_id, &a.attempt_id)?;
         if let Some(saved) = self.load_attempt(&a.attempt_id)? {
@@ -206,6 +214,9 @@ impl Journal {
             } else {
                 Err(JournalError::Conflict)
             };
+        }
+        if record.completion.is_some() {
+            return Err(JournalError::Conflict);
         }
         record.container_id = container_id.to_string();
         self.save(id, &record)
@@ -252,6 +263,11 @@ impl Journal {
         {
             return Ok(saved.clone());
         }
+        // Preparing completion closes local execution progress. Existing events
+        // remain replayable, but a restart cannot turn pending delivery into work.
+        if record.completion.is_some() {
+            return Err(JournalError::Conflict);
+        }
         let allowed = match phase {
             AttemptState::Starting => record.phase_reports.is_empty(),
             AttemptState::Running => {
@@ -283,6 +299,35 @@ impl Journal {
         record.phase_reports.push(request.clone());
         self.save(id, &record)?;
         Ok(request)
+    }
+
+    pub fn persist_completion(
+        &mut self,
+        request: &CompleteAttemptRequest,
+    ) -> Result<(), JournalError> {
+        validate_completion_request(request).map_err(|_| JournalError::Invalid)?;
+        let authority = request.authority.as_ref().ok_or(JournalError::Invalid)?;
+        let mut record = self.required(&authority.attempt_id)?;
+        if record.assignment.authority.as_ref() != Some(authority) {
+            return Err(JournalError::Identity);
+        }
+        if let Some(saved) = &record.completion {
+            return if saved == request {
+                Ok(())
+            } else {
+                Err(JournalError::Conflict)
+            };
+        }
+        // Snapshot observed exit presence as well as its value. Later cleanup can
+        // add observations, but cannot revise an uncertain request's evidence.
+        if request.exit_code != record.exit.as_ref().map(|exit| exit.exit_code) {
+            return Err(JournalError::Conflict);
+        }
+        record.completion = Some(request.clone());
+        record
+            .validate_completion()
+            .map_err(|_| JournalError::Conflict)?;
+        self.save(&authority.attempt_id, &record)
     }
 
     fn required(&self, id: &str) -> Result<Record, JournalError> {
@@ -345,6 +390,33 @@ impl Record {
                 return Err(JournalError::Invalid);
             }
             previous = r.phase;
+        }
+        self.validate_completion()?;
+        Ok(())
+    }
+
+    fn validate_completion(&self) -> Result<(), JournalError> {
+        let Some(request) = &self.completion else {
+            return Ok(());
+        };
+        validate_completion_request(request).map_err(|_| JournalError::Invalid)?;
+        if request.authority != self.assignment.authority
+            || request
+                .exit_code
+                .is_some_and(|code| self.exit.as_ref().map(|e| e.exit_code) != Some(code))
+        {
+            return Err(JournalError::Invalid);
+        }
+        // Success can only snapshot durable FINALIZING and observed clean exit.
+        // Failure before a container exists remains reportable without an exit.
+        if request.reason == FailureReason::Unspecified as i32
+            && (self.phase_reports.last().map(|r| r.phase) != Some(AttemptState::Finalizing as i32)
+                || self
+                    .exit
+                    .as_ref()
+                    .is_none_or(|e| e.exit_code != 0 || e.oom_killed))
+        {
+            return Err(JournalError::Invalid);
         }
         Ok(())
     }

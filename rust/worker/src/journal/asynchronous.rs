@@ -1,6 +1,7 @@
 use super::{Journal, JournalError, RecoveredAttempt};
 use dispatch_protocol::v1::{
-    Assignment, AttemptState, RegisterWorkerResponse, ReportPhaseRequest, WorkerSession,
+    Assignment, AttemptState, CompleteAttemptRequest, RegisterWorkerResponse, ReportPhaseRequest,
+    WorkerSession,
 };
 use std::sync::{Arc, Mutex};
 use tokio::sync::Semaphore;
@@ -85,6 +86,13 @@ impl AsyncJournal {
     }
     pub async fn load_attempt(&self, id: String) -> Result<Option<RecoveredAttempt>, JournalError> {
         self.apply(move |journal| journal.load_attempt(&id)).await
+    }
+    pub async fn persist_completion(
+        &self,
+        request: CompleteAttemptRequest,
+    ) -> Result<(), JournalError> {
+        self.apply(move |journal| journal.persist_completion(&request))
+            .await
     }
     pub async fn bind_container(
         &self,

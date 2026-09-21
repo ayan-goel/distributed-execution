@@ -244,6 +244,8 @@ cancellation each produce one completion/event and release one stopped reservati
 Changed evidence returns a conflict; a spoofed worker is denied before the handler;
 an unknown attempt is fenced. No storage request occurs after artifact verification.
 
-The probe is a protocol fixture, not a production delivery loop. Durable completion
-journaling, recovery after process restart, output transfers, and connecting these
-operations to the worker's execution loop remain required.
+The probe is a protocol fixture, not a production delivery loop. The
+[worker journal](worker-journal.md#pending-completion-evidence-d11o) now persists and
+recovers pending request evidence. Acknowledgement persistence, delivery after
+process restart, output transfers, and connecting these operations to the worker's
+execution loop remain required.

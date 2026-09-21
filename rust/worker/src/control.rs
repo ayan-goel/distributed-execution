@@ -19,6 +19,7 @@ mod renew;
 pub use renew::{RenewalOutcome, RenewedLease};
 mod completion;
 mod completion_payload;
+pub(crate) use completion::validate_request as validate_completion_request;
 pub use completion::CompletionStatus;
 mod phase;
 pub use completion_payload::completion_digest;

@@ -8,13 +8,14 @@ and performs Docker reconciliation. The worker executable does not yet run jobs.
 
 `Journal::open` binds an existing directory to one configured worker UUID. Each
 attempt record contains the exact assignment/spec bytes, authority identifiers,
-an optional immutable Docker container ID, observed exit/OOM evidence, and up to
-three exact phase-report requests. UUIDs and the spec SHA-256 are validated before
+an optional immutable Docker container ID, observed exit/OOM evidence, up to
+three exact phase-report requests, and an optional pending completion request.
+UUIDs and the spec SHA-256 are validated before
 writing and after reading. Replaying an identical assignment preserves all evidence;
 changing its identity or execution specification returns `Conflict`.
 
-The [launch coordinator](worker-launch.md) now implements the first three steps of
-this supervisor order; execution/finalization phase orchestration remains pending:
+The [execution coordinator](worker-launch.md) implements this supervisor order
+through FINALIZING:
 
 1. Persist the assignment before taking any action on it.
 2. Persist a STARTING report with `prepare_phase`, then send that exact request.
@@ -32,6 +33,41 @@ Each `prepare_phase` saves a random v4 event UUID and the complete request befor
 returning it. Repeated calls, including after reopening or reaching a later phase,
 return the original request. The caller must retry that request unchanged after an
 uncertain RPC response. Container and exit evidence cannot be rebound or rewritten.
+
+## Pending completion evidence (D11o)
+
+`persist_completion` writes the entire `CompleteAttemptRequest` through the same
+file-sync/rename/directory-sync path before the caller can send it. Its asynchronous
+counterpart uses the journal's existing bounded blocking executor. The caller owns
+the completion UUID and digest; the journal neither generates replacements nor
+reconstructs metrics/output evidence. `RecoveredAttempt::completion()` exposes the
+stored request for an unchanged retry after reopening.
+
+The request must pass the control client's payload/digest validation and match the
+assignment's full authority tuple. On first persistence, exit presence/value must
+match the journal. A success also requires durable FINALIZING and an observed zero
+exit without an OOM flag. Failures before container creation can have no exit code.
+This validates consistency with local evidence; it does not prove runtime facts
+or replace the server's phase, lease, cancellation, and artifact checks.
+
+Once pending, the request is immutable, including its ID, digest, output ordering,
+log gaps, and original metrics bytes. Identical retries succeed; changed evidence
+conflicts. Assignment replay retains the completion. Existing phase/container
+evidence remains replayable, but new container bindings and phase reports are
+blocked. Later cleanup can record a previously unknown exit without rewriting the
+pending request. Reload validates the request digest independently of the frame
+checksum, so recomputing a checksum cannot hide a payload/digest mismatch.
+
+The optional protobuf field preserves readability of older records in the new
+binary. An older binary rejects records containing completion evidence because its
+canonical re-encoding would lose that field; do not downgrade such a state directory.
+The existing 5 MiB record, attempt-count, and total-byte bounds still apply.
+
+This is a durable outbox entry, not an accepted result. The current slice does not
+persist completion acknowledgements or remove resolved records. Delivery/recovery
+must still journal authoritative outcomes and handle cancellation after
+`STOP_REQUESTED` without overwriting an uncertain request. Finding pending evidence
+never permits a fresh execution, restores a lease, or proves a reservation released.
 
 ## Evidence cannot restore a lease
 
@@ -86,7 +122,7 @@ orchestration still needs integration with that loop.
 `AsyncJournal::new` consumes the exclusive `Journal` and provides cloneable handles
 to that same owner. The worker startup command now records its registration through
 this handle and retains it throughout the health loop. Attempt assignment, container
-binding, exit evidence, phase preparation, and reads have asynchronous counterparts
+binding, exit evidence, phase preparation, completion persistence, and reads have asynchronous counterparts
 with the same durable semantics and errors as the synchronous journal.
 
 Each handle shares a one-permit semaphore and a mutex around the journal. Operations
@@ -171,8 +207,8 @@ Specs can contain environment secrets. The state directory is private, and journ
 errors and `RecoveredAttempt` Debug output omit paths/spec contents. Explicitly
 reading or logging the exposed assignment still requires caller care.
 
-The API performs synchronous filesystem I/O. The future supervisor must execute
-it through a bounded blocking pool separate from lease maintenance. Kernel fsync
+The base API performs synchronous filesystem I/O; asynchronous execution uses
+`AsyncJournal`'s bounded blocking pool separate from lease maintenance. Kernel fsync
 latency has no strict upper bound. Successful sync relies on the filesystem,
 storage hardware, and VM honoring persistence semantics.
 
@@ -187,7 +223,11 @@ replacement recovers the same event UUID and zero timing fields. These are proce
 death/error tests, not simulated power failure or physical storage fault tests.
 The process-death test also leaves an unacknowledged registration on disk and
 verifies that its replacement preserves the predecessor while choosing a fresh
-session. Session tests check retry payloads, acknowledgement identity/generation,
+session. It now also recovers the exact pending completion after killing its owner.
+Completion tests cover concurrent identical writes, changed identity/source metrics,
+authority/digest/exit/phase mismatches, OOM evidence, late cleanup observations,
+and semantic corruption with a recomputed frame checksum.
+Session tests check retry payloads, acknowledgement identity/generation,
 changed cleanup responses, invalid claims, missing identity, and corruption.
 
 `sh scripts/test-worker-linux.sh` runs the complete worker test suite on Linux.
@@ -199,9 +239,10 @@ operations. `make integration` runs this gate plus the separate real Docker,
 migration, and PostgreSQL/mTLS fixtures. The focused clock script remains available.
 
 Session/registration persistence and labeled-container discovery are implemented as
-components. Completion and transfer identities, terminal cleanup, startup recovery,
-and the production supervisor remain required. D10 is not complete until restarting the actual agent
-stops old-session containers before advertising new capacity.
+components. Completion acknowledgement/recovery delivery, transfer identities,
+terminal cleanup, and the production job loop remain required. The startup agent
+already reconciles old-session containers before advertising capacity; pending job
+delivery still needs to be connected to that startup path.
 
 Persistence references: [Rust rename](https://doc.rust-lang.org/std/fs/fn.rename.html),
 [File::sync_all](https://doc.rust-lang.org/std/fs/struct.File.html#method.sync_all),

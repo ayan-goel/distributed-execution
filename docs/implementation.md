@@ -1356,3 +1356,31 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 - Updated completion documentation. Durable completion journaling/restart recovery,
   Rust output transfers, and the production acquisition/execution/delivery loop
   remain required; this fixture verifies transport replay, not process recovery.
+
+### D11o: Durable pending completion requests
+
+- Added synchronous/asynchronous `persist_completion` and recovered request access.
+  Complete caller-owned protobuf evidence is synced before returning, with full
+  authority and payload/digest validation. Exact retries and assignment replay
+  preserve the entry; changed UUIDs, evidence, or raw metrics conflict.
+- Require matching observed exit presence/value on first persistence. Successful
+  completion requires durable FINALIZING, zero exit, and no observed OOM. New phase
+  progress/container binding stops once completion is pending; later cleanup may
+  still persist exit observations without altering the original request.
+- Added an optional attempt-record field using existing checksum, canonical decode,
+  atomic replacement, poison, and storage-budget rules. New binaries read previous
+  records; older binaries reject completion-bearing records instead of discarding
+  unknown evidence. No dependency, wire protocol, or database schema changed.
+- Initial tests failed for missing journal methods. Tests now cover concurrent
+  persistence, reopen/replay, digest/authority/evidence conflicts, OOM, late cleanup,
+  and tampered metrics with a recomputed frame checksum. The existing killed-owner
+  subprocess test also recovers its exact pending completion and retains zero lease
+  timing while choosing a new incarnation.
+- Native `make test lint smoke` passed. `scripts/test-worker-linux.sh` passed on the
+  isolated Linux volume, including 56 worker library tests and 15 journal tests;
+  the ignored child fixture is exercised by its parent process-death test.
+- Updated completion/journal documentation and corrected outdated coordinator
+  descriptions. Persisting authoritative replies, safe cancellation handling after
+  a rejected success request, cleanup/retention, and connecting recovered requests
+  to the actual agent's delivery loop remain required. This slice stores pending
+  evidence; it does not claim completion acceptance or restore execution authority.

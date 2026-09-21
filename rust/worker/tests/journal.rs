@@ -1,7 +1,9 @@
 #![cfg(unix)]
 
 use dispatch_protocol::v1::{Assignment, AttemptAuthority, AttemptState, Resources};
+use dispatch_protocol::v1::{CompleteAttemptRequest, FailureReason};
 use dispatch_protocol::v1::{RegisterWorkerRequest, RegisterWorkerResponse, WorkerSession};
+use dispatch_worker::control::completion_digest;
 use dispatch_worker::journal::{AsyncJournal, Journal, JournalError, JournalLimits};
 use ring::digest::{digest, SHA256};
 use std::{
@@ -98,6 +100,212 @@ fn registration_claims() -> RegisterWorkerRequest {
         .to_vec(),
         ..Default::default()
     }
+}
+
+fn completion() -> CompleteAttemptRequest {
+    let mut request = CompleteAttemptRequest {
+        authority: assignment().authority,
+        completion_id: "00000000-0000-0000-0000-000000000005".into(),
+        reason: FailureReason::RuntimeUnavailable as i32,
+        stopped: true,
+        logs_complete: true,
+        metrics_json: br#"{ "counter":9007199254740993 }"#.to_vec(),
+        ..Default::default()
+    };
+    request.payload_sha256 = completion_digest(&request).unwrap();
+    request
+}
+
+#[tokio::test]
+async fn completion_outbox_reopens_exact_evidence_and_rejects_changed_retries() {
+    let fixture = Fixture::new();
+    let request = completion();
+    let journal = AsyncJournal::new(fixture.open());
+    journal.persist_assignment(assignment()).await.unwrap();
+    let other = journal.clone();
+    let (first, replay) = tokio::join!(
+        journal.persist_completion(request.clone()),
+        other.persist_completion(request.clone())
+    );
+    first.unwrap();
+    replay.unwrap();
+    drop(other);
+    drop(journal);
+    let mut reopened = fixture.open();
+    assert_eq!(
+        reopened
+            .load_attempt(ATTEMPT)
+            .unwrap()
+            .unwrap()
+            .completion(),
+        Some(&request)
+    );
+    reopened.persist_completion(&request).unwrap();
+    // Submission replay must retain the outbox; it cannot clear uncertain work.
+    reopened.persist_assignment(&assignment()).unwrap();
+    assert_eq!(
+        reopened
+            .load_attempt(ATTEMPT)
+            .unwrap()
+            .unwrap()
+            .completion(),
+        Some(&request)
+    );
+    for change in [
+        |r: &mut CompleteAttemptRequest| {
+            r.completion_id = "00000000-0000-0000-0000-000000000006".into()
+        },
+        |r: &mut CompleteAttemptRequest| r.logs_complete = false,
+        |r: &mut CompleteAttemptRequest| {
+            r.metrics_json = br#"{"counter":9007199254740993}"#.to_vec()
+        },
+    ] {
+        let mut changed = request.clone();
+        change(&mut changed);
+        changed.payload_sha256 = completion_digest(&changed).unwrap();
+        assert_eq!(
+            reopened.persist_completion(&changed),
+            Err(JournalError::Conflict)
+        );
+    }
+    assert_eq!(
+        reopened.prepare_phase(ATTEMPT, AttemptState::Starting),
+        Err(JournalError::Conflict)
+    );
+}
+
+#[test]
+fn completion_outbox_requires_matching_authority_digest_and_observed_success() {
+    let fixture = Fixture::new();
+    let mut journal = fixture.open();
+    journal.persist_assignment(&assignment()).unwrap();
+    let mut request = completion();
+    request.authority.as_mut().unwrap().generation += 1;
+    request.payload_sha256 = completion_digest(&request).unwrap();
+    assert_eq!(
+        journal.persist_completion(&request),
+        Err(JournalError::Identity)
+    );
+    request = completion();
+    request.payload_sha256 = "0".repeat(64);
+    assert_eq!(
+        journal.persist_completion(&request),
+        Err(JournalError::Invalid)
+    );
+    request = completion();
+    request.reason = FailureReason::Unspecified as i32;
+    request.exit_code = Some(0);
+    request.payload_sha256 = completion_digest(&request).unwrap();
+    assert_eq!(
+        journal.persist_completion(&request),
+        Err(JournalError::Conflict)
+    );
+    journal
+        .prepare_phase(ATTEMPT, AttemptState::Starting)
+        .unwrap();
+    journal.bind_container(ATTEMPT, &"a".repeat(64)).unwrap();
+    journal.record_exit(ATTEMPT, 0, false).unwrap();
+    assert_eq!(
+        journal.persist_completion(&request),
+        Err(JournalError::Conflict)
+    );
+    journal
+        .prepare_phase(ATTEMPT, AttemptState::Finalizing)
+        .unwrap();
+    journal.persist_completion(&request).unwrap();
+    drop(journal);
+    assert_eq!(
+        fixture
+            .open()
+            .load_attempt(ATTEMPT)
+            .unwrap()
+            .unwrap()
+            .completion(),
+        Some(&request)
+    );
+}
+
+#[test]
+fn completion_cannot_hide_a_durable_oom_observation() {
+    let fixture = Fixture::new();
+    let mut journal = fixture.open();
+    journal.persist_assignment(&assignment()).unwrap();
+    journal
+        .prepare_phase(ATTEMPT, AttemptState::Starting)
+        .unwrap();
+    journal.bind_container(ATTEMPT, &"a".repeat(64)).unwrap();
+    journal.record_exit(ATTEMPT, 0, true).unwrap();
+    journal
+        .prepare_phase(ATTEMPT, AttemptState::Finalizing)
+        .unwrap();
+    let mut request = completion();
+    request.reason = FailureReason::Unspecified as i32;
+    request.exit_code = Some(0);
+    request.payload_sha256 = completion_digest(&request).unwrap();
+    assert_eq!(
+        journal.persist_completion(&request),
+        Err(JournalError::Conflict)
+    );
+    assert!(journal
+        .load_attempt(ATTEMPT)
+        .unwrap()
+        .unwrap()
+        .completion()
+        .is_none());
+}
+
+#[test]
+fn pending_completion_preserves_late_cleanup_observations_without_rewriting_request() {
+    let fixture = Fixture::new();
+    let mut journal = fixture.open();
+    journal.persist_assignment(&assignment()).unwrap();
+    journal
+        .prepare_phase(ATTEMPT, AttemptState::Starting)
+        .unwrap();
+    journal.bind_container(ATTEMPT, &"a".repeat(64)).unwrap();
+    journal
+        .prepare_phase(ATTEMPT, AttemptState::Running)
+        .unwrap();
+    let mut request = completion();
+    request.reason = FailureReason::ExecutionTimeout as i32;
+    request.stopped = false;
+    request.payload_sha256 = completion_digest(&request).unwrap();
+    journal.persist_completion(&request).unwrap();
+    journal.record_exit(ATTEMPT, 137, true).unwrap();
+    assert_eq!(
+        journal.prepare_phase(ATTEMPT, AttemptState::Finalizing),
+        Err(JournalError::Conflict)
+    );
+    journal.persist_completion(&request).unwrap();
+    drop(journal);
+    let saved = fixture.open().load_attempt(ATTEMPT).unwrap().unwrap();
+    assert_eq!(saved.exit().unwrap().exit_code, 137);
+    assert!(saved.exit().unwrap().oom_killed);
+    assert_eq!(saved.completion(), Some(&request));
+}
+
+#[test]
+fn completion_payload_corruption_fails_even_with_recomputed_frame_checksum() {
+    let fixture = Fixture::new();
+    let mut journal = fixture.open();
+    journal.persist_assignment(&assignment()).unwrap();
+    journal.persist_completion(&completion()).unwrap();
+    drop(journal);
+    let path = fixture.0.join(format!("{ATTEMPT}.attempt"));
+    let mut bytes = fs::read(&path).unwrap();
+    let number = b"9007199254740993";
+    let offset = bytes
+        .windows(number.len())
+        .position(|s| s == number)
+        .unwrap();
+    bytes[offset + number.len() - 1] = b'4';
+    let checksum = digest(&SHA256, &bytes[48..]);
+    bytes[16..48].copy_from_slice(checksum.as_ref());
+    fs::write(path, bytes).unwrap();
+    assert!(matches!(
+        fixture.open().load_attempt(ATTEMPT),
+        Err(JournalError::Corrupt)
+    ));
 }
 
 fn registration_reply(request: &RegisterWorkerRequest, generation: u64) -> RegisterWorkerResponse {
@@ -547,6 +755,7 @@ fn journal_process_child() {
     let session = j.begin_incarnation(registration_claims()).unwrap();
     j.persist_assignment(&assignment()).unwrap();
     let request = j.prepare_phase(ATTEMPT, AttemptState::Starting).unwrap();
+    j.persist_completion(&completion()).unwrap();
     let marker = PathBuf::from(marker);
     let pending = marker.with_extension("pending");
     // Publish readiness only after the complete event ID is visible; the parent
@@ -618,6 +827,14 @@ fn killed_owner_releases_lock_and_preserves_acknowledged_retry_identity() {
     let marker = fs::read_to_string(marker).unwrap();
     let (event, old_session) = marker.split_once('\n').unwrap();
     let mut reopened = Journal::open(root, WORKER, JournalLimits::default()).unwrap();
+    assert_eq!(
+        reopened
+            .load_attempt(ATTEMPT)
+            .unwrap()
+            .unwrap()
+            .completion(),
+        Some(&completion())
+    );
     let saved = reopened.load_session().unwrap().unwrap();
     assert_eq!(saved.registration().requested_session_id, old_session);
     assert_eq!(saved.generation(), None);
