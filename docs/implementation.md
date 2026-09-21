@@ -27,7 +27,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D08 Docker adapter | D04 | Real bounded create/start/inspect/stop; ambiguous create reconciles one identity | cached launch, RUNNING/FINALIZING coordination, and phase store/RPC/client gates passed; agent integration, staging, and strict workspaces pending |
 | D09 leases | D06,D07 | Fresh DB-time expiry checks; delayed grants; local monotonic deadline enforcement | deadline, store/RPC/client, watchdog, periodic renewal, and execution refresh gates passed; reaper and production agent integration pending |
 | D10 worker recovery | D08,D09 | Durable journal; agent kill/restart stops old containers before new capacity | journal, discovery/cleanup, and actual startup process gates passed; agent-owned job kill/restart gate pending |
-| D11 artifacts | D03,D04 | Scoped grants; verified exact versions; stale publication rejection | versioned storage adapter and real backend gate passed; durable grants, fenced verification/publication, and transfers pending |
+| D11 artifacts | D03,D04 | Scoped grants; verified exact versions; stale publication rejection | versioned storage and durable upload declaration gates passed; RPC integration, fenced verification/publication, and transfers pending |
 | D12 first real job | D05–D11 | CLI submit → gRPC → Docker → verified output → CLI download | pending |
 | D13 loss/retry | D09,D12 | Reaper/reconciliation; recorded retry; backoff/deadlines; nonretryable failure | pending |
 | D14 cancellation | D12,D13 | Both completion/cancellation race orders, repeat requests, uncertain cleanup | pending |
@@ -1031,3 +1031,31 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 - This slice is a storage primitive, not artifact authorization or job completion.
   Pending upload metadata, lease/session fencing during verification/publication,
   worker transfers, multipart support, retention, and the remaining v0.1 gates stay open.
+
+### D11b: durable, fenced upload declarations
+
+- Added immutable upload declarations bound to the full project/job/attempt/worker/
+  session/generation identity. PostgreSQL generates attempt-specific object keys;
+  workers cannot select writable paths. Request UUIDs deduplicate identical retries
+  and reject changed payloads, including reuse across attempts.
+- Creation rechecks credentials, session ownership, cancellation, and fresh database
+  time after ownership/replay lock waits. It changes no lease, phase, or reservation
+  and performs no network I/O. Only declared outputs in FINALIZING, reserved log
+  streams in active execution phases, and bounded result manifests are accepted.
+- Single-part declarations are bounded to 64 MiB each, 1024 per attempt, and 8 GiB
+  total. Competing requests serialize on the attempt; replay consumes no additional
+  budget. The declaration and its event/sequence update commit or roll back together.
+- Unit and real PostgreSQL tests cover concurrent replay, request conflicts, scope
+  foreign keys, cap races, event failure rollback, revoked credentials, takeover,
+  cancellation, and expiry during a confirmed lock wait. Scheduler and worker locks
+  do not block creation. A populated migration-eight-to-nine upgrade preserves an
+  active attempt's identity and deadlines.
+- Review reproduced an unchanged-row update failing because a BEFORE trigger read
+  the generated key before computation. Moved the immutable-row check to AFTER;
+  the regression now accepts a no-op while still rejecting content/key mutation.
+- `make test lint smoke` and full `make integration` passed before the trigger
+  refinement. The final `scripts/test-schema.sh` and `scripts/test-store.sh` passed
+  again, covering fresh/down/reapply migrations and race-enabled database, mTLS,
+  and executable suites. No dependencies or worker behavior changed in this slice.
+- Upload signing through the service, exact-version verification/publication,
+  worker transfers, multipart support, and the remaining v0.1 release gates remain.

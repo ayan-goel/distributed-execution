@@ -5,8 +5,9 @@
 `internal/objectstore` implements bounded single-part uploads, exact-version
 verification, and scoped downloads. It uses the official AWS SDK for Go v2 S3 module
 `v1.113.1`, core `v1.47.0`, and explicit credentials provider `v1.20.5`. The API is
-S3-compatible; it does not require an AWS account. Server/RPC configuration and
-durable artifact publication are separate pending slices.
+S3-compatible; it does not require an AWS account. The
+[durable upload declaration store](artifact-uploads.md) is verified separately.
+Server/RPC integration, exact-version artifact records, and publication remain pending.
 
 The verified local backend is SeaweedFS 4.47, pinned as:
 

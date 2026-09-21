@@ -98,3 +98,10 @@ must not expose this internal precondition as a bypass for external validation.
 The real-database suite sends 100 concurrent same-key submissions and asserts one
 job/key/event, verifies request-vs-execution hashes, and injects a failure at the event
 write to prove transaction rollback leaves no partial admission.
+
+## Artifact declarations (D11b)
+
+Migration 0009 adds immutable upload declarations, generated attempt-specific object
+keys, and composite project/attempt authority foreign keys. See
+[artifact upload transactions](artifact-uploads.md) for replay, locking, budget,
+rollback, and populated-upgrade evidence. No object I/O occurs in these transactions.
