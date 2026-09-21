@@ -20,12 +20,14 @@ import (
 const MaxResponseBytes = 4 << 20
 
 type Job struct {
-	ID        string          `json:"id"`
-	ProjectID string          `json:"projectId"`
-	State     string          `json:"state"`
-	Spec      json.RawMessage `json:"spec"`
-	SpecHash  string          `json:"specHash"`
-	CreatedAt time.Time       `json:"createdAt"`
+	ID                string          `json:"id"`
+	ProjectID         string          `json:"projectId"`
+	State             string          `json:"state"`
+	Spec              json.RawMessage `json:"spec"`
+	SpecHash          string          `json:"specHash"`
+	CreatedAt         time.Time       `json:"createdAt"`
+	AcceptedAttemptID *string         `json:"acceptedAttemptId"`
+	AcceptedManifest  json.RawMessage `json:"acceptedManifest"`
 }
 
 type APIError struct {

@@ -79,3 +79,30 @@ func TestValidationRejectsTerminalControlCharactersSafely(t *testing.T) {
 		t.Fatal("terminal escape passed through")
 	}
 }
+
+func TestJobInspectionJSONIncludesAcceptedResult(t *testing.T) {
+	const id = "00000000-0000-0000-0000-000000000001"
+	const attempt = "00000000-0000-0000-0000-000000000002"
+	const manifest = `{"version":1,"metrics":{"count":9007199254740993},"outputs":[]}`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/jobs/"+id || r.Header.Get("Authorization") != "Bearer private" {
+			t.Error("inspection request lost identity")
+		}
+		_, _ = io.WriteString(w, `{"id":"`+id+`","state":"SUCCEEDED","acceptedAttemptId":"`+attempt+`","acceptedManifest":`+manifest+`}`)
+	}))
+	defer server.Close()
+	env := func(key string) string {
+		return map[string]string{"DISPATCH_URL": server.URL, "DISPATCH_TOKEN": "private", "DISPATCH_DEV_INSECURE": "1"}[key]
+	}
+	var out, errs bytes.Buffer
+	if code := Run(context.Background(), []string{"jobs", "get", id, "--json"}, env, &out, &errs); code != 0 || errs.Len() != 0 {
+		t.Fatal(code, errs.String())
+	}
+	var result struct {
+		AcceptedAttemptID string          `json:"acceptedAttemptId"`
+		Manifest          json.RawMessage `json:"acceptedManifest"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil || result.AcceptedAttemptID != attempt || string(result.Manifest) != manifest {
+		t.Fatal("CLI dropped or rounded accepted result", err)
+	}
+}

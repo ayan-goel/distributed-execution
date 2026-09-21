@@ -27,7 +27,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D08 Docker adapter | D04 | Real bounded create/start/inspect/stop; ambiguous create reconciles one identity | cached launch, RUNNING/FINALIZING coordination, and phase store/RPC/client gates passed; agent integration, staging, and strict workspaces pending |
 | D09 leases | D06,D07 | Fresh DB-time expiry checks; delayed grants; local monotonic deadline enforcement | deadline, store/RPC/client, watchdog, periodic renewal, and execution refresh gates passed; reaper and production agent integration pending |
 | D10 worker recovery | D08,D09 | Durable journal; agent kill/restart stops old containers before new capacity | journal, discovery/cleanup, and actual startup process gates passed; agent-owned job kill/restart gate pending |
-| D11 artifacts | D03,D04 | Scoped grants; verified exact versions; stale publication rejection | upload grants, exact-version finalization, and authenticated atomic completion gates passed; public result retrieval and worker transfers pending |
+| D11 artifacts | D03,D04 | Scoped grants; verified exact versions; stale publication rejection | grants, verification, completion, and public result metadata gates passed; downloads and worker transfers pending |
 | D12 first real job | D05–D11 | CLI submit → gRPC → Docker → verified output → CLI download | pending |
 | D13 loss/retry | D09,D12 | Reaper/reconciliation; recorded retry; backoff/deadlines; nonretryable failure | pending |
 | D14 cancellation | D12,D13 | Both completion/cancellation race orders, repeat requests, uncertain cleanup | pending |
@@ -1220,3 +1220,22 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   versioned-storage gate remains applicable; no schema or Rust runtime changed here.
 - Updated completion, protocol, operator, and README status. Public canonical-result
   retrieval and the Rust transfer/completion loop remain subsequent slices.
+
+### D11i: project-scoped accepted result inspection
+
+- Added `acceptedAttemptId` and `acceptedManifest` to job inspection and submission
+  replay. Queries join only the job's accepted successful completion, preserving
+  its frozen JSON bytes rather than reconstructing a result from mutable upload
+  state. Jobs without accepted success expose null fields.
+- The Go client and `dispatch jobs get --json` retain raw manifest JSON and exact
+  numeric text. No registry/storage lookup or download capability is needed for
+  result metadata. Authorized artifact downloads remain a separate slice.
+- Initial client coverage failed for the absent result fields. Native
+  `make test lint smoke` and real PostgreSQL `scripts/test-store.sh` passed with
+  zero exits. Integration coverage publishes a verified output over mTLS and then
+  exercises the HTTP server/client: active jobs have no result, successful jobs
+  expose the exact accepted identity/manifest, failed diagnostics stay noncanonical,
+  submission replay returns the same current result, and another project's token
+  receives 404. Client and CLI tests preserve integers above 2^53.
+- Updated HTTP/completion contracts and implementation status. Rust transfers,
+  completion delivery, and the complete workload-to-download gate remain open.

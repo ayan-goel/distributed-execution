@@ -101,3 +101,20 @@ func TestClientPreservesSubmissionKeyAndBoundsResponses(t *testing.T) {
 		t.Fatal("oversized response accepted")
 	}
 }
+
+func TestClientPreservesAcceptedManifestPrecision(t *testing.T) {
+	const id = "00000000-0000-0000-0000-000000000001"
+	const attempt = "00000000-0000-0000-0000-000000000002"
+	const manifest = `{"version":1,"metrics":{"count":9007199254740993},"outputs":[]}`
+	c, err := New("https://dispatch.example.org", "private", false, transportFunc(func(r *http.Request) (*http.Response, error) {
+		body := `{"id":"` + id + `","state":"SUCCEEDED","acceptedAttemptId":"` + attempt + `","acceptedManifest":` + manifest + `}`
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body)), Header: http.Header{}}, nil
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	j, err := c.GetJob(context.Background(), id)
+	if err != nil || j.AcceptedAttemptID == nil || *j.AcceptedAttemptID != attempt || string(j.AcceptedManifest) != manifest {
+		t.Fatal("result identity/number text lost", err)
+	}
+}

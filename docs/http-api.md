@@ -6,7 +6,7 @@
 | --- | --- | --- |
 | `GET /healthz` | none | Database readiness, no tenant data |
 | `POST /v1/jobs` | submit | Validate, resolve image, atomically queue a job |
-| `GET /v1/jobs/{id}` | read | Return a job only within the token's project |
+| `GET /v1/jobs/{id}` | read | Return project-scoped job state and accepted result metadata |
 
 Send `Authorization: Bearer <project-token>`. Submission requires `Idempotency-Key`
 (1–128 characters) and one bounded JSON/YAML Job document. New submissions return
@@ -26,6 +26,31 @@ An initial global limit of 200 requests per one-second window bounds API pressur
 429 responses include Retry-After. This global cap does not claim per-project fairness.
 Responses disable caching and MIME sniffing; TLS responses set HSTS.
 
+## Accepted result inspection (D11i)
+
+Job responses add `acceptedAttemptId` and `acceptedManifest`. Both are null until
+a successful completion commits. After success they identify the accepted attempt
+and its immutable result manifest, including the pinned specification, exact output
+versions, metrics, log completeness/gaps, and attempt history. Failed/cancelled
+attempt diagnostics and unfinished uploads are never exposed as canonical results.
+
+The read follows the job's accepted-completion pointer within the same scoped SQL
+query. It returns the completion's stored JSON bytes instead of reconstructing a
+result from current uploads or converting metrics through floating point. Replaying
+the original submission returns the same current job/result view as inspection,
+without contacting the registry. Reading metadata requires neither object-store
+access nor issuing download capabilities.
+
+`dispatch jobs get JOB_ID --json` includes both fields; ordinary text output remains
+the job ID and state. The Go client retains the manifest as raw JSON so integers
+above 2^53 survive inspection and CLI serialization. The existing 4-MiB response
+limit remains in place. Authorized artifact download links are a subsequent slice.
+
+An integration test completes a verified output over mTLS, then reads it through
+the real HTTP server and Go client. It checks successful and failed jobs, matching
+submission replay, missing results before completion, and 404 for another project's
+token. Client and CLI tests verify the accepted identity and exact metric text.
+
 Dataset admission currently returns an explicit 501 rather than queuing unresolved
 inputs. Job listing, cancellation, attempt history, logs, artifacts, events, sweeps,
 datasets, and worker administration remain required endpoints in later slices.
@@ -36,5 +61,6 @@ Race-enabled HTTP tests use real PostgreSQL and cover 100 concurrent duplicate
 submissions, read/submit roles, cross-project access, registry-outage replay,
 conflicting keys, oversized/malformed input, structured errors, and no partial jobs
 after resolver failure. Resolver integration separately uses a real local registry.
-The executable listener and CLI are the next slice; handler tests do not prove TLS
-deployment or a complete executable workflow.
+The executable listener and CLI also have separate gates recorded in
+[the implementation ledger](implementation.md). Handler tests alone do not prove
+TLS deployment or a complete workload-to-download workflow.

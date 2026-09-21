@@ -151,7 +151,9 @@ Accepted replay is checked after expiry, session replacement, and replacement-at
 acquisition; revoked credentials and cross-attempt UUID reuse fail. A populated
 schema-ten-to-eleven upgrade preserves verified outputs and permits completion.
 Store fixtures use the separately verified artifact boundary. The real Rust
-workload-to-completion path and public result retrieval remain to integrate.
+workload-to-completion path remains to integrate. Public result metadata is now
+available through [job inspection](http-api.md#accepted-result-inspection-d11i);
+authorized artifact download links remain a separate slice.
 
 ## Authenticated completion RPC (D11h)
 

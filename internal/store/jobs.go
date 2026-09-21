@@ -24,13 +24,15 @@ var (
 )
 
 type JobRecord struct {
-	ID        string          `json:"id"`
-	ProjectID string          `json:"projectId"`
-	State     string          `json:"state"`
-	Spec      json.RawMessage `json:"spec"`
-	SpecHash  string          `json:"specHash"`
-	CreatedAt time.Time       `json:"createdAt"`
-	Replayed  bool            `json:"-"`
+	ID                string          `json:"id"`
+	ProjectID         string          `json:"projectId"`
+	State             string          `json:"state"`
+	Spec              json.RawMessage `json:"spec"`
+	SpecHash          string          `json:"specHash"`
+	CreatedAt         time.Time       `json:"createdAt"`
+	AcceptedAttemptID *string         `json:"acceptedAttemptId"`
+	AcceptedManifest  json.RawMessage `json:"acceptedManifest"`
+	Replayed          bool            `json:"-"`
 }
 
 type rowQuerier interface {
@@ -39,8 +41,11 @@ type rowQuerier interface {
 
 func GetJob(ctx context.Context, pool *pgxpool.Pool, projectID, id string) (JobRecord, error) {
 	var job JobRecord
-	// Scope the lookup in SQL so a valid UUID cannot reveal another tenant's job.
-	err := pool.QueryRow(ctx, `SELECT id::text,project_id::text,state,spec,spec_hash,created_at FROM jobs WHERE id=$1 AND project_id=$2`, id, projectID).Scan(&job.ID, &job.ProjectID, &job.State, &job.Spec, &job.SpecHash, &job.CreatedAt)
+	// Scope the lookup in SQL and follow only the accepted completion pointer.
+	// Partial uploads and failed-attempt diagnostics must never become canonical.
+	err := pool.QueryRow(ctx, `SELECT j.id::text,j.project_id::text,j.state,j.spec,j.spec_hash,j.created_at,j.accepted_attempt_id::text,c.manifest_json
+		FROM jobs j LEFT JOIN attempt_completions c ON c.job_id=j.id AND c.attempt_id=j.accepted_attempt_id AND c.state='SUCCEEDED'
+		WHERE j.id=$1 AND j.project_id=$2`, id, projectID).Scan(&job.ID, &job.ProjectID, &job.State, &job.Spec, &job.SpecHash, &job.CreatedAt, &job.AcceptedAttemptID, &job.AcceptedManifest)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return job, ErrNotFound
 	}
@@ -55,10 +60,11 @@ func LookupSubmission(ctx context.Context, pool *pgxpool.Pool, project, key, req
 func lookupSubmission(ctx context.Context, q rowQuerier, project, key, requestHash string) (JobRecord, error) {
 	var job JobRecord
 	var existingHash string
-	err := q.QueryRow(ctx, `SELECT j.id::text,j.project_id::text,j.state,j.spec,j.spec_hash,j.created_at,k.request_hash
+	err := q.QueryRow(ctx, `SELECT j.id::text,j.project_id::text,j.state,j.spec,j.spec_hash,j.created_at,k.request_hash,j.accepted_attempt_id::text,c.manifest_json
 		FROM idempotency_keys k JOIN projects p ON p.id=k.project_id JOIN jobs j ON j.id=k.response_reference
+		LEFT JOIN attempt_completions c ON c.job_id=j.id AND c.attempt_id=j.accepted_attempt_id AND c.state='SUCCEEDED'
 		WHERE p.name=$1 AND k.endpoint='/v1/jobs' AND k.key=$2`, project, key).Scan(
-		&job.ID, &job.ProjectID, &job.State, &job.Spec, &job.SpecHash, &job.CreatedAt, &existingHash)
+		&job.ID, &job.ProjectID, &job.State, &job.Spec, &job.SpecHash, &job.CreatedAt, &existingHash, &job.AcceptedAttemptID, &job.AcceptedManifest)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return job, ErrNotFound
 	}
