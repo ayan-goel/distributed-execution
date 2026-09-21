@@ -21,7 +21,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D02 job and sweep contracts | D01 | Strict schema, unsafe input rejection, stable canonical hash, deterministic expansion | parser/expansion gates passed; published schemas pending |
 | D03 database invariants | D01 | Real PostgreSQL migrations up/down/upgrade; uniqueness, references, checks | core schema gate passed; migration runner and later tables pending |
 | D04 worker protocol | D01 | Generated Go/Rust gRPC bindings; cross-language golden round-trip, drift check | wire generation/round-trip passed; service boundary tests pending |
-| D05 durable submission | D02,D03 | HTTP/CLI submission; 100 identical requests yield one job; changed payload conflicts | pending |
+| D05 durable submission | D02,D03 | HTTP/CLI submission; 100 identical requests yield one job; changed payload conflicts | database admission gate passed; auth/resolution/HTTP/CLI pending |
 | D06 worker identities | D03,D04 | Authenticated registration, session takeover/recovery; stale-session rejection | pending |
 | D07 acquisition | D03,D06 | Atomic assignment/reservations; concurrent quota/capacity races; acquisition replay | pending |
 | D08 Docker adapter | D04 | Real bounded create/start/inspect/stop; ambiguous create reconciles one identity | pending |
@@ -148,3 +148,17 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   binaries are reused so drift checks do not require a network download each run.
 - Documented protocol semantics, limits to enforce, version pins, and evidence in
   `docs/protocol.md`. Authentication and RPC boundary enforcement remain unimplemented.
+
+### D05a: durable idempotent queue insertion
+
+- Added database submission/recovery operations. The project-scoped endpoint/key,
+  immutable resolved job, and first event commit atomically. Request hash and final
+  execution hash remain distinct so resolving a tag does not change request identity.
+- Tests first failed with missing operations. Real PostgreSQL now passes 100
+  concurrent identical requests with exactly one job, key, and event; changed payloads
+  conflict. Recovery reads the stored job after an uncertain submission response.
+- Quota/missing-project/unpinned-image rejection and an injected event-insert failure
+  leave zero partial jobs or keys. Race-enabled store tests and `make test lint build`
+  passed. The current internal admission function rejects unresolved datasets.
+- This is not a public submission endpoint yet. Project authentication, registry
+  resolution, dataset manifests, HTTP integration, and CLI remain required.

@@ -76,3 +76,25 @@ partial DDL, incremental upgrade, and rejection of an older binary against new s
 
 - [PostgreSQL constraints](https://www.postgresql.org/docs/17/ddl-constraints.html)
 - [PostgreSQL explicit locking](https://www.postgresql.org/docs/17/explicit-locking.html)
+
+## Atomic submission (D05a)
+
+`SubmitJob` accepts an already-resolved, validated job plus the original normalized
+request hash. The project row is shared-locked while checking enabled status and
+single-job CPU/memory quotas. Inserting a project/endpoint/key claim uses PostgreSQL
+uniqueness to serialize conflicting requests. The winning request inserts the job
+and `SUBMITTED` event in the same transaction. A losing identical request reads the
+existing job; a different request hash returns `ErrConflict`.
+
+`LookupSubmission` supports checking durable state before doing external registry
+work, so retrying a lost response need not depend on registry availability. Callers
+must authenticate and authorize the project before using either operation.
+
+Queue insertion currently requires a SHA-256-pinned image and zero unresolved
+dataset references. It does not itself contact registries. The upcoming admission
+and dataset slices will supply verified image/input versions. The public HTTP API
+must not expose this internal precondition as a bypass for external validation.
+
+The real-database suite sends 100 concurrent same-key submissions and asserts one
+job/key/event, verifies request-vs-execution hashes, and injects a failure at the event
+write to prove transaction rollback leaves no partial admission.
