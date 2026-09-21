@@ -24,8 +24,35 @@ New sessions start at generation 1, with monotonically increasing generations fo
 subsequent incarnations. Session identity, creation time, and registration hash are
 immutable; a recorded fencing timestamp cannot be removed or changed. The worker
 starts in REGISTERING with reconciliation incomplete. Registration alone does not
-make the host eligible to execute work. Concurrent different incarnations currently
-fail with `ErrSessionActive`; takeover and expired-session recovery are the next slice.
+make the host eligible to execute work. Concurrent live incarnations fail with
+`ErrSessionActive` unless an operator approved the specific replacement below.
+
+## Recovery and takeover (D06d)
+
+A different incarnation may automatically replace the current session when its
+last heartbeat/registration is at least 30 seconds old and every remaining active
+attempt lease has expired. These conditions are rechecked using database wall time
+after acquiring the affected job, attempt, and worker locks. A recently registered
+but still reconciling worker must therefore keep heartbeating during cleanup.
+
+For a live session, the operator-only `ApproveSessionTakeover` store operation binds
+approval to `(worker, old session, requested replacement session)`. A different
+replacement cannot use it. Repeating the same approval is idempotent; changing its
+target conflicts. Approval does not itself fence the old process. The replacement's
+successful registration consumes it while changing authority atomically.
+
+Recovery permanently fences old sessions, terminalizes their authoritative attempts,
+clears job ownership, quarantines physical reservations, and records events. Lost
+attempts use `WORKER_LOST`: retry only when that reason is allowed and attempts remain.
+Backoff doubles to the configured cap with equal jitter in `[base/2,base]`; jitter is
+derived from the immutable attempt ID, so transaction retries do not redraw delays.
+Cancellation intent instead produces CANCELLED with no retry. Exhausted or excluded
+retry policies produce FAILED. All uncertain executions keep `cleanup_pending`.
+
+The replacement starts REGISTERING and must stop/remove old executions before its
+heartbeat can release quarantined resources. Successful registration is never proof
+of physical cleanup. Old registration requests remain fenced, and retries of the new
+request cannot manufacture another session or retry event.
 
 ## Transaction ordering
 
@@ -46,5 +73,10 @@ Real PostgreSQL tests cover 32 identical concurrent registrations with one sessi
 and one request record, stable replay with a new request ID, changed-claim conflict,
 two racing incarnations with one winner, claimed capacity/label/protocol rejection,
 revocation rechecked inside the transaction, and rollback after an injected audit
-failure. The migration also passed fresh apply, rollback, and reapply. These tests
-prove durable registration; no heartbeat or runtime cleanup is implemented yet.
+failure. Recovery tests additionally cover live-lease refusal, expired-session
+replacement, exact-target approval, cancellation/retry/exhaustion, irreversible
+fencing, and rollback of ownership/approval after an injected job-event failure.
+A regression test observes registration blocked on a real job lock, ends the lease
+after that transaction began, and verifies recovery uses fresh time after the wait.
+Unit tests verify stable, capped, distributed retry jitter. Both migrations passed
+fresh apply, rollback, and reapply. Heartbeat and physical cleanup remain next.

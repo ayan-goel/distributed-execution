@@ -175,7 +175,9 @@ func RegisterSession(ctx context.Context, pool *pgxpool.Pool, identity WorkerIde
 		return Session{}, err
 	}
 	if current != nil {
-		return Session{}, ErrSessionActive
+		if err = recoverSession(ctx, tx, identity, *current, r.SessionID); err != nil {
+			return Session{}, err
+		}
 	}
 	if err = tx.QueryRow(ctx, "SELECT COALESCE(max(generation),0)+1 FROM worker_sessions WHERE worker_id=$1", identity.WorkerID).Scan(&generation); err != nil {
 		return Session{}, err

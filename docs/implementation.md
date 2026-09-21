@@ -290,3 +290,22 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   and reapply. Reviewed lock ordering, replay identity, and policy enforcement.
 - Added `docs/worker-sessions.md`. Recovery/takeover, heartbeat reconciliation,
   registration RPC handlers, and executable wiring remain required.
+
+### D06d: session recovery, explicit takeover, and fencing
+
+- Added exact-source/exact-target operator approvals and automatic recovery only
+  after session inactivity and expiry of all remaining active leases. Recovery
+  serializes ownership locks, then reads fresh database wall time.
+- Fencing atomically terminalizes old attempts, honors cancellation/retry policy,
+  records capped exponential backoff with stable equal jitter, quarantines physical
+  reservations, and starts a new unreconciled generation. Old session replay fails.
+- Tests first failed for missing takeover operations. Real PostgreSQL now passes
+  live-lease refusal, automatic recovery, live takeover, wrong-target rejection,
+  retry/cancel/exhaustion outcomes, irreversible fencing, and injected-event rollback.
+- The lock-wait regression explicitly observes a blocked recovery transaction,
+  ends its lease after transaction start, then proves fresh-time evaluation. Reviewed
+  transaction order, failure atomicity, retry bounds, and physical-capacity accounting.
+- `make test lint smoke integration` passed; the strengthened deterministic lock
+  test also passed in the race-enabled integration suite. Fifth-migration rollback
+  and reapply passed. Updated `docs/worker-sessions.md`; heartbeat reconciliation
+  and registration RPC/executable integration remain required.
