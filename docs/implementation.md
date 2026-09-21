@@ -119,3 +119,15 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   tests passed. Go/Rust tests, builds, formatting, and static checks passed as well.
 - Added `make integration`, its CI step, and `docs/database.md`. This gate does not
   establish scheduler concurrency correctness; those race tests remain required.
+
+### D03b: transactional migration runner
+
+- Embedded the SQL and added ordered, checksummed migrations under a dedicated
+  PostgreSQL advisory lock. Unknown versions, checksum drift, and sequence gaps
+  fail rather than silently accepting an incompatible database.
+- Tests first failed for missing migration functions. Real PostgreSQL tests now
+  pass for eight concurrent callers, repeat application, checksum mismatch, partial
+  DDL rollback, incremental upgrade, and an older binary against a newer database.
+- `scripts/test-store.sh` passed with Go race detection; `make test lint build`
+  passed. The integration command runs schema and store suites in disposable DBs.
+- Documented history/checksum behavior and test isolation in `docs/database.md`.

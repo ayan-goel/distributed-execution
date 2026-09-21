@@ -53,6 +53,25 @@ subsequently asks for the cluster lock. Evaluate expiry with fresh DB wall time
 after acquiring row locks. No external RPC or object verification occurs while these
 locks are held. Configure finite statement/lock timeouts and retry by operation ID.
 
+## Migration runner (D03b)
+
+`store.Migrate` embeds ordered SQL in the server build. One database transaction
+acquires a dedicated migration advisory lock, checks recorded SHA-256 checksums,
+then applies the pending suffix and records it. A failure rolls back its DDL and
+history updates together. Unknown database versions, modified applied files, or
+gaps in migration history are errors. No rollback runs automatically.
+
+The runner uses a 5-second lock timeout and 15-second per-statement timeout. Migration
+SQL must remain bounded; large backfills require separately planned maintenance.
+Its pgx dependency is pinned in `go.mod`/`go.sum`.
+
+`scripts/test-store.sh` adds an isolated PostgreSQL instance on a random loopback
+port with a development-only password. Go integration tests are explicitly selected
+with the `integration` build tag, require `DISPATCH_TEST_DATABASE_URL`, and allocate
+fresh schemas. Ordinary unit tests never silently substitute mocks for this gate.
+The migration tests cover eight concurrent callers, checksum drift, rollback after
+partial DDL, incremental upgrade, and rejection of an older binary against new state.
+
 ## References
 
 - [PostgreSQL constraints](https://www.postgresql.org/docs/17/ddl-constraints.html)
