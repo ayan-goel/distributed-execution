@@ -2,7 +2,7 @@
 
 use dispatch_protocol::v1::{Assignment, AttemptAuthority, AttemptState, Resources};
 use dispatch_protocol::v1::{RegisterWorkerRequest, RegisterWorkerResponse, WorkerSession};
-use dispatch_worker::journal::{Journal, JournalError, JournalLimits};
+use dispatch_worker::journal::{AsyncJournal, Journal, JournalError, JournalLimits};
 use ring::digest::{digest, SHA256};
 use std::{
     fs,
@@ -110,6 +110,53 @@ fn registration_reply(request: &RegisterWorkerRequest, generation: u64) -> Regis
         protocol_version: dispatch_protocol::VERSION,
         cleanup_required: true,
     }
+}
+
+#[tokio::test]
+async fn cloned_async_handles_commit_one_phase_identity_and_preserve_reopen_evidence() {
+    let fixture = Fixture::new();
+    let journal = AsyncJournal::new(fixture.open());
+    let other = journal.clone();
+    let (a, b) = tokio::join!(
+        journal.persist_assignment(assignment()),
+        other.persist_assignment(assignment())
+    );
+    a.unwrap();
+    b.unwrap();
+    let (a, b) = tokio::join!(
+        journal.prepare_phase(ATTEMPT.into(), AttemptState::Starting),
+        other.prepare_phase(ATTEMPT.into(), AttemptState::Starting)
+    );
+    assert_eq!(a.unwrap(), b.unwrap());
+    journal
+        .bind_container(ATTEMPT.into(), "a".repeat(64))
+        .await
+        .unwrap();
+    journal
+        .record_exit(ATTEMPT.into(), 137, true)
+        .await
+        .unwrap();
+    let finalizing = journal
+        .prepare_phase(ATTEMPT.into(), AttemptState::Finalizing)
+        .await
+        .unwrap();
+    assert_eq!(
+        other
+            .load_attempt(ATTEMPT.into())
+            .await
+            .unwrap()
+            .unwrap()
+            .phase_reports()
+            .last(),
+        Some(&finalizing)
+    );
+    drop(other);
+    drop(journal);
+    let reopened = fixture.open();
+    let saved = reopened.load_attempt(ATTEMPT).unwrap().unwrap();
+    assert_eq!(saved.phase_reports().last(), Some(&finalizing));
+    assert!(saved.exit().unwrap().oom_killed);
+    assert_eq!(saved.assignment().lease_duration_ms, 0);
 }
 
 #[test]

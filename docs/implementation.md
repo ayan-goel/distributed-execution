@@ -861,3 +861,30 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 - Durable launch/phase coordination, acquisition orchestration, cross-batch scheduling,
   finalization, reaping, and all remaining v0.1 release gates stay open. The startup
   command still reports readiness without acquiring jobs.
+
+### D10e: serialized asynchronous journal access
+
+- Added cloneable `AsyncJournal` ownership for attempt operations and registration
+  acknowledgement. One shared semaphore is acquired asynchronously before spawning
+  blocking work, so only one journal operation per worker occupies the blocking
+  pool. The journal mutex and existing file lock preserve exclusive ownership and
+  poison semantics across all handles.
+- The blocking closure retains its permit and journal reference even if its async
+  caller is cancelled. A late filesystem commit remains possible and must be
+  reconciled; cancellation is not evidence of rollback. A blocking panic poisons
+  later access. No filesystem format, commit boundary, or lease semantics changed.
+- Routed actual worker registration persistence through this handle and retained
+  it for the health loop lifetime. This is the bounded filesystem prerequisite for
+  concurrent launch/renewal/watchdog work; the startup command still acquires no jobs.
+- Tests first failed for the missing API. A single-thread Tokio test now stalls one
+  blocking operation, cancels its waiter, verifies timers still progress and the
+  journal remains exclusively locked, then checks a queued operation starts only
+  after release. Concurrent real writes produce one STARTING event; reopen preserves
+  the exact FINALIZING request, OOM evidence, and zeroed persisted authority timing.
+- Checked the pinned Tokio `spawn_blocking` documentation for cancellation and
+  shutdown behavior. Documented kernel-stall/shutdown limits, caller queue bounds,
+  and uncertain commit handling in `docs/worker-journal.md`.
+- Focused journal tests, `make test lint smoke`, Linux worker tests, and the real
+  PostgreSQL/mTLS/Docker startup suite passed. The actual startup test still rejects
+  a second process sharing the journal and exits after credential revocation.
+- Durable launch/phase sequencing and the remaining full v0.1 gates stay open.

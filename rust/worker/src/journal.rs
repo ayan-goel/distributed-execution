@@ -8,7 +8,9 @@ use prost::Message;
 use ring::rand::{SecureRandom, SystemRandom};
 use std::{fmt, path::Path};
 
+mod asynchronous;
 mod files;
+pub use asynchronous::AsyncJournal;
 mod session;
 pub use session::StoredSession;
 

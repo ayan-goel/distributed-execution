@@ -75,9 +75,47 @@ Session reads verify framing, checksum, bounds, supported protocol, and semantic
 Missing worker identity alongside a session file is corruption, not a fresh install.
 Malformed session evidence must be investigated rather than overwritten on startup.
 
-Heartbeats and readiness are not resumed from this metadata. The production loop
-still needs to maintain its own increasing heartbeat sequence and stable request
-payload for each uncertain retry, starting a fresh sequence for each new session.
+Heartbeats and readiness are not resumed from this metadata. The startup/health
+loop maintains an increasing heartbeat sequence and stable request payload for
+each uncertain retry, starting a fresh sequence for each new session. Active-job
+orchestration still needs integration with that loop.
+
+## Asynchronous access during execution
+
+`AsyncJournal::new` consumes the exclusive `Journal` and provides cloneable handles
+to that same owner. The worker startup command now records its registration through
+this handle and retains it throughout the health loop. Attempt assignment, container
+binding, exit evidence, phase preparation, and reads have asynchronous counterparts
+with the same durable semantics and errors as the synchronous journal.
+
+Each handle shares a one-permit semaphore and a mutex around the journal. Operations
+wait for the semaphore asynchronously **before** submitting a blocking task. At most
+one journal task per worker can occupy Tokio's blocking pool; pending callers do not
+occupy additional blocking threads. The mutex protects the single journal owner,
+including its poison state. Each returned success still follows file sync, rename,
+and directory sync. No network or Docker operation runs under this journal lock.
+
+The blocking closure owns its permit and journal reference. Cancelling an awaiting
+future does not cancel a filesystem operation that already started: that operation
+retains the permit and exclusive ownership until it finishes. A cancelled call can
+therefore still commit, and its absence of acknowledgement is not rollback evidence.
+Callers must read/reconcile stored evidence or use its existing stable operation
+identity; they must not infer permission to repeat an external launch. A blocking
+panic poisons the mutex and later operations refuse to continue.
+
+This keeps normal filesystem latency off lease/heartbeat tasks. It does not provide
+a hard timeout for a kernel-stalled write or fsync. Such a stall holds only this
+journal's one blocking task but may delay runtime shutdown; independent watchdogs
+must still enforce authority, and process recovery follows the existing journal and
+session rules. The execution coordinator must bound the number of pending callers.
+
+Tests use a single-thread Tokio runtime with deliberately stalled blocking work:
+an async timer keeps progressing, cancellation cannot release the semaphore or
+exclusive journal lock, and queued work starts only after the blocked closure exits.
+Concurrent cloned handles persist one STARTING event identity. Reopening retains
+the exact FINALIZING report and OOM evidence while stored lease timing remains zero.
+The implementation follows the pinned Tokio `spawn_blocking` contract: started
+blocking tasks cannot be aborted by cancelling their awaiting async task.
 
 ## Filesystem contract
 

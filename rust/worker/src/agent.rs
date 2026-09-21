@@ -1,7 +1,7 @@
 //! Worker registration, startup cleanup, and health reporting. Acquisition follows separately.
 use crate::{
     control::{canonical_uuid, ClientError, ControlClient},
-    journal::{new_uuid, Journal, JournalError, JournalLimits},
+    journal::{new_uuid, AsyncJournal, Journal, JournalError, JournalLimits},
     runtime::{DockerRuntime, RecoveryRuntime, RuntimeError},
 };
 use dispatch_protocol::{
@@ -195,7 +195,7 @@ fn event(name: &str, worker: &str, session: &str) {
 
 pub async fn run(config: AgentConfig) -> Result<(), AgentError> {
     let prepared = config.clone();
-    let (mut journal, saved, root, ca, cert, key) = tokio::task::spawn_blocking(move || {
+    let (journal, saved, root, ca, cert, key) = tokio::task::spawn_blocking(move || {
         let root = workspace(&prepared.workspace_root)?;
         let journal_root = prepared
             .journal_dir
@@ -244,12 +244,9 @@ pub async fn run(config: AgentConfig) -> Result<(), AgentError> {
     };
     // Keep the exclusive journal handle alive for the entire process. The sync
     // runs off Tokio's I/O threads and finishes before any readiness report.
-    let _journal_guard = tokio::task::spawn_blocking(move || {
-        journal.record_registration(&registration)?;
-        Ok::<_, AgentError>(journal)
-    })
-    .await
-    .map_err(|_| AgentError::Task)??;
+    let journal = AsyncJournal::new(journal);
+    journal.record_registration(registration).await?;
+    let _journal_guard = journal;
     event("registered", &config.worker_id, &session_id);
     health_loop(&config, &root, &session_id, &runtime, &mut client).await
 }
