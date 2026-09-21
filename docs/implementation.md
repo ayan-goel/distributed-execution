@@ -22,7 +22,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D03 database invariants | D01 | Real PostgreSQL migrations up/down/upgrade; uniqueness, references, checks | core schema and migration runner gates passed; later feature tables pending |
 | D04 worker protocol | D01 | Generated Go/Rust gRPC bindings; cross-language golden round-trip, drift check | wire generation/round-trip passed; service boundary tests pending |
 | D05 durable submission | D02,D03 | HTTP/CLI submission; 100 identical requests yield one job; changed payload conflicts | input-free job admission, auth, image resolution, HTTP/CLI gates passed; datasets depend on D16 |
-| D06 worker identities | D03,D04 | Authenticated registration, session takeover/recovery; stale-session rejection | control-plane and executable gates passed; Rust agent wiring pending |
+| D06 worker identities | D03,D04 | Authenticated registration, session takeover/recovery; stale-session rejection | control-plane, executable, and Rust client gates passed; runtime/agent loop pending |
 | D07 acquisition | D03,D06 | Atomic assignment/reservations; concurrent quota/capacity races; acquisition replay | pending |
 | D08 Docker adapter | D04 | Real bounded create/start/inspect/stop; ambiguous create reconciles one identity | pending |
 | D09 leases | D06,D07 | Fresh DB-time expiry checks; delayed grants; local monotonic deadline enforcement | pending |
@@ -382,3 +382,21 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   smoke` and the race-enabled command/database integration suite passed afterward.
 - Reviewed startup failure cleanup, mTLS isolation, listener lifetime, and pool
   shutdown ordering. Updated the operator/session docs with runnable commands.
+
+### D06i: Rust mTLS registration and heartbeat client
+
+- Added an HTTPS-only Tonic client with explicit CA/client identity, five-second
+  connection/RPC deadlines, bounded messages, stable caller-owned retry identities,
+  registration authority checks, and host-scoped cleanup-response validation.
+- Tests first failed for missing client operations. Unit tests cover endpoint
+  policy, response identity/protocol, cleanup scope/bounds, and retry categories.
+  The real Rust fixture registers and replays heartbeats through the Go executable
+  against PostgreSQL, including process restart replay, unrelated CA rejection,
+  credential revocation, and stalled TLS/RPC deadlines. It stays quarantined and
+  unreconciled; no runtime execution/cleanup claim is made by this fixture.
+- Reviewed explicit trust roots, credential-safe diagnostics, unchanged dependency
+  versions outside the added TLS graph, replay identity, and cleanup authority.
+  `make test lint smoke` and the expanded race-enabled database/integration suite
+  passed, including both five-second stalled-transport cases.
+  Documented the library contract and remaining runtime/agent-loop work in
+  `docs/worker-sessions.md`. Full v0.1 scheduling/execution/release gates remain open.

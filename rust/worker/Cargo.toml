@@ -3,3 +3,9 @@ name = "dispatch-worker"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+
+[dependencies]
+dispatch-protocol = { path = "../protocol" }
+prost = "=0.14.3"
+tonic = { version = "=0.14.6", features = ["tls-ring"] }
+tokio = { version = "=1.53.1", features = ["rt-multi-thread", "macros", "time"] }

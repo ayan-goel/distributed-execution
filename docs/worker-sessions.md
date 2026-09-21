@@ -127,8 +127,37 @@ Other worker methods still return Unimplemented until their execution slices lan
 
 The service is now wired into `dispatch-server serve --worker-listen ...` with
 explicit mTLS configuration. Operator enrollment, revocation, and takeover commands
-are documented in [running the control plane](running.md). The Rust agent's
-registration/heartbeat client and runtime integration remain required.
+are documented in [running the control plane](running.md).
+
+## Rust control-plane client (D06i)
+
+`dispatch_worker::control::ControlClient` implements registration and heartbeat over
+Tonic mTLS. Connection configuration accepts an HTTPS origin, an explicit server CA,
+and a client certificate/key. Credentials in URLs, paths, queries, fragments, and
+plaintext endpoints are rejected. No system-root fallback or TLS key logging is
+enabled. TLS APIs were checked against the pinned Tonic 0.14.6 source.
+
+Connection establishment (including TLS) and each RPC have a five-second local
+timeout. RPCs also carry the server deadline; encoded and decoded messages are capped
+at 4 MiB. Registration responses must preserve the requested worker/session and
+supported protocol with a positive signed-range generation. Cleanup instructions
+are bounded and must belong to the same worker; previous sessions are permitted for
+reconciliation. Actual container label/authority checks remain the runtime's job.
+
+The caller retains request payloads, session IDs, and heartbeat sequences across
+retries. The client never generates a replacement identity. Connection failures,
+local deadlines, Unavailable, and DeadlineExceeded are retryable categories; fencing,
+revocation, conflicting payloads, and stale reports require explicit handling.
+There is no automatic retry loop yet. Transport errors omit configuration material,
+and RPC diagnostic text is escaped for terminal output.
+
+`rust/worker/examples/session_probe.rs` is a protocol integration fixture. It reads
+a bounded protobuf registration from stdin, registers twice, sends the same heartbeat
+twice, and writes the registration reply as protobuf. It always reports an unhealthy,
+unreconciled runtime, so it cannot make a host schedulable or release old reservations.
+`make store-test` builds this fixture before running integration tests. The production
+agent still needs runtime discovery, durable session state, reconciliation, and its
+supervision loop before it can advertise readiness or execute jobs.
 
 ## Verification
 
