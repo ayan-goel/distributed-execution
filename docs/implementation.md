@@ -25,7 +25,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D06 worker identities | D03,D04 | Authenticated registration, session takeover/recovery; stale-session rejection | control-plane, Rust client, and worker startup/health loop gates passed; active-job supervision pending |
 | D07 acquisition | D03,D06 | Atomic assignment/reservations; concurrent quota/capacity races; acquisition replay | store, RPC, and Rust client gates passed; production agent loop pending |
 | D08 Docker adapter | D04 | Real bounded create/start/inspect/stop; ambiguous create reconciles one identity | spec, cached-image lifecycle, and phase store/RPC/Rust client gates passed; image staging and strict workspace integration pending |
-| D09 leases | D06,D07 | Fresh DB-time expiry checks; delayed grants; local monotonic deadline enforcement | deadline, store/RPC/client, and live-container watchdog gates passed; periodic renewal, reaper, and launch integration pending |
+| D09 leases | D06,D07 | Fresh DB-time expiry checks; delayed grants; local monotonic deadline enforcement | deadline, store/RPC/client, watchdog, and periodic batch renewal gates passed; reaper and launch integration pending |
 | D10 worker recovery | D08,D09 | Durable journal; agent kill/restart stops old containers before new capacity | journal, discovery/cleanup, and actual startup process gates passed; agent-owned job kill/restart gate pending |
 | D11 artifacts | D03,D04 | Scoped grants; verified exact versions; stale publication rejection | pending |
 | D12 first real job | D05–D11 | CLI submit → gRPC → Docker → verified output → CLI download | pending |
@@ -828,3 +828,36 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 - Documented the component and its limits in `docs/worker-supervision.md` and linked
   it from lease documentation. Periodic batched renewal, durable launch coordination,
   agent acquisition, reaping, finalization, and the remaining v0.1 gates stay open.
+
+### D09f: periodic bounded renewal and watchdog authority updates
+
+- Added `ControlClient::maintain_leases` for fixed same-session batches of 1–64
+  attempt controllers. Renewal starts immediately, then runs every five seconds
+  with a five-second RPC bound. Retryable failures wait one second and replay the
+  same UUID, order, and payload, including members that finish during uncertainty.
+  Resolved batches use a new UUID and omit inactive consumers on the next period.
+- Connected validated grants/rejections to the watchdog channel. Transport failure
+  cannot extend local deadlines. Fatal protocol/authentication/clock errors stop
+  authority; exhausted or closed consumers retire. Added safe client cloning for
+  independent RPC tasks sharing the existing authenticated Tonic channel.
+- Added a drop guard that stops retained authority even when another owner holds
+  cloned senders. Review identified cancellation before the first future poll as
+  a gap: its regression test failed, then passed after constructing the guard before
+  returning the future. The future remains `Send` and is spawned by the real probe.
+- Tests first failed for the missing renewal loop. Eight unit tests now cover exact
+  replay and changed membership, 64/65-member boundaries, empty/duplicate/cross-session
+  input, outage expiry, stalled RPCs, fatal/malformed responses, and both cancellation
+  timings. Existing supervisor and validated-client tests cover sticky rejection,
+  late grants, exact identity, and runtime termination.
+- Added a real Rust subprocess/mTLS/PostgreSQL test. It reads two live assignments,
+  loses a committed renewal reply, verifies exact retry, observes the next period's
+  new identity, expires database authority, and checks fencing ends the loop. Three
+  RPC calls create exactly two durable renewal records. Readiness is fixture-seeded;
+  this test does not launch containers or prove active-job recovery.
+- `make test lint smoke` and `make integration` passed. After the cancellation fix,
+  final native test/lint/smoke, Linux worker tests, and the race-enabled real
+  PostgreSQL/mTLS suite passed again. Documented lifecycle, timing, batching, and
+  cancellation in `docs/worker-leases.md` and updated supervisor links.
+- Durable launch/phase coordination, acquisition orchestration, cross-batch scheduling,
+  finalization, reaping, and all remaining v0.1 release gates stay open. The startup
+  command still reports readiness without acquiring jobs.

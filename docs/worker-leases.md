@@ -36,9 +36,10 @@ checks elapsed RPC time against this boundary using the actual client.
 
 The [live-container watchdog](worker-supervision.md) now consumes these windows,
 rechecks them during runtime observation, and attempts bounded termination on loss
-of authority. Launch checks, periodic renewal, finalization, and reaping still need
-integration. Server-side fencing remains necessary when physical termination cannot
-be confirmed; a frozen host cannot prove that its workload has stopped.
+of authority. The periodic renewal task below now feeds this channel. Launch checks,
+finalization, and reaping still need integration. Server-side fencing remains
+necessary when physical termination cannot be confirmed; a frozen host cannot
+prove that its workload has stopped.
 
 ## Durable batched renewal (D09b)
 
@@ -191,8 +192,53 @@ margin leaves 100 ms, but delivery takes at least 200 ms. Both return no usable
 execution authority in the real Rust client. The fixture never launches containers.
 
 The race-enabled PostgreSQL/mTLS suite and `make test lint smoke` passed with this
-client. Production periodic renewal, supervisor integration, reaping, and actual
-container stop-at-deadline behavior remain pending.
+client. Subsequent watchdog and renewal-task evidence is described below and in
+`worker-supervision.md`; production launch integration and reaping remain pending.
+
+## Periodic renewal task (D09f)
+
+`ControlClient::maintain_leases` owns a fixed batch of 1–64 authority controllers
+from one worker/session. Call it in an independent task using a cloned control
+client; clones share the authenticated Tonic channel but have independent RPC
+futures. Do not serialize heartbeat, runtime observation, or filesystem work behind
+this loop. The future worker coordinator must group acquisitions into bounded
+batches and retain the watchdog consumers until their execution/finalization ends.
+
+The first renewal is immediate. After an accepted response, the next period starts
+five seconds after that RPC began, accounting for its elapsed time. Connection and
+deadline failures retry after one second. Each RPC has a five-second outer bound.
+Retry retains the exact request UUID, member order, and full authority tuples;
+even a member that finishes during an uncertain request remains in that retry.
+After the response resolves, inactive members are omitted from the next fresh UUID.
+The existing client validates all response members before returning typed grants.
+
+Only validated grants update watchdog authority. Transient failures, sleeps, and
+timeouts do not extend any window. Rejections are sticky and late grants cannot
+revive a locally expired execution. Nonretryable RPC/protocol/clock errors stop
+the batch with `RenewalFailed` and return the error. Once all consumers have closed
+or their authority has ended, the loop returns; checking this condition may wait
+for the current bounded RPC or sleep. Physical termination stays in the independently
+polled watchdog and does not wait for this loop to finish.
+
+A drop guard stops retained controllers with `ControllerLost` when a renewal
+future is cancelled or unwinds, including cancellation before its first poll.
+This also works when the launch coordinator retains cloned senders; merely dropping
+the task's own clones would not close those channels.
+An already recorded rejection/expiry is preserved. The guard cannot run after an
+OS process kill or abort; server fencing and startup reconciliation remain required.
+The batch API does not add members while running. Replacing a live task cancels its
+authority, so coordinators must not restart it to change membership. New assignments
+need their own batch; cross-batch scheduling and launch integration remain open.
+
+Unit tests exercise stable retries across changed membership, the 64-member limit,
+duplicate and cross-session rejection, expired authority during outages, stalled
+RPC deadlines, malformed/fatal responses, and cancellation with retained senders.
+The `renewal_probe` subprocess obtains two real assignment grants over mTLS and
+runs the task. Its PostgreSQL fixture commits the first batch but loses the reply,
+checks exact retry, observes a new UUID after the five-second period, then expires
+database authority and verifies the loop exits on fencing. Three RPCs create exactly
+two durable batch records. The fixture seeds readiness and never starts containers;
+it does not prove the full agent launch, partition, or active-job restart gates.
 
 ## Source references
 

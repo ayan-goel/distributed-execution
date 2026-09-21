@@ -7,6 +7,9 @@ use crate::lease::{AuthorityWindow, LeaseError, MonoTime};
 use dispatch_protocol::v1::{AttemptAuthority, Decision, RenewLeasesRequest, RenewLeasesResponse};
 use std::collections::HashSet;
 
+#[cfg(unix)]
+mod maintain;
+
 #[derive(Debug)]
 pub struct RenewedLease {
     identity: AttemptAuthority,

@@ -16,6 +16,7 @@ pub enum StopReason {
     AuthorityExpired,
     Rejected(Decision),
     ControllerLost,
+    RenewalFailed,
     RuntimeUnavailable,
 }
 
@@ -79,6 +80,18 @@ pub fn authority_channel(
 }
 
 impl AuthorityController {
+    pub fn identity(&self) -> &AttemptAuthority {
+        &self.identity
+    }
+
+    pub(crate) fn active(&self) -> bool {
+        !self.state.is_closed() && live(&self.state.borrow()).is_ok()
+    }
+
+    pub(crate) fn stop(&self, reason: StopReason) {
+        let _ = self.update(&self.identity, AuthorityState::Stop(reason));
+    }
+
     pub fn apply(&self, outcome: &RenewalOutcome) -> Result<(), AuthorityUpdateError> {
         match outcome {
             RenewalOutcome::Renewed(grant) => {

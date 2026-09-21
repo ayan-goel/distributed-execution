@@ -29,6 +29,7 @@ pub enum ClientError {
     Deadline,
     Response,
     Clock,
+    Random,
     Rpc(Box<tonic::Status>),
 }
 
@@ -49,6 +50,7 @@ impl fmt::Display for ClientError {
             Self::Deadline => write!(f, "worker request deadline exceeded"),
             Self::Response => write!(f, "invalid control-plane response"),
             Self::Clock => write!(f, "worker monotonic clock failed"),
+            Self::Random => write!(f, "worker operation identity generation failed"),
             Self::Rpc(status) => {
                 write!(f, "worker RPC {:?}: {:?}", status.code(), status.message())
             }
@@ -58,6 +60,7 @@ impl fmt::Display for ClientError {
 
 impl std::error::Error for ClientError {}
 
+#[derive(Clone)]
 pub struct ControlClient {
     inner: WorkerServiceClient<Channel>,
 }

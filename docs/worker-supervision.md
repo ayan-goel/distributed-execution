@@ -3,8 +3,9 @@
 `rust/worker/src/supervisor.rs` adds the running-container portion of attempt
 supervision. It observes an already-started runtime handle and terminates execution
 when local authority expires, the server rejects ownership, or the authority
-controller disappears. Launch journaling, phase reporting, periodic RPC renewal,
-and result finalization still need integration with this component.
+controller disappears. The [periodic renewal task](worker-leases.md#periodic-renewal-task-d09f)
+now feeds this channel. Launch journaling, phase reporting, and result finalization
+still need integration with these components.
 
 ## Authority channel
 
@@ -77,6 +78,6 @@ isolate the watchdog; it is not a control-channel partition test. Linux tests ex
 the production clock path; the macOS Docker fixture remains development evidence.
 
 The next integration must connect durable assignment/phase ordering, launch checks,
-the periodic renewal producer, this watchdog, and finalization. The current worker
-startup command still does not acquire jobs. Real channel-partition, cancellation,
-active-job restart, and complete v0.1 execution gates remain open.
+the verified periodic renewal producer, this watchdog, and finalization. The current
+worker startup command still does not acquire jobs. Real channel-partition,
+cancellation, active-job restart, and complete v0.1 execution gates remain open.
