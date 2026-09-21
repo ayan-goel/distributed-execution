@@ -10,8 +10,8 @@ object key only after the transaction commits with current authority.
 
 This method performs no storage/network I/O. The [versioned storage adapter](object-storage.md)
 is integrated with the authenticated upload RPC described below. The
-[verified artifact store](verified-artifacts.md) is implemented separately; its RPC
-integration remains pending. Creating a declaration neither verifies uploaded data
+[verified artifact API](verified-artifacts.md) registers exact versions separately.
+Creating a declaration neither verifies uploaded data
 nor accepts a result, renews a lease, changes phase, or releases reservations.
 
 ## Identity and replay
@@ -162,4 +162,5 @@ The full integration gate also starts PostgreSQL and SeaweedFS together. A real 
 response uploads declared bytes, which the storage adapter verifies by exact version.
 Changing checksum or key fails. Cancellation prevents new grants, while reuse of an
 existing URL creates a distinct version and leaves the original bytes intact. This
-does not yet prove durable verified-artifact registration or result publication.
+is extended by the [finalization gate](verified-artifacts.md) to prove durable
+verified-artifact registration. Result publication remains pending.

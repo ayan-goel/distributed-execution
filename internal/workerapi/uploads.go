@@ -72,13 +72,21 @@ func (s *Service) CreateUpload(ctx context.Context, r *pb.CreateUploadRequest) (
 }
 
 func uploadAllowed(result store.UploadResult) error {
-	switch result.Decision {
+	if err := uploadDecision(result.Decision); err != nil {
+		return err
+	}
+	if result.Upload == nil {
+		return status.Error(codes.Internal, "INVALID_UPLOAD_RESULT")
+	}
+	return nil
+}
+
+func uploadDecision(decision string) error {
+	switch decision {
 	case "ACCEPTED":
-		if result.Upload != nil {
-			return nil
-		}
+		return nil
 	case "FENCED", "STOP_REQUESTED", "ALREADY_TERMINAL":
-		return status.Error(codes.FailedPrecondition, "UPLOAD_"+result.Decision)
+		return status.Error(codes.FailedPrecondition, "UPLOAD_"+decision)
 	}
 	return status.Error(codes.Internal, "INVALID_UPLOAD_RESULT")
 }

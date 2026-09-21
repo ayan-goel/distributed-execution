@@ -7,7 +7,8 @@ verification, and scoped downloads. It uses the official AWS SDK for Go v2 S3 mo
 `v1.113.1`, core `v1.47.0`, and explicit credentials provider `v1.20.5`. The API is
 S3-compatible; it does not require an AWS account. The
 [durable upload declaration and authenticated grant API](artifact-uploads.md) use
-this adapter. Exact-version artifact records and result publication remain pending.
+this adapter. [Authenticated finalization](verified-artifacts.md) registers verified
+exact versions; terminal result publication remains pending.
 
 The verified local backend is SeaweedFS 4.47, pinned as:
 

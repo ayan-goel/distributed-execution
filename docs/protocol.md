@@ -69,7 +69,10 @@ headers, with no multipart entries. The durable ID/key are replay-stable; a retr
 may refresh the 30-second URL after current authority is checked again. Ownership
 is rechecked after storage I/O. See [upload capabilities](artifact-uploads.md) for
 phase rules, limits, failure reasons, and the real storage integration gate.
-`FinalizeUpload` and terminal result publication remain unimplemented.
+`FinalizeUpload` verifies and registers an exact object version with current
+authority rechecked after streaming the bytes. Its response is an artifact UUID
+and exact object reference; see [verified artifacts](verified-artifacts.md) for
+replay and failure semantics. Terminal result publication remains unimplemented.
 
 ## Generation and verification
 

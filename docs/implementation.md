@@ -27,7 +27,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D08 Docker adapter | D04 | Real bounded create/start/inspect/stop; ambiguous create reconciles one identity | cached launch, RUNNING/FINALIZING coordination, and phase store/RPC/client gates passed; agent integration, staging, and strict workspaces pending |
 | D09 leases | D06,D07 | Fresh DB-time expiry checks; delayed grants; local monotonic deadline enforcement | deadline, store/RPC/client, watchdog, periodic renewal, and execution refresh gates passed; reaper and production agent integration pending |
 | D10 worker recovery | D08,D09 | Durable journal; agent kill/restart stops old containers before new capacity | journal, discovery/cleanup, and actual startup process gates passed; agent-owned job kill/restart gate pending |
-| D11 artifacts | D03,D04 | Scoped grants; verified exact versions; stale publication rejection | storage, upload grants, and fenced verified-artifact store gates passed; finalization RPC, publication, and worker transfers pending |
+| D11 artifacts | D03,D04 | Scoped grants; verified exact versions; stale publication rejection | upload grants and fenced exact-version finalization gates passed; terminal publication and worker transfers pending |
 | D12 first real job | D05–D11 | CLI submit → gRPC → Docker → verified output → CLI download | pending |
 | D13 loss/retry | D09,D12 | Reaper/reconciliation; recorded retry; backoff/deadlines; nonretryable failure | pending |
 | D14 cancellation | D12,D13 | Both completion/cancellation race orders, repeat requests, uncertain cleanup | pending |
@@ -1124,3 +1124,34 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 - Documented the transaction/replay/retention contract in `docs/verified-artifacts.md`.
   Real `FinalizeUpload` RPC verification, terminal manifest publication, worker
   transfers, multipart support, and the rest of v0.1 remain required.
+
+### D11e: authenticated exact-version finalization
+
+- Implemented `WorkerService.FinalizeUpload` using the verified store boundary and
+  real storage adapter. The mTLS identity, unsigned wire bounds, object presence,
+  and single-part profile are checked before dispatch. The verifier receives only
+  metadata already matched to the durable upload; its streamed version/length/hash
+  checks precede the transaction that revalidates authority and records the artifact.
+- Replies contain the stable artifact UUID and exact object reference. Integrity
+  mismatch, unavailable storage, invalid declarations, conflicts, and fencing use
+  stable reasons without copying SDK/backend diagnostics. A shared upload-decision
+  mapper keeps creation/finalization rejection semantics consistent.
+- The first boundary test failed with Unimplemented. Passing tests now cover wire
+  validation, wrong version/size/body, cancelled verification followed by the same
+  request retry, and replay of a durable success while storage is unavailable.
+  A partially streamed body stays blocked while separate database transactions
+  expire leases/phases, cancel work, or revoke credentials; each subsequently
+  prevents artifact registration without blocking the database mutation.
+- Extended the real PostgreSQL/mTLS/SeaweedFS test: upload via RPC grant, overwrite
+  the current key with different bytes, reject finalization of that wrong version,
+  then register the original exact version and replay its stable result. Later URL
+  reuse cannot rebind the artifact. Cancellation rejects verified retries as well
+  as new grants; verified data alone never authorizes publication.
+- `make test lint smoke` and the combined
+  `scripts/test-objectstore.sh scripts/test-store.sh` fixture passed with zero exits.
+  This reruns the changed Go race-enabled database/mTLS/executable boundary against
+  real storage. The preceding D11d full Linux/Docker/migration gate remains applicable;
+  no worker runtime or schema changed in D11e.
+- Updated the protocol, operator, storage, and verification docs. Terminal manifest
+  validation/publication, Rust transfers, multipart support, retention, and the
+  remaining v0.1 acceptance requirements stay open.

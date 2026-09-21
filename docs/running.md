@@ -124,7 +124,10 @@ For an explicitly local development backend, use a loopback HTTP endpoint and
 Omitting storage settings leaves the other APIs available; `CreateUpload` reports
 `OBJECT_STORAGE_NOT_CONFIGURED`. Partial settings fail startup. An AWS account is
 not required: the integration fixture uses isolated local SeaweedFS. See
-[upload capabilities](artifact-uploads.md) for limits and replay behavior.
+[upload capabilities](artifact-uploads.md) for limits and replay behavior, and
+[verified artifacts](verified-artifacts.md) for `FinalizeUpload`. The server can
+verify uploaded versions; the Rust transfer pipeline and terminal job publication
+are still in progress.
 
 ## Submit and inspect from the CLI
 

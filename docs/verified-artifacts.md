@@ -18,8 +18,8 @@ The operation has three stages:
    and replay checks before inserting the verified artifact and its event together.
 
 The store has no public operation that simply marks client-supplied bytes verified.
-The caller must supply the trusted verification function; the production RPC must
-connect it to the exact-version storage adapter. A nil verifier is rejected.
+The caller must supply the trusted verification function; the production RPC
+connects it to the exact-version storage adapter. A nil verifier is rejected.
 Storage failures retain the candidate request for retry but create no artifact.
 Expiry, cancellation, revocation, or takeover during verification prevents registration.
 
@@ -74,8 +74,50 @@ immutable records, exact-version foreign keys, budget races, storage failure/ret
 and changes to lease, phase, cancellation, credentials, or session during verification.
 These store tests deliberately use a controlled verifier to isolate state races;
 they do not claim to verify real object bytes. The storage adapter has its separate
-SeaweedFS compatibility gate. RPC integration of finalization remains the next slice.
+SeaweedFS compatibility gate. The RPC integration below verifies that composition.
 
 Fresh/rollback/reapply migration tests cover the complete schema. Populated upgrade
 tests retain active ownership from schema eight and an existing upload from schema
 nine, then apply the current schema and complete the corresponding operation.
+
+## Authenticated finalization RPC (D11e)
+
+`WorkerService.FinalizeUpload` now uses this transaction boundary with the configured
+storage adapter's exact-version streaming verifier. It checks the mTLS worker identity,
+generation and byte-count bounds, a present object reference, and an empty multipart
+completion list for the current single-part profile. The store validates the remaining
+fields and matches the request to its durable upload before any storage read.
+
+The server reads the requested version, checks the returned version and size, and
+computes SHA-256 from the bytes. A successful response contains the stable artifact
+UUID and the exact key/version/size/checksum. It supplies no execution authority and
+does not mark a job successful. There is no fallback to the key's current object.
+
+Errors share the upload grant's stable codes and fencing reasons. Incorrect storage
+version/size/content is `FailedPrecondition / OBJECT_INTEGRITY_MISMATCH`. Storage
+unavailability, including a missing requested version, is retryable
+`Unavailable / OBJECT_STORAGE_UNAVAILABLE`. Changed replay payloads conflict.
+Invalid object declarations are `InvalidArgument`; raw SDK diagnostics, signed URLs,
+and backend error bodies are never copied into the RPC error.
+
+The existing five-second worker RPC deadline also bounds object reads. A caller
+may set a shorter deadline. Cancellation observed during the object read prevents
+registration, and the same intent can be retried. Cancellation racing a commit can
+leave an uncertain response; replay resolves it from durable state. A successful exact replay
+requires current ownership but needs no new storage read. This allows recovery of
+a lost success response even if storage subsequently becomes unavailable.
+
+The PostgreSQL/mTLS suite streams one byte, blocks the remaining body, then expires
+the lease/phase, cancels the job, or revokes credentials. Each database mutation
+commits before the stream resumes; registration is rejected and no artifact remains.
+Other tests reject wrong version headers, size, and same-length corrupt bodies,
+exercise cancelled reads/retries, and prove stable replay during a storage outage.
+
+The real SeaweedFS fixture uploads bytes using a grant returned over mTLS, then
+overwrites the same key with different bytes. Finalizing the wrong version fails;
+finalizing the original version registers exactly that version. Repeated requests
+return the same artifact. Subsequent URL reuse cannot alter the selected version,
+and cancellation prevents even a verified replay from claiming current authority.
+
+Terminal manifest validation/publication and the Rust transfer pipeline remain
+separate required work. Multipart completion is still rejected explicitly.

@@ -131,7 +131,7 @@ func uploadRPCFixtureWithStorage(t *testing.T, objects *objectstore.Store) (*pgx
 	return pool, pb.NewWorkerServiceClient(conn), &pb.CreateUploadRequest{Authority: &pb.AttemptAuthority{JobId: a.JobID, AttemptId: a.AttemptID, WorkerId: a.WorkerID, SessionId: a.SessionID, Generation: uint64(a.Generation)}, RequestId: uuid.NewString(), Name: "result", Kind: pb.ArtifactKind_OUTPUT, SizeBytes: 32, Sha256: strings.Repeat("a", 64), PartCount: 1}
 }
 
-func TestRealMTLSUploadGrantTransfersExactBytesToVersionedStorage(t *testing.T) {
+func TestRealMTLSUploadAndFinalizationPinVerifiedVersion(t *testing.T) {
 	endpoint := os.Getenv("DISPATCH_TEST_S3_ENDPOINT")
 	if endpoint == "" {
 		t.Skip("requires the combined PostgreSQL and object storage fixture")
@@ -189,6 +189,25 @@ func TestRealMTLSUploadGrantTransfersExactBytesToVersionedStorage(t *testing.T) 
 	if err := objects.Verify(ctx, object); err != nil {
 		t.Fatal("RPC grant changed declared bytes", err)
 	}
+	// Replace the current object with different bytes via fixture administration.
+	// Finalization must read the requested version, never the current key or ETag.
+	wrong, err := admin.PutObject(ctx, &s3.PutObjectInput{Bucket: aws.String(cfg.Bucket), Key: aws.String(grant.ObjectKey), Body: strings.NewReader(strings.Repeat("x", len(body))), ContentLength: aws.Int64(int64(len(body)))})
+	if err != nil || aws.ToString(wrong.VersionId) == "" {
+		t.Fatal("could not create alternate version")
+	}
+	finalize := &pb.FinalizeUploadRequest{Authority: request.Authority, RequestId: uuid.NewString(), UploadId: grant.UploadId, Object: &pb.ObjectVersion{Key: grant.ObjectKey, VersionId: aws.ToString(wrong.VersionId), SizeBytes: request.SizeBytes, Sha256: request.Sha256}}
+	if result, err := client.FinalizeUpload(ctx, finalize); result != nil || status.Convert(err).Message() != "OBJECT_INTEGRITY_MISMATCH" {
+		t.Fatal("wrong version passed finalization", err)
+	}
+	finalize.RequestId = uuid.NewString()
+	finalize.Object.VersionId = version
+	verified, err := client.FinalizeUpload(ctx, finalize)
+	if err != nil || verified.GetArtifactId() == "" || !proto.Equal(verified.GetObject(), finalize.Object) {
+		t.Fatal("exact version was not registered", err)
+	}
+	if replay, err := client.FinalizeUpload(ctx, finalize); err != nil || !proto.Equal(replay, verified) {
+		t.Fatal("finalization replay changed artifact", err)
+	}
 	if code, _ := put(grant, strings.Repeat("x", len(body))); code == http.StatusOK {
 		t.Fatal("wire grant accepted wrong checksum")
 	}
@@ -203,6 +222,9 @@ func TestRealMTLSUploadGrantTransfersExactBytesToVersionedStorage(t *testing.T) 
 	if result, err := client.CreateUpload(ctx, request); result != nil || status.Convert(err).Message() != "UPLOAD_STOP_REQUESTED" {
 		t.Fatal("cancelled attempt reminted a grant", err)
 	}
+	if result, err := client.FinalizeUpload(ctx, finalize); result != nil || status.Convert(err).Message() != "UPLOAD_STOP_REQUESTED" {
+		t.Fatal("cancelled attempt reused verification authority", err)
+	}
 	// Already issued capabilities can still write only their isolated key. Exact
 	// versions protect prior bytes; finalization/publication needs separate fencing.
 	code, later := put(grant, body)
@@ -211,6 +233,10 @@ func TestRealMTLSUploadGrantTransfersExactBytesToVersionedStorage(t *testing.T) 
 	}
 	if err := objects.Verify(ctx, object); err != nil {
 		t.Fatal("reused capability changed the original version", err)
+	}
+	var saved string
+	if err := pool.QueryRow(ctx, "SELECT object_version FROM artifacts WHERE id=$1", verified.ArtifactId).Scan(&saved); err != nil || saved != version {
+		t.Fatal("later upload rebound verified artifact", err)
 	}
 }
 
