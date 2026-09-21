@@ -239,14 +239,14 @@ fn decode_page(
     Ok(page)
 }
 
-pub(super) fn lower_hash(value: &str) -> bool {
+pub(crate) fn lower_hash(value: &str) -> bool {
     value.len() == 64
         && value
             .bytes()
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
-pub(super) fn canonical_uuid(value: &str) -> bool {
+pub(crate) fn canonical_uuid(value: &str) -> bool {
     value.len() == 36
         && value != "00000000-0000-0000-0000-000000000000"
         && value.bytes().enumerate().all(|(n, b)| {

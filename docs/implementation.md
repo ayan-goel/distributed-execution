@@ -26,7 +26,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D07 acquisition | D03,D06 | Atomic assignment/reservations; concurrent quota/capacity races; acquisition replay | store, RPC, and Rust client gates passed; production agent loop pending |
 | D08 Docker adapter | D04 | Real bounded create/start/inspect/stop; ambiguous create reconciles one identity | spec, cached-image lifecycle, and phase store/RPC/Rust client gates passed; image staging and strict workspace integration pending |
 | D09 leases | D06,D07 | Fresh DB-time expiry checks; delayed grants; local monotonic deadline enforcement | local deadline, store, RPC, and Rust renewal client gates passed; production loop, reaper, and supervisor pending |
-| D10 worker recovery | D08,D09 | Durable journal; agent kill/restart stops old containers before new capacity | pending |
+| D10 worker recovery | D08,D09 | Durable journal; agent kill/restart stops old containers before new capacity | attempt journal gates passed; session persistence and runtime recovery pending |
 | D11 artifacts | D03,D04 | Scoped grants; verified exact versions; stale publication rejection | pending |
 | D12 first real job | D05–D11 | CLI submit → gRPC → Docker → verified output → CLI download | pending |
 | D13 loss/retry | D09,D12 | Reaper/reconciliation; recorded retry; backoff/deadlines; nonretryable failure | pending |
@@ -682,3 +682,32 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   Updated `docs/worker-phases.md` and `docs/acquisition.md`.
 - Next required integration includes the durable journal and per-attempt supervisor;
   periodic renewal, recovery/reaping, storage/publication, and full v0.1 stay open.
+
+### D10a: durable attempt evidence and phase retry identities
+
+- Added a bounded private attempt journal with exact assignment/spec bytes,
+  immutable container and exit/OOM evidence, and durable phase-report UUIDs and
+  payloads. Assignment replay preserves evidence; conflicting data is rejected.
+  Stored transport timing is zeroed so reopening cannot restore lease authority.
+- Updates sync a complete framed/checksummed replacement, rename it on the same
+  filesystem, and sync the directory before returning. An exclusive permanent
+  flock inode protects ownership; ambiguous write errors poison the current handle.
+  Private modes, ownership, link count, canonical paths, frame bounds, and semantic
+  validation protect recovery. Trusted ancestors remain an installation requirement.
+- Native tests cover replay, ordering, fast exit, budgets, unsafe files, corruption,
+  and concurrent owners. Injected failures at five commit steps recover a whole old
+  or new record. Killing a separate owner process releases the lock and preserves
+  the exact saved retry identity. Review fixed a readiness-marker race in that test.
+- Added a complete Linux worker gate to `make integration`, using an anonymous
+  Linux volume on Docker Desktop. Initial runs exposed rustup component setup on
+  the read-only root and a Linux-only crate missing from the native cache. Selecting
+  the image's installed toolchain and fetching locked target dependencies before
+  offline compilation resolved both. Protoc archives use official pinned checksums.
+- `make test lint smoke` and `make integration` passed. Integration includes Linux
+  journal/clock tests, real Docker execution/resource enforcement, fresh/down/up
+  migrations, and real PostgreSQL/mTLS Go/Rust workflows. The final test-marker fix
+  also passed the focused native journal and clippy gates.
+- Documented format, write ordering, caller responsibilities, resource bounds,
+  verification, and limitations in `docs/worker-journal.md`. These tests establish
+  process/error recovery, not power-loss durability. Session persistence, production
+  supervision, old-container cleanup, completion retention, and full v0.1 remain open.

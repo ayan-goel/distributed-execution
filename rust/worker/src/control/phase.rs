@@ -33,7 +33,7 @@ impl ControlClient {
     }
 }
 
-fn validate_request(r: &ReportPhaseRequest) -> Result<(), ClientError> {
+pub(crate) fn validate_request(r: &ReportPhaseRequest) -> Result<(), ClientError> {
     let a = r.authority.as_ref().ok_or(ClientError::Configuration)?;
     if !canonical_uuid(&r.event_id)
         || [&a.worker_id, &a.session_id, &a.job_id, &a.attempt_id]

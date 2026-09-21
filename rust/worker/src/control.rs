@@ -18,7 +18,9 @@ pub use work::{AssignmentPage, GrantedAssignment, WorkOutcome};
 mod renew;
 pub use renew::{RenewalOutcome, RenewedLease};
 mod phase;
+pub(crate) use phase::validate_request as validate_phase_request;
 pub use phase::PhaseStatus;
+pub(crate) use work::{canonical_uuid, lower_hash};
 
 #[derive(Debug)]
 pub enum ClientError {
