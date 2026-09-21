@@ -18,7 +18,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | Task | Dependencies | Required acceptance evidence | Status |
 | --- | --- | --- | --- |
 | D01 build foundation | none | Pinned Go/Cargo builds, binary smoke checks, CI configuration | local gate passed; remote CI pending |
-| D02 job and sweep contracts | D01 | Strict schema, unsafe input rejection, stable canonical hash, deterministic expansion | pending |
+| D02 job and sweep contracts | D01 | Strict schema, unsafe input rejection, stable canonical hash, deterministic expansion | parser/expansion gates passed; published schemas pending |
 | D03 database invariants | D01 | Real PostgreSQL migrations up/down/upgrade; uniqueness, references, checks | pending |
 | D04 worker protocol | D01 | Generated Go/Rust gRPC bindings; cross-language golden round-trip, drift check | pending |
 | D05 durable submission | D02,D03 | HTTP/CLI submission; 100 identical requests yield one job; changed payload conflicts | pending |
@@ -92,3 +92,14 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   executed 16,534 inputs with no failures. This establishes parsing, not admission,
   image resolution, authorization, or runtime containment.
 - Contract and limits documented in `docs/contracts.md`. Sweep contract remains next.
+
+### D02b: deterministic sweep expansion
+
+- Added the embedded-template server contract; server decoding rejects client paths.
+  Expansion sorts parameter keys, preserves value order, deep-copies children, and
+  checks the 1000-job and 16-MiB bounds before unbounded work can accumulate.
+- Tests first failed because sweep types/expansion did not exist. Tests now prove
+  the 27 combinations and order, 1000-job boundary, independent child state, project
+  matching, concurrency/failure policy validation, and rejection of invalid matrices.
+- `make test lint build` passed with race detection. Runtime sweep accounting and
+  transactional persistence remain D17; this gate proves pure expansion only.

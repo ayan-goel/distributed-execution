@@ -60,3 +60,17 @@ The initial supported retry reasons are `WORKER_LOST`, `RUNTIME_UNAVAILABLE`, an
   YAML's automatic scalar-to-string coercion for environment parameters.
 - [Go JSON encoding](https://pkg.go.dev/encoding/json#Marshal): map key ordering is
   deterministic. Exact field-name checks supplement the decoder's case folding.
+
+## Sweep expansion (D02b)
+
+The server contract embeds `spec.jobTemplate` as a complete Job, never a local path.
+The CLI will resolve the spec's `jobTemplateFile` form on the client before sending
+this request. Sweep/template projects must agree. Matrix keys override environment
+values; sorted parameter names and original value order determine child indices.
+Each child owns its maps and slices, so modifying one cannot change another.
+
+Expansion accepts 1–32 dimensions, at most 1000 children, at most 16 MiB of expanded
+canonical specifications, and a concurrency cap of 1–1000. Count multiplication is
+checked before allocation. Empty dimensions and reserved environment names fail.
+Repeated values remain separate children. `cancelRunningOnFailure` requires
+`failFast`. This slice validates policy; execution-time enforcement belongs to D17.
