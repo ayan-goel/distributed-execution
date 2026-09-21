@@ -1,9 +1,12 @@
 //! Integration fixture: fetches authority and recovery pages, never runs containers.
 use dispatch_protocol::{
-    v1::{acquire_work_response, AcquireWorkRequest, AcquireWorkResponse, ListAssignmentsRequest},
+    v1::{
+        acquire_work_response, AcquireWorkRequest, AcquireWorkResponse, ListAssignmentsRequest,
+        RenewLeasesRequest,
+    },
     MAX_MESSAGE_BYTES,
 };
-use dispatch_worker::control::{ControlClient, WorkOutcome};
+use dispatch_worker::control::{ControlClient, RenewalOutcome, WorkOutcome};
 use prost::Message;
 use std::{
     collections::HashSet,
@@ -48,6 +51,30 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 || grant.assignment().spec_sha256 != replay.assignment().spec_sha256
             {
                 return Err("assignment replay changed identity".into());
+            }
+            let identity = grant
+                .assignment()
+                .authority
+                .as_ref()
+                .ok_or("missing authority")?;
+            // Request IDs are method-scoped. Reuse this one only for the same
+            // renewal payload; two transport calls must persist one batch grant.
+            let renewal = RenewLeasesRequest {
+                session: request.session.clone(),
+                request_id: request.request_id.clone(),
+                attempts: vec![identity.clone()],
+            };
+            for _ in 0..2 {
+                let results = client.renew(&renewal).await?;
+                match &results[0] {
+                    RenewalOutcome::Renewed(lease) if lease.identity() == identity => {
+                        lease.authority().remaining()?;
+                    }
+                    RenewalOutcome::Expired(_) => {
+                        return Err("local renewal authority expired".into())
+                    }
+                    _ => return Err("renewal lost expected authority".into()),
+                }
             }
             // Recovery pauses acquisitions and processes one page at a time. Only
             // IDs are retained here to verify traversal, not all execution specs.

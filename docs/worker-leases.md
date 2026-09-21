@@ -86,7 +86,7 @@ I/O occurs inside this transaction.
 History currently persists for the session lifetime without automatic retention.
 Do not prune records while their UUIDs can still renew active work: deleting one
 would let an old retry look like a new operation. Safe bounded retention remains a
-release requirement. The Rust renewal client/loop, supervisor, and lease
+release requirement. The production renewal loop, supervisor, and lease
 reaper remain separate work; this store slice alone does not keep containers alive
 or terminate them at expiry.
 
@@ -113,6 +113,31 @@ Malformed input maps to `InvalidArgument`, conflicting replay payloads to
 Certificate/credential failures map to `Unauthenticated`; mismatched claimed worker
 or nested session identity maps to `PermissionDenied`. Per-attempt expiry and
 cancellation are result decisions rather than transport errors.
+
+## Rust renewal client (D09d)
+
+`ControlClient::renew(&RenewLeasesRequest)` uses the same configured mTLS channel,
+four-MiB message bound, and five-second transport/outer timeout as acquisition.
+Before sending, it validates 1–64 unique attempt IDs, canonical nonzero UUIDs,
+signed-range positive generations, and agreement with the enclosing worker/session.
+The caller retains the request UUID and exact batch for transport retries; this
+method does not retry automatically or schedule the next renewal period.
+
+The response must contain exactly one result for each requested authority in input
+order. Every full tuple must match. Missing/duplicate/substituted entries, unknown
+decisions, out-of-policy durations, and rejection entries carrying durations reject
+the entire response before any authority is returned. A valid response yields:
+
+- `Renewed`: immutable attempt identity plus a conservative `AuthorityWindow`.
+- `Rejected`: identity plus `Fenced`, `StopRequested`, or `AlreadyTerminal`.
+- `Expired`: identity only when a grant has already exhausted local authority.
+
+Each accepted result uses the request-send monotonic sample, the returned durations,
+and the existing five-second lease margin. The client checks authority again after
+validating the full batch. Server wall-clock timestamps are informational and do
+not replace the local monotonic calculation. Consumers must recheck the returned
+window before acting and associate it with the exact attempt identity. The API
+does not mutate an older assignment grant, persist a deadline, or supervise Docker.
 
 ## Verification
 
@@ -152,8 +177,21 @@ generation overflow, cross-worker/session claims, changed payload conflicts,
 expired leases, session takeover, and credential revocation on an established
 connection. Unit tests cover signed duration flooring and invalid store outcomes.
 The full race-enabled PostgreSQL/mTLS suite and `make test lint smoke` passed after
-the RPC implementation. The Rust renewal client, production loop, supervisor, and
-container stop-at-deadline behavior remain unverified pending implementation.
+the RPC implementation.
+
+Rust unit tests cover malformed requests/responses, reordered/substituted authority,
+duplicate/oversized batches, mixed decisions, zero/out-of-policy durations, and a
+grant exhausted by the local safety margin. `work_probe` now renews and retries each
+real acquired attempt through the Go executable. PostgreSQL assertions verify one
+batch record per request and exact agreement between original stored grants and
+current expiries after retries. The mTLS delayed-grant fixture separately delays
+acquisition and renewal responses: 5,100 ms of reported lease minus the five-second
+margin leaves 100 ms, but delivery takes at least 200 ms. Both return no usable
+execution authority in the real Rust client. The fixture never launches containers.
+
+The race-enabled PostgreSQL/mTLS suite and `make test lint smoke` passed with this
+client. Production periodic renewal, supervisor integration, reaping, and actual
+container stop-at-deadline behavior remain pending.
 
 ## Source references
 

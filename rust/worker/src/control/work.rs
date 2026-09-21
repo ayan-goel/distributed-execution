@@ -87,7 +87,9 @@ impl ControlClient {
     }
 }
 
-fn valid_session(session: Option<&WorkerSession>) -> Result<&WorkerSession, ClientError> {
+pub(super) fn valid_session(
+    session: Option<&WorkerSession>,
+) -> Result<&WorkerSession, ClientError> {
     session
         .filter(|s| canonical_uuid(&s.worker_id) && canonical_uuid(&s.session_id))
         .ok_or(ClientError::Configuration)
@@ -244,7 +246,7 @@ fn lower_hash(value: &str) -> bool {
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
-fn canonical_uuid(value: &str) -> bool {
+pub(super) fn canonical_uuid(value: &str) -> bool {
     value.len() == 36
         && value != "00000000-0000-0000-0000-000000000000"
         && value.bytes().enumerate().all(|(n, b)| {

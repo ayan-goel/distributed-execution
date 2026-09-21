@@ -120,6 +120,13 @@ func TestRustAcquisitionAndRecoveryThroughControlPlane(t *testing.T) {
 	if err := pool.QueryRow(ctx, "SELECT count(*) FROM attempts").Scan(&count); err != nil || count != 3 {
 		t.Fatal("Rust replay duplicated work", count, err)
 	}
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM worker_lease_requests").Scan(&count); err != nil || count != 3 {
+		t.Fatal("Rust renewal replay duplicated batch grants", count, err)
+	}
+	var exact bool
+	if err := pool.QueryRow(ctx, `SELECT bool_and(a.lease_expires_at=(r.results->0->>'LeaseExpiresAt')::timestamptz) FROM worker_lease_requests r JOIN attempts a ON a.id=(r.results->0->'Authority'->>'attemptId')::uuid`).Scan(&exact); err != nil || !exact {
+		t.Fatal("Rust renewal retry changed the original grant", exact, err)
+	}
 	if _, err := pool.Exec(ctx, "UPDATE attempts SET lease_expires_at=clock_timestamp()-interval '1 second'"); err != nil {
 		t.Fatal(err)
 	}
@@ -130,9 +137,10 @@ func TestRustAcquisitionAndRecoveryThroughControlPlane(t *testing.T) {
 
 type delayedGrantService struct {
 	pb.UnimplementedWorkerServiceServer
+	delayRenewal bool
 }
 
-func (delayedGrantService) AcquireWork(ctx context.Context, r *pb.AcquireWorkRequest) (*pb.AcquireWorkResponse, error) {
+func (service delayedGrantService) AcquireWork(ctx context.Context, r *pb.AcquireWorkRequest) (*pb.AcquireWorkResponse, error) {
 	job := spec.Job{APIVersion: spec.APIVersion, Kind: "Job", Metadata: spec.Metadata{Name: "late-grant", Project: "research"}, Spec: spec.JobSpec{
 		Image: "example.org/test@sha256:" + strings.Repeat("a", 64), Command: []string{"true"},
 		Resources:               spec.Resources{CPUMillis: 1, MemoryMiB: 1, ScratchMiB: 1},
@@ -147,6 +155,31 @@ func (delayedGrantService) AcquireWork(ctx context.Context, r *pb.AcquireWorkReq
 	// The stale sample leaves only 100 ms after the lease margin. Delivery is
 	// intentionally later, but still well within the five-second RPC timeout.
 	reply := &pb.AcquireWorkResponse{Outcome: &pb.AcquireWorkResponse_Assignment{Assignment: &pb.Assignment{Authority: &pb.AttemptAuthority{JobId: uuid.NewString(), AttemptId: uuid.NewString(), Generation: 1, WorkerId: r.GetSession().GetWorkerId(), SessionId: r.GetSession().GetSessionId()}, Resources: &pb.Resources{CpuMillis: 1, MemoryBytes: 1 << 20, ScratchBytes: 1 << 20}, ImageDigest: job.Spec.Image, Argv: job.Spec.Command, CanonicalJobSpecJson: raw, SpecSha256: hash, LeaseDurationMs: 5100, PhaseRemainingMs: 300000}}}
+	if service.delayRenewal {
+		// The probe first replays acquisition; keep that authority stable so this
+		// fixture reaches and isolates the delayed renewal response.
+		reply.GetAssignment().Authority.JobId = r.RequestId
+		reply.GetAssignment().Authority.AttemptId = r.RequestId
+		reply.GetAssignment().LeaseDurationMs = 30000
+		return reply, nil
+	}
+	timer := time.NewTimer(200 * time.Millisecond)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return reply, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func (delayedGrantService) RenewLeases(ctx context.Context, r *pb.RenewLeasesRequest) (*pb.RenewLeasesResponse, error) {
+	reply := &pb.RenewLeasesResponse{}
+	for _, a := range r.Attempts {
+		reply.Results = append(reply.Results, &pb.LeaseResult{Authority: a, Decision: pb.Decision_ACCEPTED, RemainingMs: 5100, PhaseRemainingMs: 300000})
+	}
+	// Only 100 ms remains after the safety margin. A successful response after
+	// 200 ms must carry cleanup identity rather than fresh execution authority.
 	timer := time.NewTimer(200 * time.Millisecond)
 	defer timer.Stop()
 	select {
@@ -158,6 +191,21 @@ func (delayedGrantService) AcquireWork(ctx context.Context, r *pb.AcquireWorkReq
 }
 
 func TestRustRejectsGrantDeliveredAfterLocalAuthorityExpires(t *testing.T) {
+	for _, delayRenewal := range []bool{false, true} {
+		name := "acquisition"
+		diagnostic := "local authority expired"
+		if delayRenewal {
+			name = "renewal"
+			diagnostic = "local renewal authority expired"
+		}
+		t.Run(name, func(t *testing.T) {
+			testRustDelayedAuthority(t, delayedGrantService{delayRenewal: delayRenewal}, diagnostic)
+		})
+	}
+}
+
+func testRustDelayedAuthority(t *testing.T, service delayedGrantService, expectedDiagnostic string) {
+	t.Helper()
 	p := testWorkerPKI(t)
 	cert, err := tls.LoadX509KeyPair(p.serverCert, p.serverKey)
 	if err != nil {
@@ -168,13 +216,13 @@ func TestRustRejectsGrantDeliveredAfterLocalAuthorityExpires(t *testing.T) {
 		t.Fatal(err)
 	}
 	server := grpc.NewServer(grpc.Creds(credentials.NewTLS(&tls.Config{Certificates: []tls.Certificate{cert}, ClientCAs: p.roots, ClientAuth: tls.RequireAndVerifyClientCert, MinVersion: tls.VersionTLS13})))
-	pb.RegisterWorkerServiceServer(server, delayedGrantService{})
+	pb.RegisterWorkerServiceServer(server, service)
 	done := make(chan error, 1)
 	go func() { done <- server.Serve(listener) }()
 	t.Cleanup(func() { server.Stop(); <-done })
 	request := &pb.AcquireWorkRequest{Session: &pb.WorkerSession{WorkerId: uuid.NewString(), SessionId: uuid.NewString()}, RequestId: uuid.NewString()}
 	output, diagnostic, err := rustProtocolProbe(t, "work_probe", listener.Addr().String(), p, request)
-	if err == nil || len(output) != 0 || !strings.Contains(diagnostic, "local authority expired") {
+	if err == nil || len(output) != 0 || !strings.Contains(diagnostic, expectedDiagnostic) {
 		t.Fatal("Rust granted fresh authority on late receipt", err, diagnostic)
 	}
 }

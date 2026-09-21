@@ -25,7 +25,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D06 worker identities | D03,D04 | Authenticated registration, session takeover/recovery; stale-session rejection | control-plane, executable, and Rust client gates passed; runtime/agent loop pending |
 | D07 acquisition | D03,D06 | Atomic assignment/reservations; concurrent quota/capacity races; acquisition replay | store, RPC, and Rust client gates passed; production agent loop pending |
 | D08 Docker adapter | D04 | Real bounded create/start/inspect/stop; ambiguous create reconciles one identity | spec and cached-image lifecycle gates passed; image staging and strict workspace integration pending |
-| D09 leases | D06,D07 | Fresh DB-time expiry checks; delayed grants; local monotonic deadline enforcement | local deadline, renewal store, and RPC gates passed; Rust renewal client/loop, reaper, and supervisor pending |
+| D09 leases | D06,D07 | Fresh DB-time expiry checks; delayed grants; local monotonic deadline enforcement | local deadline, store, RPC, and Rust renewal client gates passed; production loop, reaper, and supervisor pending |
 | D10 worker recovery | D08,D09 | Durable journal; agent kill/restart stops old containers before new capacity | pending |
 | D11 artifacts | D03,D04 | Scoped grants; verified exact versions; stale publication rejection | pending |
 | D12 first real job | D05–D11 | CLI submit → gRPC → Docker → verified output → CLI download | pending |
@@ -586,3 +586,30 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   regeneration was needed because this method already existed in the contract.
 - Next: Rust renewal client with per-attempt conservative authority windows, then
   its production maintenance/supervision integration. Full v0.1 remains open.
+
+### D09d: Rust renewal client and delayed-grant rejection
+
+- Added `ControlClient::renew` with bounded validated batches and caller-owned
+  operation identities. It checks complete result tuples/count/order and rejects
+  malformed responses before returning any grants. Renewal outcomes distinguish
+  live immutable identity/window pairs, explicit server rejections, and locally
+  expired grants that carry only cleanup identity.
+- Reused the existing request-send monotonic authority calculation and five-second
+  margin, then rechecked windows after full response validation. Kept periodic
+  scheduling and runtime supervision outside the transport method.
+- Tests first failed for the missing API. Rust unit tests now cover identity/batch
+  validation, substituted/reordered/missing results, invalid decision/duration
+  bounds, and mixed live/rejected/expired outcomes. A direct local compile initially
+  selected the unconfigured Xcode toolchain; using the already-established
+  DEVELOPER_DIR=/Library/Developer/CommandLineTools resolved the linker setup.
+- Extended the real Rust work probe to renew and retry each acquired job through
+  mTLS. PostgreSQL verifies one original grant record per UUID and unchanged exact
+  expiries after replay. Added a separate delayed-renewal response case: 200 ms
+  delivery exceeds the 100 ms usable window after the local margin, and the real
+  client rejects execution authority despite a successful RPC.
+- `sh scripts/test-store.sh` and `make test lint smoke` passed; clippy reported no
+  warnings. Reviewed full-tuple binding, unsigned bounds, batch publication, and
+  elapsed-time handling. Updated `docs/worker-leases.md` and `docs/acquisition.md`.
+- The production renewal loop, per-attempt supervision, durable journal, reaper,
+  and remaining full v0.1 gates are still required. No container execution or
+  termination-at-expiry gate is claimed from a protocol fixture.

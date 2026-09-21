@@ -15,6 +15,8 @@ const RPC_TIMEOUT: Duration = Duration::from_secs(5);
 
 mod work;
 pub use work::{AssignmentPage, GrantedAssignment, WorkOutcome};
+mod renew;
+pub use renew::{RenewalOutcome, RenewedLease};
 
 #[derive(Debug)]
 pub enum ClientError {
