@@ -240,6 +240,36 @@ database authority and verifies the loop exits on fencing. Three RPCs create exa
 two durable batch records. The fixture seeds readiness and never starts containers;
 it does not prove the full agent launch, partition, or active-job restart gates.
 
+## Explicit phase authority refresh (D09g)
+
+`SupervisedAuthority::refresh` requests a grant from a renewal operation constructed
+after the call starts. Invoke it after an accepted phase report before relying on
+the new phase's server deadline. Phase acknowledgements carry no lease timing;
+the refresh barrier does not create authority or extend the previously held window.
+
+Exactly one `maintain_leases` producer must own each attempt's channel. A refresh
+wakes that producer before its normal five-second period. If an older operation has
+an uncertain reply, the producer first resolves its exact UUID/payload retry, then
+constructs a fresh operation. Each pending batch records the refresh revisions that
+preceded its construction. Only a validated, applied live grant acknowledges those
+revisions; an older replay cannot satisfy a later request. Already-satisfied wake
+permits are consumed without issuing surplus RPCs.
+
+Refresh continues checking the existing local deadline and sticky stop state while
+waiting. Fencing, expiry, or loss of the producer ends it with a stop reason. Cancelling
+the refresh waiter can leave a pending request for the producer to satisfy; it does
+not cancel the producer or revoke an otherwise live grant. The parent must keep
+runtime supervision independent while awaiting the barrier. In particular, reporting
+a shorter RUNNING phase requires a conservative local phase bound while the report
+and fresh grant remain uncertain; that execution coordinator is still pending.
+
+Tests cover waking the normal period without an extra RPC, exact replay before a
+post-request grant, expiry without a producer, and rejection during refresh. The real
+`launch_probe` now requests refresh after RUNNING. Its service fixture fences that
+renewal, and the probe must reject the barrier before the watchdog confirms the
+actual Docker container stopped. This is negative post-phase integration evidence;
+successful finalization and production acquisition remain separate work.
+
 ## Source references
 
 - [Linux clock_gettime and CLOCK_BOOTTIME](https://man7.org/linux/man-pages/man2/clock_gettime.2.html)

@@ -82,8 +82,9 @@ commits STARTING but deliberately loses its reply; the retry must preserve the e
 event and payload. The probe verifies the journal's container binding and actual
 running state, then explicitly prepares/reports RUNNING.
 
-The next periodic renewal expires the attempt's database lease and returns FENCED.
-The real watchdog kills the container and confirms termination; the Go fixture
+The probe requests an explicit authority refresh after RUNNING. The resulting
+renewal expires the attempt's database lease and returns FENCED, so the refresh
+must fail. The real watchdog kills the container and confirms termination; the Go fixture
 independently inspects it as stopped. PostgreSQL retains exactly two phase records,
 STARTING and RUNNING, despite the lost response. Cleanup is restricted to that
 fixture's unpredictable worker label. This test uses the soft-scratch development

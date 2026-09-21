@@ -933,3 +933,27 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   fixture uses the development soft-scratch policy and does not replace the release
   gates for strict Linux storage, production acquisition/finalization, complete result
   publication, independent hosts, or active-job worker restart.
+
+### D09g: post-phase authority refresh through the renewal producer
+
+- Added an explicit authority refresh barrier that wakes the existing periodic
+  producer. Each new renewal operation captures refresh revisions; only an applied
+  live grant from that operation can acknowledge them. An uncertain older request
+  retains its exact retry before a new UUID is constructed. Stale wake permits do
+  not cause surplus RPCs, and no second producer competes for the attempt.
+- Existing authority and sticky rejection checks remain active while refresh waits.
+  Neither a phase acknowledgement, an old replay, nor a missing producer creates
+  additional execution time. Documented cancellation behavior and the one-producer
+  requirement in `docs/worker-leases.md`.
+- Four new tests cover prompt refresh, uncertain replay followed by a distinct
+  operation, expiry without a producer, and fencing during refresh. The real launch
+  probe now requires its post-RUNNING refresh to observe server fencing before the
+  watchdog kills and independently confirms the Docker container stopped.
+- `make test lint smoke` and `make integration` passed with confirmed zero exits.
+  Integration includes Linux worker tests, actual Docker lifecycle/recovery,
+  PostgreSQL migration rollback/reapply, and the race-enabled store/mTLS/executable
+  suites. Initial sandbox attempts could not open local sockets; the same checks
+  passed with authorized local socket access.
+- Production RUNNING/FINALIZING coordination still needs conservative local bounds
+  while phase commits and replies are uncertain. Acquisition, finalization output
+  publication, reaping, and the remaining full v0.1 release gates remain open.

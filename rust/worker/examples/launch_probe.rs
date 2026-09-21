@@ -133,6 +133,16 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     if client.report_phase(&running).await?.decision != dispatch_protocol::v1::Decision::Accepted {
         return Err("running phase rejected".into());
     }
+    // Phase acknowledgement supplies no lease. This fixture fences the next
+    // renewal, so the post-phase refresh must fail before supervision cleans up.
+    if !matches!(
+        authority.refresh().await,
+        Err(StopReason::Rejected(
+            dispatch_protocol::v1::Decision::Fenced
+        ))
+    ) {
+        return Err("phase refresh ignored server fencing".into());
+    }
     if !matches!(
         supervise_running(&runtime, &handle, authority).await,
         SupervisionOutcome::Stopped {

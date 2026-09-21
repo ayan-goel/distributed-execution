@@ -44,7 +44,28 @@ impl ControlClient {
 }
 
 struct Batch(Vec<AuthorityController>);
+struct Pending {
+    request: RenewLeasesRequest,
+    refresh_revisions: Vec<u64>,
+}
 impl Batch {
+    async fn wait_for_period_or_refresh(&self, delay: Duration) {
+        let deadline = tokio::time::Instant::now() + delay;
+        loop {
+            if self.0.iter().any(AuthorityController::needs_refresh) {
+                return;
+            }
+            // Discard an already-satisfied wake permit rather than issuing an
+            // extra renewal. All members retain their original periodic deadline.
+            let wake = futures_util::future::select_all(
+                self.0.iter().map(|c| Box::pin(c.refresh_requested())),
+            );
+            tokio::select! {
+                _ = tokio::time::sleep_until(deadline) => return,
+                _ = wake => {},
+            }
+        }
+    }
     fn stop(&self, reason: StopReason) {
         for controller in &self.0 {
             controller.stop(reason);
@@ -94,9 +115,20 @@ fn maintain(
                 return Ok(());
             }
             if pending.is_none() {
-                pending = Some(batch.request(true)?);
+                // Capture intent before constructing/sending the new operation.
+                // Requests made during an in-flight retry require a later UUID.
+                let refresh_revisions = batch
+                    .0
+                    .iter()
+                    .map(AuthorityController::refresh_revision)
+                    .collect();
+                pending = Some(Pending {
+                    request: batch.request(true)?,
+                    refresh_revisions,
+                });
             }
-            let request = pending.as_ref().unwrap();
+            let pending_batch = pending.as_ref().unwrap();
+            let request = &pending_batch.request;
             if request.attempts.is_empty() {
                 return Ok(());
             }
@@ -118,14 +150,18 @@ fn maintain(
                         return Err(ClientError::Response);
                     }
                     for outcome in &outcomes {
-                        let controller = batch
+                        let (index, controller) = batch
                             .0
                             .iter()
-                            .find(|c| c.identity() == outcome_identity(outcome))
+                            .enumerate()
+                            .find(|(_, c)| c.identity() == outcome_identity(outcome))
                             .ok_or(ClientError::Response)?;
                         if controller.apply(outcome).is_err() {
                             batch.stop(StopReason::RenewalFailed);
                             return Err(ClientError::Response);
+                        }
+                        if matches!(outcome, RenewalOutcome::Renewed(_)) && controller.active() {
+                            controller.acknowledge_refresh(pending_batch.refresh_revisions[index]);
                         }
                     }
                     pending = None;
@@ -142,7 +178,11 @@ fn maintain(
             if !batch.0.iter().any(AuthorityController::active) {
                 return Ok(());
             }
-            tokio::time::sleep(delay).await;
+            if pending.is_some() {
+                tokio::time::sleep(delay).await;
+            } else {
+                batch.wait_for_period_or_refresh(delay).await;
+            }
         }
     }
 }
@@ -366,5 +406,148 @@ mod tests {
             Err(ClientError::Configuration)
         ));
         assert!(rpc.requests.is_empty());
+    }
+
+    #[tokio::test]
+    async fn phase_refresh_interrupts_the_period_and_requires_a_post_request_grant() {
+        let (controller, mut authority) = controller(3, 5000);
+        let (observed, mut seen) = tokio::sync::mpsc::unbounded_channel();
+        struct Observed {
+            sent: tokio::sync::mpsc::UnboundedSender<String>,
+        }
+        impl RenewalRpc for Observed {
+            async fn renew_batch(
+                &mut self,
+                request: &RenewLeasesRequest,
+            ) -> Result<Vec<RenewalOutcome>, ClientError> {
+                self.sent.send(request.request_id.clone()).unwrap();
+                Ok(request
+                    .attempts
+                    .iter()
+                    .map(|identity| {
+                        RenewalOutcome::Renewed(RenewedLease {
+                            identity: identity.clone(),
+                            authority: window(5000),
+                        })
+                    })
+                    .collect())
+            }
+        }
+        let task = tokio::spawn(async move {
+            maintain(
+                &mut Observed { sent: observed },
+                vec![controller],
+                Timing {
+                    period: Duration::from_secs(5),
+                    ..timing()
+                },
+            )
+            .await
+        });
+        let first = seen.recv().await.unwrap();
+        let grant = tokio::time::timeout(Duration::from_secs(1), authority.refresh())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(grant.remaining().is_ok());
+        let second = seen.recv().await.unwrap();
+        assert_ne!(first, second);
+        assert!(tokio::time::timeout(Duration::from_millis(40), seen.recv())
+            .await
+            .is_err());
+        task.abort();
+        assert!(task.await.unwrap_err().is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn refresh_during_uncertain_reply_preserves_retry_then_uses_a_new_batch() {
+        let (controller, mut authority) = controller(3, 5000);
+        let (observed, mut seen) = tokio::sync::mpsc::unbounded_channel();
+        let (release, released) = tokio::sync::mpsc::unbounded_channel();
+        struct Controlled {
+            observed: tokio::sync::mpsc::UnboundedSender<RenewLeasesRequest>,
+            released: tokio::sync::mpsc::UnboundedReceiver<()>,
+            calls: usize,
+        }
+        impl RenewalRpc for Controlled {
+            async fn renew_batch(
+                &mut self,
+                request: &RenewLeasesRequest,
+            ) -> Result<Vec<RenewalOutcome>, ClientError> {
+                self.calls += 1;
+                self.observed.send(request.clone()).unwrap();
+                self.released.recv().await.unwrap();
+                if self.calls == 1 {
+                    return Err(ClientError::Connection);
+                }
+                Ok(request
+                    .attempts
+                    .iter()
+                    .map(|identity| {
+                        RenewalOutcome::Renewed(RenewedLease {
+                            identity: identity.clone(),
+                            authority: window(5000),
+                        })
+                    })
+                    .collect())
+            }
+        }
+        let task = tokio::spawn(async move {
+            maintain(
+                &mut Controlled {
+                    observed,
+                    released,
+                    calls: 0,
+                },
+                vec![controller],
+                Timing {
+                    period: Duration::from_secs(5),
+                    rpc: Duration::from_secs(2),
+                    ..timing()
+                },
+            )
+            .await
+        });
+        let first = seen.recv().await.unwrap();
+        let mut refresh = Box::pin(authority.refresh());
+        tokio::select! {_=&mut refresh=>panic!("old grant satisfied refresh"),_=tokio::time::sleep(Duration::from_millis(5))=>{}}
+        release.send(()).unwrap();
+        let retry = seen.recv().await.unwrap();
+        assert_eq!(first, retry);
+        release.send(()).unwrap();
+        let fresh = seen.recv().await.unwrap();
+        assert_ne!(fresh.request_id, first.request_id);
+        tokio::select! {_=&mut refresh=>panic!("replayed grant satisfied new phase"),_=tokio::time::sleep(Duration::from_millis(5))=>{}}
+        release.send(()).unwrap();
+        assert!(refresh.await.unwrap().remaining().is_ok());
+        task.abort();
+        let _ = task.await;
+    }
+
+    #[tokio::test]
+    async fn phase_refresh_without_a_live_producer_expires_instead_of_inventing_authority() {
+        let (_controller, mut authority) = controller(3, 40);
+        assert!(matches!(
+            authority.refresh().await,
+            Err(crate::supervisor::StopReason::AuthorityExpired)
+        ));
+    }
+
+    #[tokio::test]
+    async fn rejection_interrupts_an_outstanding_phase_refresh() {
+        let (controller, mut authority) = controller(3, 1000);
+        let (result, ()) = tokio::join!(authority.refresh(), async {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+            controller
+                .apply(&RenewalOutcome::Rejected {
+                    identity: controller.identity().clone(),
+                    decision: Decision::Fenced,
+                })
+                .unwrap();
+        });
+        assert_eq!(
+            result,
+            Err(crate::supervisor::StopReason::Rejected(Decision::Fenced))
+        );
     }
 }

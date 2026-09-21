@@ -5,8 +5,16 @@ use crate::{
     runtime::{ContainerState, ContainerStatus, Runtime},
 };
 use dispatch_protocol::v1::{AttemptAuthority, Decision};
-use std::{fmt, future::Future, time::Duration};
-use tokio::sync::watch;
+use std::{
+    fmt,
+    future::Future,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
+use tokio::sync::{watch, Notify};
 
 const OBSERVATION_TICK: Duration = Duration::from_millis(100);
 const CLEANUP_BUDGET: Duration = Duration::from_secs(5);
@@ -32,14 +40,23 @@ enum AuthorityState {
     Stop(StopReason),
 }
 
+#[derive(Default)]
+struct RefreshState {
+    requested: AtomicU64,
+    acknowledged: AtomicU64,
+    wake: Notify,
+}
+
 #[derive(Clone)]
 pub struct AuthorityController {
     identity: AttemptAuthority,
     state: watch::Sender<AuthorityState>,
+    refresh: Arc<RefreshState>,
 }
 pub struct SupervisedAuthority {
     identity: AttemptAuthority,
     state: watch::Receiver<AuthorityState>,
+    refresh: Arc<RefreshState>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -76,19 +93,43 @@ pub fn authority_channel(
         .remaining()
         .map_err(|_| AuthorityUpdateError::Expired)?;
     let (state, receiver) = watch::channel(AuthorityState::Live(window));
+    let refresh = Arc::new(RefreshState::default());
     Ok((
         AuthorityController {
             identity: identity.clone(),
             state,
+            refresh: refresh.clone(),
         },
         SupervisedAuthority {
             identity,
             state: receiver,
+            refresh,
         },
     ))
 }
 
 impl AuthorityController {
+    pub(crate) fn refresh_revision(&self) -> u64 {
+        self.refresh.requested.load(Ordering::Acquire)
+    }
+
+    pub(crate) fn needs_refresh(&self) -> bool {
+        self.active() && self.refresh_revision() > self.refresh.acknowledged.load(Ordering::Acquire)
+    }
+
+    pub(crate) async fn refresh_requested(&self) {
+        self.refresh.wake.notified().await;
+    }
+
+    pub(crate) fn acknowledge_refresh(&self, revision: u64) {
+        self.refresh
+            .acknowledged
+            .fetch_max(revision, Ordering::AcqRel);
+        // The validated grant was applied before acknowledgement. Wake the
+        // receiver even when the window value happens to be unchanged.
+        self.state.send_modify(|_| {});
+    }
+
     pub fn identity(&self) -> &AttemptAuthority {
         &self.identity
     }
@@ -161,6 +202,29 @@ fn live(state: &AuthorityState) -> Result<Duration, StopReason> {
 }
 
 impl SupervisedAuthority {
+    /// Wait for a grant from a renewal batch constructed after this request.
+    /// A phase acknowledgement alone never satisfies this barrier.
+    pub async fn refresh(&mut self) -> Result<AuthorityWindow, StopReason> {
+        self.check()?;
+        let revision = self
+            .refresh
+            .requested
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| n.checked_add(1))
+            .map_err(|_| StopReason::RenewalFailed)?
+            + 1;
+        self.refresh.wake.notify_one();
+        loop {
+            let remaining = self.check()?;
+            if self.refresh.acknowledged.load(Ordering::Acquire) >= revision {
+                return self.window();
+            }
+            tokio::select! {
+                _ = self.state.changed() => {},
+                _ = tokio::time::sleep(remaining.min(OBSERVATION_TICK)) => {},
+            }
+        }
+    }
+
     pub(crate) fn identity(&self) -> &AttemptAuthority {
         &self.identity
     }
