@@ -28,7 +28,7 @@ import (
 )
 
 type launchService struct {
-	publication publicationEvidence
+	publication *publicationEvidence
 	pb.WorkerServiceServer
 	pool                           *pgxpool.Pool
 	t                              *testing.T
@@ -126,10 +126,11 @@ func TestRustExecutionObservesExitWhileRunningReplyIsUncertain(t *testing.T) {
 func testRustLaunchScenario(t *testing.T, mode string) {
 	t.Helper()
 	configureServerTestDatabase(t)
-	publish := mode == "publish" || mode == "publish_failed"
+	publish := strings.HasPrefix(mode, "publish")
+	publication := &publicationEvidence{}
 	var objects *objectstore.Store
 	if publish {
-		objects = publicationStorage(t)
+		objects = publicationStorage(t, mode, publication)
 	}
 	p := testWorkerPKI(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -174,8 +175,17 @@ func testRustLaunchScenario(t *testing.T, mode string) {
 	if mode != "fenced" {
 		job.Spec.Command = []string{"sh", "-c", "printf abc > /outputs/result; sleep 2; exit 7"}
 	}
-	if mode == "publish" {
+	if publish && mode != "publish_failed" && mode != "publish_failed_missing" {
 		job.Spec.Command = []string{"sh", "-c", "printf abc > /outputs/result; sleep 2; exit 0"}
+	}
+	if mode == "publish_missing" {
+		job.Spec.Command = []string{"sh", "-c", "sleep 2; exit 0"}
+	}
+	if mode == "publish_failed_missing" {
+		job.Spec.Command = []string{"sh", "-c", "sleep 2; exit 7"}
+	}
+	if mode == "publish_oversized" {
+		job.Spec.Command = []string{"sh", "-c", "printf abcdef > /outputs/result; sleep 2; exit 0"}
 	}
 	job.Spec.Retry.MaxAttempts = 1
 	job.Spec.Outputs = []spec.Output{{Name: "result", Path: "/outputs/result", Required: true, MaxBytes: 3}}
@@ -217,7 +227,7 @@ func testRustLaunchScenario(t *testing.T, mode string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	service := &launchService{WorkerServiceServer: workerapi.NewService(pool, store.AcquisitionPolicy{AllowSoftScratch: true}, objects), pool: pool, t: t, mode: mode}
+	service := &launchService{WorkerServiceServer: workerapi.NewService(pool, store.AcquisitionPolicy{AllowSoftScratch: true}, objects), pool: pool, t: t, mode: mode, publication: publication}
 	server, err := workerapi.NewServer(pool, certificate, p.roots, service)
 	if err != nil {
 		t.Fatal(err)
@@ -267,14 +277,18 @@ func testRustLaunchScenario(t *testing.T, mode string) {
 	if mode != "fenced" {
 		wantState, wantCount = "FINALIZING", 3
 		wantExit := 7
-		if mode == "publish" {
+		if publish && mode != "publish_failed" && mode != "publish_failed_missing" {
 			wantExit = 0
 			wantState = "SUCCEEDED"
 		}
-		if mode == "publish_failed" {
+		if publish && mode != "publish" {
 			wantState = "FAILED"
 		}
-		if len(result.Outputs) != 1 || result.Outputs[0].Name != "result" || result.Outputs[0].Size != 3 || result.Outputs[0].SHA256 != "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad" {
+		invalidOutput := mode == "publish_missing" || mode == "publish_failed_missing" || mode == "publish_oversized"
+		if invalidOutput && len(result.Outputs) != 0 {
+			t.Fatal("invalid output was journaled", result.Outputs)
+		}
+		if !invalidOutput && (len(result.Outputs) != 1 || result.Outputs[0].Name != "result" || result.Outputs[0].Size != 3 || result.Outputs[0].SHA256 != "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad") {
 			t.Fatal("missing verified workload output", result.Outputs)
 		}
 		if !service.finalReplayed || !service.finalRenewed || result.Exit != wantExit || result.OOM {
@@ -291,7 +305,11 @@ func testRustLaunchScenario(t *testing.T, mode string) {
 			if result.CompletionDecision != int32(pb.Decision_ACCEPTED) {
 				t.Fatal("completion not acknowledged", result.CompletionDecision)
 			}
-			verifyPublication(t, ctx, pool, objects, &service.publication, result.Attempt, result.Outputs[0].Artifact, wantState)
+			if invalidOutput || mode == "publish_transfer_failed" {
+				verifyFailedPublication(t, ctx, pool, service.publication, result.Attempt, mode)
+			} else {
+				verifyPublication(t, ctx, pool, objects, service.publication, result.Attempt, result.Outputs[0].Artifact, wantState)
+			}
 		}
 	}
 	if err := pool.QueryRow(ctx, "SELECT state,(SELECT count(*) FROM attempt_phase_reports WHERE attempt_id=a.id) FROM attempts a WHERE id=$1", result.Attempt).Scan(&state, &phaseCount); err != nil || state != wantState || phaseCount != wantCount {

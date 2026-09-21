@@ -13,8 +13,9 @@ workspace and journal, and independently running lease renewal.
 3. Persist each output declaration, obtain a scoped grant, PUT its verified bytes,
    and register the exact immutable version through `upload::deliver_output`.
 4. Reference only acknowledged artifact IDs in the completion. Use the observed
-   OOM flag for `OOM`, another nonzero exit for `APPLICATION_EXIT`, and zero exit
-   without OOM for success. Persist the full request and digest before returning.
+   OOM flag for `OOM`, another nonzero exit for `APPLICATION_EXIT`, and otherwise
+   the output-publication outcome. Persist the full request and digest before
+   returning; zero exit alone does not establish success.
 5. Call `completion::deliver_pending` to deliver that saved request and sync its
    reply. A lost reply retries the same completion; it does not collect or upload
    again. The server alone accepts the result and releases its reservation.
@@ -32,6 +33,25 @@ checks. New grants cannot restart it. Fencing, cancellation, lost renewal, or
 expiry cancels further preparation. Storage or server operations already in flight
 may have committed; durable identities and server fencing resolve that uncertainty.
 
+Each output has at most three delivery rounds, including grant and artifact RPC
+retries, with one second between transient failures. Retryable control errors,
+transport/deadline failures, expired grants, and HTTP 408/429/5xx can retry while
+authority remains live. A saved version still skips PUT on subsequent rounds.
+Unknown versions and other HTTP failures stop that output without another PUT.
+
+Missing, unreadable, unsafe, changing, or oversized declared files, and transfer
+integrity failures, yield `OUTPUT_INVALID`. Exhausted transient delivery errors or
+other storage failures yield `TRANSFER_FAILED`. These produce a durable stopped
+failure completion with any previously acknowledged output references. Collection
+validates all declared files before uploading, so a collection failure publishes
+none. An observed OOM or application exit remains the primary failure reason;
+a later storage outage cannot make an OOM eligible for transfer-failure retries.
+
+Malformed grants, journal conflicts/corruption, invalid configuration, worker
+authentication failures, and control-plane rejection remain coordinator errors.
+They must not be converted into permission to publish a new completion. Expiry or
+cancellation can still interrupt failure preparation before it is sealed.
+
 Collection runs off the async executor so hashing cannot stall renewal. A cancelled
 blocking read may finish, but performs no network or journal mutations. As with
 other journal operations, a blocking write already started can finish after its
@@ -43,9 +63,8 @@ arrives. Replaying the saved terminal evidence remains valid after authority end
 it grants no permission to launch, upload, or accept a stale result. The caller
 owns bounded completion retries and must interpret the returned decision.
 
-Collection and transfer errors currently return without sealing a completion.
-Failure classification for those errors, cancellation supersession, metrics/log
-publication, multipart files above 64 MiB, and local cleanup remain separate work.
+Cancellation supersession, phase-expiry recovery, metrics/log publication,
+multipart files above 64 MiB, and local cleanup remain separate work.
 No coordinator return value releases local capacity or deletes containers/files.
 
 ## Verified scope
@@ -57,6 +76,12 @@ replies. Completion retry follows an explicit renewal rejection after acceptance
 Assertions check exact request replay, durable acknowledgement, one upload/artifact/
 completion/event, released reservation, and verified immutable storage content.
 Only success has a canonical accepted manifest.
+
+Additional Docker scenarios omit a required output, exceed its byte limit, or
+exit nonzero without producing it. A storage-outage fixture permits grant issuance
+but returns HTTP 503 for every PUT; the worker stops after three delivery rounds
+(a lost grant reply and two failed PUTs). Failed completion replay releases the
+reservation, records the expected reason, and creates no accepted result/artifact.
 
 Unit fixtures check fencing before I/O, cancellation during pending finalization,
 and a fixed phase deadline despite continuous fresh grants. These component paths

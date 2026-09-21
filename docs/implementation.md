@@ -1570,3 +1570,28 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   the concise README status. The daemon still needs acquisition/staging/capacity
   orchestration. Collection/transfer failure completion, cancellation supersession,
   logs/metrics, multipart, cleanup, and remaining v0.1 release gates are unfinished.
+
+### D11y: Complete invalid-output and exhausted-transfer failures
+
+- Finalization now seals `OUTPUT_INVALID` for missing, unreadable, unsafe,
+  changing, oversized, or integrity-failing output, and `TRANSFER_FAILED` for
+  unsuccessful storage delivery. A previously observed OOM or nonzero exit remains
+  primary, preventing a later storage failure from making unchanged execution
+  failures eligible for transfer-based retries.
+- Bounded each output to three delivery rounds with one-second transient backoff,
+  still inside the original phase/lease guard. Transient RPC errors and HTTP
+  408/429/5xx, transport/deadline, or expired-grant errors can retry. Stable journal
+  identities and exact-version recovery remain unchanged. Only acknowledged
+  artifacts enter completion; malformed grants, journal faults, authentication,
+  and control rejection remain coordinator errors.
+- Added real Docker scenarios for missing output, oversized output, nonzero exit
+  with missing output, and a data plane returning HTTP 503 while grants remain
+  available. All four initially failed before completion. They now assert expected
+  reasons, bounded requests, exact completion replay after a lost reply/terminal
+  renewal, released reservation, and no accepted result or fabricated artifact.
+- Native `make test lint smoke`, the complete pinned Linux worker suite, and
+  targeted `TestRustExecution` PostgreSQL/mTLS/Docker/storage integration passed,
+  including prior successful/failed publication and uncertain phase replies.
+  Added classification checks for outage versus rejection/corrupt-evidence errors.
+- Updated finalization documentation. Cancellation supersession, phase-expiry
+  recovery, logs/metrics, daemon orchestration, and remaining v0.1 work are pending.

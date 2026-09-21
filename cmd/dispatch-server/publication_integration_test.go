@@ -6,7 +6,9 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"os"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -29,7 +31,14 @@ func TestRustExecutionRetainsDiagnosticOutputWithoutAcceptingFailedJob(t *testin
 	testRustLaunchScenario(t, "publish_failed")
 }
 
+func TestRustExecutionCompletesOutputAndTransferFailures(t *testing.T) {
+	for _, mode := range []string{"publish_missing", "publish_oversized", "publish_failed_missing", "publish_transfer_failed"} {
+		t.Run(mode, func(t *testing.T) { testRustLaunchScenario(t, mode) })
+	}
+}
+
 type publicationEvidence struct {
+	puts                            atomic.Int32
 	create                          *pb.CreateUploadRequest
 	finalize                        *pb.FinalizeUploadRequest
 	complete                        *pb.CompleteAttemptRequest
@@ -90,7 +99,27 @@ func (s *launchService) CompleteAttempt(ctx context.Context, r *pb.CompleteAttem
 	return reply, nil
 }
 
-func publicationStorage(t *testing.T) *objectstore.Store {
+func publicationStorage(t *testing.T, mode string, evidence *publicationEvidence) *objectstore.Store {
+	if mode == "publish_transfer_failed" {
+		// Grant issuance stays available while the data plane rejects every PUT.
+		// No artifact bytes or versions are fabricated by this failure fixture.
+		backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodGet && r.URL.Query().Has("versioning") {
+				_, _ = w.Write([]byte(`<VersioningConfiguration><Status>Enabled</Status></VersioningConfiguration>`))
+				return
+			}
+			if r.Method == http.MethodPut {
+				evidence.puts.Add(1)
+			}
+			w.WriteHeader(http.StatusServiceUnavailable)
+		}))
+		t.Cleanup(backend.Close)
+		objects, err := objectstore.New(objectstore.Config{Endpoint: backend.URL, Region: "us-east-1", Bucket: "dispatch-test", AccessKey: "fixture", SecretKey: "fixture", AllowLoopbackHTTP: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return objects
+	}
 	t.Helper()
 	endpoint := os.Getenv("DISPATCH_TEST_S3_ENDPOINT")
 	if endpoint == "" {
@@ -171,5 +200,38 @@ func verifyPublication(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ob
 	}
 	if result.Outputs[0].ArtifactID != artifact || result.Outputs[0].Object.Key != exact.Key || result.Outputs[0].Object.Version != exact.Version {
 		t.Fatal("accepted result did not pin the verified artifact")
+	}
+}
+
+func verifyFailedPublication(t *testing.T, ctx context.Context, pool *pgxpool.Pool, evidence *publicationEvidence, attempt, mode string) {
+	t.Helper()
+	wantReason := pb.FailureReason_OUTPUT_INVALID
+	wantCreates, wantUploads, wantPuts := 0, 0, int32(0)
+	if mode == "publish_failed_missing" {
+		wantReason = pb.FailureReason_APPLICATION_EXIT
+	}
+	if mode == "publish_transfer_failed" {
+		wantReason = pb.FailureReason_TRANSFER_FAILED
+		// Three delivery rounds: one lost grant response, then two failed PUTs.
+		wantCreates, wantUploads, wantPuts = 3, 1, 2
+	}
+	if evidence.creates != wantCreates || evidence.finalizes != 0 || evidence.completions != 2 || evidence.puts.Load() != wantPuts {
+		t.Fatal("unexpected failed-publication retries", evidence.creates, evidence.finalizes, evidence.completions, evidence.puts.Load())
+	}
+	request := evidence.complete
+	if request == nil || request.Reason != wantReason || !request.Stopped || request.LogsComplete || len(request.Outputs) != 0 {
+		t.Fatal("incorrect durable failed completion")
+	}
+	var state, reservation, reason string
+	var accepted *string
+	var completions, artifacts, uploads int
+	err := pool.QueryRow(ctx, `SELECT j.state,r.state,a.reason,j.accepted_attempt_id::text,
+        (SELECT count(*) FROM attempt_completions WHERE attempt_id=a.id),
+        (SELECT count(*) FROM artifacts WHERE attempt_id=a.id),
+        (SELECT count(*) FROM artifact_uploads WHERE attempt_id=a.id)
+        FROM attempts a JOIN jobs j ON j.id=a.job_id JOIN reservations r ON r.attempt_id=a.id WHERE a.id=$1`, attempt).
+		Scan(&state, &reservation, &reason, &accepted, &completions, &artifacts, &uploads)
+	if err != nil || state != "FAILED" || reservation != "released" || reason != wantReason.String() || accepted != nil || completions != 1 || artifacts != 0 || uploads != wantUploads {
+		t.Fatal("failure did not terminalize atomically", state, reservation, reason, completions, artifacts, uploads, err)
 	}
 }
