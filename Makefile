@@ -4,7 +4,7 @@ export GOCACHE := $(CURDIR)/.local/go-build
 export GOPATH := $(CURDIR)/.local/go
 export GOTOOLCHAIN := local
 
-.PHONY: build test lint smoke
+.PHONY: build test lint smoke integration
 build:
 	$(GO) build -trimpath -o bin/dispatch ./cmd/dispatch
 	$(GO) build -trimpath -o bin/dispatch-server ./cmd/dispatch-server
@@ -22,3 +22,6 @@ lint:
 
 smoke:
 	sh scripts/smoke.sh
+
+integration:
+	sh scripts/test-schema.sh

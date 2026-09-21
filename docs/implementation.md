@@ -19,7 +19,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | --- | --- | --- | --- |
 | D01 build foundation | none | Pinned Go/Cargo builds, binary smoke checks, CI configuration | local gate passed; remote CI pending |
 | D02 job and sweep contracts | D01 | Strict schema, unsafe input rejection, stable canonical hash, deterministic expansion | parser/expansion gates passed; published schemas pending |
-| D03 database invariants | D01 | Real PostgreSQL migrations up/down/upgrade; uniqueness, references, checks | pending |
+| D03 database invariants | D01 | Real PostgreSQL migrations up/down/upgrade; uniqueness, references, checks | core schema gate passed; migration runner and later tables pending |
 | D04 worker protocol | D01 | Generated Go/Rust gRPC bindings; cross-language golden round-trip, drift check | pending |
 | D05 durable submission | D02,D03 | HTTP/CLI submission; 100 identical requests yield one job; changed payload conflicts | pending |
 | D06 worker identities | D03,D04 | Authenticated registration, session takeover/recovery; stale-session rejection | pending |
@@ -103,3 +103,19 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   matching, concurrency/failure policy validation, and rejection of invalid matrices.
 - `make test lint build` passed with race detection. Runtime sweep accounting and
   transactional persistence remain D17; this gate proves pure expansion only.
+
+### D03a: real PostgreSQL ownership constraints
+
+- Added the core SQL migration and explicit destructive development rollback, with
+  foreign keys, active-attempt uniqueness, positive resources, finite states, immutable
+  identity/outcomes, and deferred ownership/reservation consistency checks.
+- The integration test first failed because the schema was absent. Corrected a test
+  startup race (the image's temporary server) and a fixture that unintentionally
+  violated generation equality before reaching its intended uniqueness assertion.
+- PostgreSQL 17.11 container tests passed: legal assignment/failure transactions;
+  invalid values, duplicate owners/numbers, cross-job pointers, missing reservations,
+  terminal mutation, and spec mutation all rejected with expected SQLSTATEs.
+- Fresh migration, full rollback with no tables left, reapply, and repeated constraint
+  tests passed. Go/Rust tests, builds, formatting, and static checks passed as well.
+- Added `make integration`, its CI step, and `docs/database.md`. This gate does not
+  establish scheduler concurrency correctness; those race tests remain required.

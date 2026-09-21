@@ -12,3 +12,4 @@ jobs:
           go-version-file: go.mod
       - run: rustup toolchain install 1.88.0 --profile minimal --component rustfmt,clippy
       - run: make test lint smoke
+      - run: make integration
