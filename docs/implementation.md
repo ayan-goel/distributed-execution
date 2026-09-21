@@ -24,7 +24,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D05 durable submission | D02,D03 | HTTP/CLI submission; 100 identical requests yield one job; changed payload conflicts | input-free job admission, auth, image resolution, HTTP/CLI gates passed; datasets depend on D16 |
 | D06 worker identities | D03,D04 | Authenticated registration, session takeover/recovery; stale-session rejection | control-plane, executable, and Rust client gates passed; runtime/agent loop pending |
 | D07 acquisition | D03,D06 | Atomic assignment/reservations; concurrent quota/capacity races; acquisition replay | store, RPC, and Rust client gates passed; production agent loop pending |
-| D08 Docker adapter | D04 | Real bounded create/start/inspect/stop; ambiguous create reconciles one identity | execution-spec preflight verified; Docker operations pending |
+| D08 Docker adapter | D04 | Real bounded create/start/inspect/stop; ambiguous create reconciles one identity | spec and cached-image lifecycle gates passed; image staging and strict workspace integration pending |
 | D09 leases | D06,D07 | Fresh DB-time expiry checks; delayed grants; local monotonic deadline enforcement | local deadline primitive verified; renewal/reaper/supervisor pending |
 | D10 worker recovery | D08,D09 | Durable journal; agent kill/restart stops old containers before new capacity | pending |
 | D11 artifacts | D03,D04 | Scoped grants; verified exact versions; stale publication rejection | pending |
@@ -509,3 +509,35 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   Recorded contracts, sources, and remaining runtime enforcement requirements in
   `docs/execution-spec.md`. Docker operations, the journal, and supervision are next;
   no container-execution or full v0.1 release gate is claimed by this slice.
+
+### D08b: Docker container lifecycle and restrictions
+
+- Added a runtime abstraction and Bollard-backed local-socket adapter with negotiated
+  API version, Linux capability checks, deterministic attempt names, immutable
+  ownership/spec labels, and bounded create/start/inspect/wait/stop/kill/log/remove
+  operations. The builder applies non-root execution, CPU/memory/PID limits, disabled
+  network, dropped capabilities, no-new-privileges, read-only root/inputs, bounded
+  temporary storage, and daemon-side log rotation.
+- Tests first failed for the missing runtime module. Real Docker fixtures now cover
+  concurrent create/replay, foreign ownership/spec rejection, successful execution and output,
+  kernel security/resource settings, bounded separate logs, terminal-start rejection,
+  stop/kill/removal, expired authority, and OOM classification distinct from SIGKILL.
+- A mock daemon commits create then drops its reply; the adapter recovers by name
+  without allocating a second container. Real concurrent creation exposed Docker's
+  name-reserved-but-not-inspectable interval; bounded lookup retries handle it, with
+  a deterministic delayed-visibility mock regression. The concurrent-start test exposed
+  duplicate starts; a bounded inspect/start gate fixes that race. A real resource-
+  drift test exposed cleanup rejection; immutable ownership now permits cleanup
+  while changed launch settings remain rejected. A stalled request respects the
+  shorter local authority deadline.
+- Reviewed mutation ownership, deadlines and ambiguity, input-free workspace mounts,
+  resource conversions, non-root/security settings, cleanup after expiry/drift,
+  dependency changes, and fixture isolation. New dependencies compile on pinned
+  Rust 1.88.0; existing locked versions remain unchanged.
+- `make test lint smoke` and `make integration` passed, including the Linux clock,
+  real Docker lifecycle, fresh/rollback/reapply migrations, and PostgreSQL/mTLS
+  regressions. Added the runtime fixture to integration and documented observed
+  evidence and limits in `docs/docker-runtime.md`.
+- This is cached-image execution using explicitly soft development workspaces.
+  Image staging, strict filesystem quotas, production journaling/recovery, live
+  supervision, artifact transfer, and independent-host release gates remain open.

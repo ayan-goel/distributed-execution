@@ -5,6 +5,8 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+bollard = { version = "=0.21.1", default-features = false, features = ["pipe"] }
+futures-util = "=0.3.34"
 libc = "=0.2.189"
 ring = "=0.17.14"
 serde = { version = "=1.0.229", features = ["derive"] }
@@ -12,4 +14,4 @@ serde_json = "=1.0.151"
 dispatch-protocol = { path = "../protocol" }
 prost = "=0.14.3"
 tonic = { version = "=0.14.6", features = ["tls-ring"] }
-tokio = { version = "=1.53.1", features = ["rt-multi-thread", "macros", "time"] }
+tokio = { version = "=1.53.1", features = ["rt-multi-thread", "macros", "time", "net", "io-util"] }

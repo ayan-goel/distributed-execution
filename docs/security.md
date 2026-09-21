@@ -109,6 +109,7 @@ References: [Go TLS configuration](https://pkg.go.dev/crypto/tls#Config) and
 - Enforce these permissions at every HTTP endpoint, including artifact and event reads.
 - TLS except explicitly configured loopback development; worker mTLS identities.
 - API limits, sanitized errors/logs, scoped object grants, approved registry access.
-- Container privileges/network/filesystem restrictions and runtime verification.
+- Integrate the verified [Docker restrictions](docker-runtime.md) with the production
+  agent, strict scratch quotas, lease supervision, and symlink-safe output collection.
 - Retention/audit coverage for submission, cancellation, provisioning, and operator actions.
 - Dependency vulnerability audit and tested deployment instructions.

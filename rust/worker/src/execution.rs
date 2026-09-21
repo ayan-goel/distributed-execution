@@ -7,6 +7,7 @@ use std::{collections::BTreeMap, fmt};
 #[derive(Debug)]
 pub struct ExecutionSpec {
     job: Job,
+    sha256: String,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -67,11 +68,15 @@ impl ExecutionSpec {
         {
             return Err(SpecError::WireMismatch);
         }
-        Ok(Self { job })
+        Ok(Self { job, sha256: hash })
     }
 
     pub fn job(&self) -> &Job {
         &self.job
+    }
+
+    pub fn sha256(&self) -> &str {
+        &self.sha256
     }
 }
 

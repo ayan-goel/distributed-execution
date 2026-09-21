@@ -57,8 +57,8 @@ documents. The real Go/PostgreSQL/mTLS fixture sends Go-canonicalized documents,
 including HTML characters and a Unicode line separator; the delayed-grant fixture
 uses a valid spec so expiry remains the reason execution authority is refused.
 
-This slice validates execution settings. It does not implement Docker operations,
-input/output transfer, the durable journal, or the production supervision loop.
+These settings now feed the [Docker runtime adapter](docker-runtime.md). Input/output
+transfer, the durable journal, and the production supervision loop remain required.
 
 ## References
 
