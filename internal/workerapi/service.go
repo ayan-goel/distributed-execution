@@ -6,6 +6,7 @@ import (
 	"math"
 
 	pb "dispatch.local/dispatch/gen/dispatch/worker/v1"
+	"dispatch.local/dispatch/internal/objectstore"
 	"dispatch.local/dispatch/internal/spec"
 	"dispatch.local/dispatch/internal/store"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -15,12 +16,13 @@ import (
 
 type Service struct {
 	pb.UnimplementedWorkerServiceServer
-	pool   *pgxpool.Pool
-	policy store.AcquisitionPolicy
+	pool    *pgxpool.Pool
+	policy  store.AcquisitionPolicy
+	objects *objectstore.Store
 }
 
-func NewService(pool *pgxpool.Pool, policy store.AcquisitionPolicy) *Service {
-	return &Service{pool: pool, policy: policy}
+func NewService(pool *pgxpool.Pool, policy store.AcquisitionPolicy, objects *objectstore.Store) *Service {
+	return &Service{pool: pool, policy: policy, objects: objects}
 }
 
 func (s *Service) RegisterWorker(ctx context.Context, r *pb.RegisterWorkerRequest) (*pb.RegisterWorkerResponse, error) {
@@ -99,6 +101,8 @@ func rpcError(err error) error {
 		return status.Error(codes.Aborted, "STALE_HEARTBEAT")
 	case errors.Is(err, store.ErrNotFound):
 		return status.Error(codes.NotFound, "NOT_FOUND")
+	case errors.Is(err, store.ErrUploadLimit):
+		return status.Error(codes.ResourceExhausted, "UPLOAD_LIMIT_EXCEEDED")
 	default:
 		return status.Error(codes.Unavailable, "DATABASE_UNAVAILABLE")
 	}

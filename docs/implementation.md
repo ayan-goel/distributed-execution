@@ -27,7 +27,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D08 Docker adapter | D04 | Real bounded create/start/inspect/stop; ambiguous create reconciles one identity | cached launch, RUNNING/FINALIZING coordination, and phase store/RPC/client gates passed; agent integration, staging, and strict workspaces pending |
 | D09 leases | D06,D07 | Fresh DB-time expiry checks; delayed grants; local monotonic deadline enforcement | deadline, store/RPC/client, watchdog, periodic renewal, and execution refresh gates passed; reaper and production agent integration pending |
 | D10 worker recovery | D08,D09 | Durable journal; agent kill/restart stops old containers before new capacity | journal, discovery/cleanup, and actual startup process gates passed; agent-owned job kill/restart gate pending |
-| D11 artifacts | D03,D04 | Scoped grants; verified exact versions; stale publication rejection | versioned storage and durable upload declaration gates passed; RPC integration, fenced verification/publication, and transfers pending |
+| D11 artifacts | D03,D04 | Scoped grants; verified exact versions; stale publication rejection | versioned storage, durable declarations, and authenticated grant gates passed; fenced verification/publication and worker transfers pending |
 | D12 first real job | D05–D11 | CLI submit → gRPC → Docker → verified output → CLI download | pending |
 | D13 loss/retry | D09,D12 | Reaper/reconciliation; recorded retry; backoff/deadlines; nonretryable failure | pending |
 | D14 cancellation | D12,D13 | Both completion/cancellation race orders, repeat requests, uncertain cleanup | pending |
@@ -1059,3 +1059,39 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   and executable suites. No dependencies or worker behavior changed in this slice.
 - Upload signing through the service, exact-version verification/publication,
   worker transfers, multipart support, and the remaining v0.1 release gates remain.
+
+### D11c: authenticated upload grants and server storage configuration
+
+- Implemented `CreateUpload` over the existing mTLS worker service. It commits the
+  durable declaration, signs a 30-second PUT after checking bucket versioning outside
+  database locks, then replays the declaration to recheck current authority before
+  returning the URL. Retries preserve upload ID/key and may refresh the capability;
+  storage failures retain one declaration/event and do not renew compute authority.
+- The wire response preserves required signed headers and expiry. Invalid kinds,
+  multipart requests, oversized unsigned values, cross-worker claims, stale tuples,
+  and undeclared outputs are rejected. Stable errors distinguish storage failure,
+  missing versioning/configuration, fencing, cancellation, and exhausted budgets
+  without exposing URLs or backend diagnostics.
+- Added explicit endpoint/region/bucket server options and separate loopback-HTTP
+  opt-in. Credentials come only from `DISPATCH_S3_*` environment variables. Startup
+  verifies a configured bucket before opening listeners; ambient AWS credentials
+  cannot enable storage. Without storage configuration, other APIs remain usable.
+- The initial RPC test failed with Unimplemented; configuration tests failed on the
+  missing configuration boundary. Unit/configuration tests now pass. PostgreSQL/mTLS
+  tests verify signed fields, unchanged deadlines, durable retry behavior, and fault
+  recovery. During blocked versioning I/O, independent expiry/cancellation/revocation
+  transactions commit and the RPC subsequently refuses to return a capability.
+- Extended the isolated storage fixture to run a supplied command. Full integration
+  now runs the database suites with a fresh SeaweedFS endpoint. A real mTLS grant
+  successfully transfers bytes verified by exact version; tampered checksum/key fail.
+  Cancellation rejects new grants while a previously issued capability can create
+  another version without changing the original. This is scoped transfer evidence,
+  not yet verified-artifact registration or result acceptance.
+- `make test lint smoke` and full `make integration` passed with zero exits, including
+  native/Linux worker tests, real Docker lifecycle/recovery, schema rollback/reapply,
+  object-store checks, and Go race-enabled database/mTLS/executable suites. Reviewed
+  the configuration, auth ordering, lock boundary, retry state, and secret handling.
+- Documented configuration in `docs/running.md`, RPC semantics/errors in
+  `docs/artifact-uploads.md`, and the combined fixture in `docs/object-storage.md`.
+  `FinalizeUpload`, immutable verified-artifact records, terminal publication,
+  worker transfer integration, multipart support, and remaining v0.1 gates stay open.

@@ -14,10 +14,10 @@ import (
 )
 
 func TestAcquisitionRequiresTransportIdentity(t *testing.T) {
-	if _, err := NewService(nil, store.AcquisitionPolicy{}).AcquireWork(context.Background(), &pb.AcquireWorkRequest{}); status.Code(err) != codes.Unauthenticated {
+	if _, err := NewService(nil, store.AcquisitionPolicy{}, nil).AcquireWork(context.Background(), &pb.AcquireWorkRequest{}); status.Code(err) != codes.Unauthenticated {
 		t.Fatal("acquisition bypassed transport identity", err)
 	}
-	if _, err := NewService(nil, store.AcquisitionPolicy{}).ListAssignments(context.Background(), &pb.ListAssignmentsRequest{}); status.Code(err) != codes.Unauthenticated {
+	if _, err := NewService(nil, store.AcquisitionPolicy{}, nil).ListAssignments(context.Background(), &pb.ListAssignmentsRequest{}); status.Code(err) != codes.Unauthenticated {
 		t.Fatal("assignment recovery bypassed transport identity", err)
 	}
 }

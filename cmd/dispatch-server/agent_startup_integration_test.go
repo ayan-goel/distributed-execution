@@ -108,7 +108,7 @@ func TestWorkerProcessReconcilesDockerBeforeAdvertisingReady(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	service := &startupService{WorkerServiceServer: workerapi.NewService(pool, store.AcquisitionPolicy{}), t: t, oldContainer: container}
+	service := &startupService{WorkerServiceServer: workerapi.NewService(pool, store.AcquisitionPolicy{}, nil), t: t, oldContainer: container}
 	server, err := workerapi.NewServer(pool, certificate, p.roots, service)
 	if err != nil {
 		t.Fatal(err)

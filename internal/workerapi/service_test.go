@@ -11,7 +11,7 @@ import (
 )
 
 func TestWorkerServiceRequiresTransportIdentity(t *testing.T) {
-	s := NewService(nil, store.AcquisitionPolicy{})
+	s := NewService(nil, store.AcquisitionPolicy{}, nil)
 	if _, err := s.RegisterWorker(context.Background(), &pb.RegisterWorkerRequest{}); status.Code(err) != codes.Unauthenticated {
 		t.Fatal("registration bypassed identity interceptor", err)
 	}

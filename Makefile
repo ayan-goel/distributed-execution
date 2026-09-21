@@ -30,7 +30,7 @@ integration:
 	sh scripts/test-runtime.sh
 	sh scripts/test-schema.sh
 	sh scripts/test-objectstore.sh
-	sh scripts/test-store.sh
+	sh scripts/test-objectstore.sh sh scripts/test-store.sh
 
 objectstore-test:
 	$(GO) test -race -tags integration -count=1 ./internal/objectstore

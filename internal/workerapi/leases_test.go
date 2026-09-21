@@ -12,7 +12,7 @@ import (
 )
 
 func TestRenewalRequiresTransportIdentity(t *testing.T) {
-	if _, err := NewService(nil, store.AcquisitionPolicy{}).RenewLeases(context.Background(), &pb.RenewLeasesRequest{}); status.Code(err) != codes.Unauthenticated {
+	if _, err := NewService(nil, store.AcquisitionPolicy{}, nil).RenewLeases(context.Background(), &pb.RenewLeasesRequest{}); status.Code(err) != codes.Unauthenticated {
 		t.Fatal("renewal bypassed transport identity", err)
 	}
 }

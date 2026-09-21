@@ -9,8 +9,8 @@ lowercase SHA-256, and `part_count=1`. It returns the durable upload ID and gene
 object key only after the transaction commits with current authority.
 
 This method performs no storage/network I/O. The [versioned storage adapter](object-storage.md)
-is verified separately; RPC orchestration and exact-version finalization remain the
-next integration boundary. Creating a declaration neither verifies uploaded data
+is integrated with the authenticated upload RPC described below. Exact-version
+finalization remains pending. Creating a declaration neither verifies uploaded data
 nor accepts a result, renews a lease, changes phase, or releases reservations.
 
 ## Identity and replay
@@ -59,9 +59,9 @@ The decisions match the lease boundary:
 Fenced sessions and revoked credentials reject the call before returning upload
 metadata. Rejected calls leave no new declaration or event. Changed replay payloads
 conflict; malformed or undeclared artifacts are invalid requests. Timings in an
-accepted result are snapshots of existing authority, not new grants. The future RPC
-layer must keep signing and transfer lifetimes bounded while doing storage checks
-outside this transaction, and publication must revalidate authority independently.
+accepted result are snapshots of existing authority, not new grants. The RPC layer
+performs storage checks outside this transaction and rechecks authority afterward;
+publication must revalidate authority independently.
 
 Artifact declarations obey these rules:
 
@@ -111,3 +111,55 @@ allows its first upload declaration afterward. `make test lint smoke` and
 authenticated executable suites with the Go race detector.
 
 Reference: [PostgreSQL generated columns and trigger ordering](https://www.postgresql.org/docs/17/ddl-generated-columns.html).
+
+## Authenticated upload capabilities (D11c)
+
+`WorkerService.CreateUpload` binds the claimed worker to the mTLS identity, rejects
+unsupported kinds/parts and integer overflow, and commits the declaration above.
+It then checks bucket versioning and signs a PUT outside all database transactions.
+An exact declaration replay rechecks credentials, session, ownership, lease, phase,
+and cancellation after signing. Only a still-accepted identical record returns a
+capability. Neither check renews authority or consumes an additional upload budget.
+
+The response contains the durable upload ID, generated key, URL, required signed
+headers, and conservative expiry; `parts` is empty for this single-part profile.
+Send a PUT with the declared bytes and all required headers. URLs last 30 seconds.
+An exact retry can return a newly signed URL for the same upload; URL bytes and
+expiry are not the durable replay identity. Signing failure retains the declaration
+so retries reuse its ID and event rather than accumulating pending uploads.
+
+Already-issued URLs may remain usable briefly after cancellation or expiry. They
+write only their attempt-specific key. Every accepted object reference must pin an
+exact version, and finalization/publication must independently fence ownership.
+The second check is a transaction-time authorization decision, not a promise that
+ownership cannot change while the response travels to the worker.
+
+| Failure | gRPC code / stable reason |
+| --- | --- |
+| Missing configured backend | `FailedPrecondition / OBJECT_STORAGE_NOT_CONFIGURED` |
+| Expired or mismatched attempt | `FailedPrecondition / UPLOAD_FENCED` |
+| Cancelled or phase expired | `FailedPrecondition / UPLOAD_STOP_REQUESTED` |
+| Terminal attempt | `FailedPrecondition / UPLOAD_ALREADY_TERMINAL` |
+| Revoked credential | `Unauthenticated / UNAUTHORIZED_WORKER` |
+| Old session | `FailedPrecondition / SESSION_FENCED` |
+| Declaration budget exhausted | `ResourceExhausted / UPLOAD_LIMIT_EXCEEDED` |
+| Changed replay | `AlreadyExists / REQUEST_CONFLICT` |
+| Disabled bucket versioning | `FailedPrecondition / OBJECT_VERSIONING_REQUIRED` |
+| Backend unavailable | `Unavailable / OBJECT_STORAGE_UNAVAILABLE` |
+
+Malformed declarations remain `InvalidArgument`. The existing five-second worker
+RPC deadline bounds signing, its concurrency queue, and both database operations.
+Signed URLs and raw storage diagnostics never appear in error messages.
+
+Unit tests cover missing identity, wire overflow, kinds/parts, explicit configuration,
+and refusal of ambient AWS credentials. Real PostgreSQL/mTLS tests check signature
+scope, headers, replay identity, unchanged lease/phase, and signing failures. While
+a controlled HTTP versioning response is blocked, database mutations revoke the
+credential, expire the lease/phase, or cancel the job; each commits without waiting
+for storage and prevents the response from returning a grant.
+
+The full integration gate also starts PostgreSQL and SeaweedFS together. A real mTLS
+response uploads declared bytes, which the storage adapter verifies by exact version.
+Changing checksum or key fails. Cancellation prevents new grants, while reuse of an
+existing URL creates a distinct version and leaves the original bytes intact. This
+does not yet prove durable verified-artifact registration or result publication.

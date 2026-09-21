@@ -63,6 +63,14 @@ Transfer URLs are sensitive bearer capabilities and must not be logged. Object
 versions/checksums identify uploaded bytes, but only a valid completion transaction
 can make a manifest canonical. These are implementation requirements for later slices.
 
+`CreateUpload` now implements the authenticated single-part grant boundary. A
+request carries `part_count=1`; successful replies contain one PUT URL and required
+headers, with no multipart entries. The durable ID/key are replay-stable; a retry
+may refresh the 30-second URL after current authority is checked again. Ownership
+is rechecked after storage I/O. See [upload capabilities](artifact-uploads.md) for
+phase rules, limits, failure reasons, and the real storage integration gate.
+`FinalizeUpload` and terminal result publication remain unimplemented.
+
 ## Generation and verification
 
 Pinned tools: protoc 34.1, protoc-gen-go 1.36.11, protoc-gen-go-grpc 1.6.2,

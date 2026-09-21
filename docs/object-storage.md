@@ -6,8 +6,8 @@
 verification, and scoped downloads. It uses the official AWS SDK for Go v2 S3 module
 `v1.113.1`, core `v1.47.0`, and explicit credentials provider `v1.20.5`. The API is
 S3-compatible; it does not require an AWS account. The
-[durable upload declaration store](artifact-uploads.md) is verified separately.
-Server/RPC integration, exact-version artifact records, and publication remain pending.
+[durable upload declaration and authenticated grant API](artifact-uploads.md) use
+this adapter. Exact-version artifact records and result publication remain pending.
 
 The verified local backend is SeaweedFS 4.47, pinned as:
 
@@ -107,6 +107,13 @@ rejects an incorrect version's content and a specifically deleted original versi
 Suspending versioning prevents new upload grants. These tests establish storage
 compatibility; pending records, worker transfer plumbing, fenced publication,
 multipart uploads, retention, and terminal completion remain pending.
+
+`scripts/test-objectstore.sh` also accepts a command to run while its isolated
+backend is available. `make integration` uses
+`sh scripts/test-objectstore.sh sh scripts/test-store.sh` to exercise the real
+PostgreSQL/mTLS grant API against SeaweedFS, in addition to the adapter-only suite.
+Running `scripts/test-store.sh` alone retains the controlled storage-delay tests
+but skips the test requiring a real S3 endpoint.
 
 ## Primary references
 

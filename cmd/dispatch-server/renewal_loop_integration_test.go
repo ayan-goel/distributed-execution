@@ -130,7 +130,7 @@ func TestRustPeriodicRenewalReplaysCommittedBatchAndStopsOnFencing(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	service := &renewalLoopService{WorkerServiceServer: workerapi.NewService(pool, store.AcquisitionPolicy{}), pool: pool, t: t}
+	service := &renewalLoopService{WorkerServiceServer: workerapi.NewService(pool, store.AcquisitionPolicy{}, nil), pool: pool, t: t}
 	server, err := workerapi.NewServer(pool, certificate, p.roots, service)
 	if err != nil {
 		t.Fatal(err)

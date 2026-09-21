@@ -33,6 +33,8 @@ type serveConfig struct {
 	dev                                           bool
 	registries, authHosts                         stringsFlag
 	workerListen, workerCert, workerKey, workerCA string
+	objectEndpoint, objectRegion, objectBucket    string
+	objectLoopback                                bool
 }
 
 func flags(name string) *flag.FlagSet {
@@ -54,11 +56,20 @@ func parseServeConfig(args []string) (serveConfig, error) {
 	f.StringVar(&c.workerCert, "worker-tls-cert", "", "worker listener server certificate")
 	f.StringVar(&c.workerKey, "worker-tls-key", "", "worker listener server private key")
 	f.StringVar(&c.workerCA, "worker-client-ca", "", "trusted worker client CA bundle")
+	f.StringVar(&c.objectEndpoint, "object-endpoint", "", "explicit S3-compatible origin")
+	f.StringVar(&c.objectRegion, "object-region", "", "S3 signing region")
+	f.StringVar(&c.objectBucket, "object-bucket", "", "versioned object bucket")
+	f.BoolVar(&c.objectLoopback, "object-dev-loopback", false, "allow plaintext loopback object storage")
 	if err := f.Parse(args); err != nil {
 		return c, err
 	}
 	if f.NArg() != 0 {
 		return c, errors.New("unexpected serve arguments")
+	}
+	if c.objectEndpoint != "" || c.objectRegion != "" || c.objectBucket != "" || c.objectLoopback {
+		if c.objectEndpoint == "" || c.objectRegion == "" || c.objectBucket == "" {
+			return c, errors.New("object storage requires --object-endpoint, --object-region, and --object-bucket")
+		}
 	}
 	host, _, err := net.SplitHostPort(c.listen)
 	if err != nil {
@@ -100,6 +111,10 @@ func parseServeConfig(args []string) (serveConfig, error) {
 }
 
 func serve(ctx context.Context, pool *pgxpool.Pool, c serveConfig, out io.Writer) error {
+	objects, err := configuredObjectStore(ctx, c)
+	if err != nil {
+		return err
+	}
 	images := admission.RegistryResolver{Allowed: c.registries, AuthHosts: c.authHosts, AllowLoopbackHTTP: c.dev}
 	server := &http.Server{Handler: api.New(pool, images), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 20 * time.Second, WriteTimeout: 20 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10, TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13}}
 	// Validate both TLS configurations before opening either listener. Startup
@@ -130,7 +145,7 @@ func serve(ctx context.Context, pool *pgxpool.Pool, c serveConfig, out io.Writer
 		if !roots.AppendCertsFromPEM(body) {
 			return errors.New("worker client CA bundle contains no valid certificates")
 		}
-		worker, err = workerapi.NewServer(pool, certificate, roots, workerapi.NewService(pool, store.AcquisitionPolicy{}))
+		worker, err = workerapi.NewServer(pool, certificate, roots, workerapi.NewService(pool, store.AcquisitionPolicy{}, objects))
 		if err != nil {
 			return err
 		}

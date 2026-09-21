@@ -203,7 +203,7 @@ func testRustLaunchScenario(t *testing.T, mode string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	service := &launchService{WorkerServiceServer: workerapi.NewService(pool, store.AcquisitionPolicy{AllowSoftScratch: true}), pool: pool, t: t, mode: mode}
+	service := &launchService{WorkerServiceServer: workerapi.NewService(pool, store.AcquisitionPolicy{AllowSoftScratch: true}, nil), pool: pool, t: t, mode: mode}
 	server, err := workerapi.NewServer(pool, certificate, p.roots, service)
 	if err != nil {
 		t.Fatal(err)

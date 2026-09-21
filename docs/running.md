@@ -103,6 +103,29 @@ both ports bind before startup events are logged. Header/body/write/idle timeout
 are bounded. Worker registration and heartbeat RPCs are available; the Rust agent
 and job execution pipeline remain in progress.
 
+## Configure artifact storage
+
+For worker upload grants, add all three options to `dispatch-server serve`:
+
+```text
+--object-endpoint https://storage.example.org
+--object-region us-east-1
+--object-bucket dispatch-artifacts
+```
+
+Supply the backend's credentials through `DISPATCH_S3_ACCESS_KEY` and
+`DISPATCH_S3_SECRET_KEY` in the server environment; `DISPATCH_S3_SESSION_TOKEN` is
+optional. Ambient AWS variables/profiles are ignored. Workers receive scoped URLs,
+never these credentials. Use a bucket with versioning enabled; startup checks it
+before opening either listener, and each upload rechecks it.
+
+For an explicitly local development backend, use a loopback HTTP endpoint and
+`--object-dev-loopback`. HTTP's `--dev-insecure` does not enable plaintext storage.
+Omitting storage settings leaves the other APIs available; `CreateUpload` reports
+`OBJECT_STORAGE_NOT_CONFIGURED`. Partial settings fail startup. An AWS account is
+not required: the integration fixture uses isolated local SeaweedFS. See
+[upload capabilities](artifact-uploads.md) for limits and replay behavior.
+
 ## Submit and inspect from the CLI
 
 Validate the CPU example without a server or credentials:

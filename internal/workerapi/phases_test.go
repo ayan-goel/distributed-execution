@@ -11,7 +11,7 @@ import (
 )
 
 func TestPhaseRequiresTransportIdentity(t *testing.T) {
-	if _, err := NewService(nil, store.AcquisitionPolicy{}).ReportPhase(context.Background(), &pb.ReportPhaseRequest{}); status.Code(err) != codes.Unauthenticated {
+	if _, err := NewService(nil, store.AcquisitionPolicy{}, nil).ReportPhase(context.Background(), &pb.ReportPhaseRequest{}); status.Code(err) != codes.Unauthenticated {
 		t.Fatal(err)
 	}
 }

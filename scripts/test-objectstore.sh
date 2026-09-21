@@ -15,4 +15,8 @@ docker run --rm -d --name "$container" --memory 1g --cpus 1 --pids-limit 256 \
 trap 'docker rm -f "$container" > /dev/null' EXIT INT TERM
 port=$(docker port "$container" 8333/tcp | sed 's/.*://')
 export DISPATCH_TEST_S3_ENDPOINT="http://127.0.0.1:$port"
-make objectstore-test
+if [ "$#" -eq 0 ]; then
+    make objectstore-test
+else
+    "$@"
+fi

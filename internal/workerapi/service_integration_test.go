@@ -39,7 +39,7 @@ func TestMTLSRegistrationHeartbeatRestartAndTakeover(t *testing.T) {
 	}
 	start := func() (pb.WorkerServiceClient, func()) {
 		t.Helper()
-		server, err := NewServer(pool, serverCert, roots, NewService(pool, store.AcquisitionPolicy{}))
+		server, err := NewServer(pool, serverCert, roots, NewService(pool, store.AcquisitionPolicy{}, nil))
 		if err != nil {
 			t.Fatal(err)
 		}
