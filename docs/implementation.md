@@ -17,7 +17,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 
 | Task | Dependencies | Required acceptance evidence | Status |
 | --- | --- | --- | --- |
-| D01 build foundation | none | Pinned Go/Cargo builds, binary smoke checks, CI configuration | pending |
+| D01 build foundation | none | Pinned Go/Cargo builds, binary smoke checks, CI configuration | local gate passed; remote CI pending |
 | D02 job and sweep contracts | D01 | Strict schema, unsafe input rejection, stable canonical hash, deterministic expansion | pending |
 | D03 database invariants | D01 | Real PostgreSQL migrations up/down/upgrade; uniqueness, references, checks | pending |
 | D04 worker protocol | D01 | Generated Go/Rust gRPC bindings; cross-language golden round-trip, drift check | pending |
@@ -69,4 +69,12 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 
 ## Verification log
 
-Implementation has not yet passed a slice gate.
+### D01: build foundation
+
+- Installed official Go 1.27.1 locally after checking its published SHA-256;
+  pinned Rust 1.88.0 with rustfmt/clippy. No system Go install was changed.
+- Smoke test first failed because the build target did not exist. After bootstrap,
+  all three binaries build, report the expected version, and reject invalid options.
+- `make test lint smoke` passed locally using macOS Command Line Tools. There is
+  no application behavior yet; the initial test gate is executable smoke coverage.
+- CI workflow is checked in but remote CI cannot run until a remote is configured.

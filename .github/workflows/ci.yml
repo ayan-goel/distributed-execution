@@ -1,0 +1,14 @@
+name: verify
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  contracts:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: rustup toolchain install 1.88.0 --profile minimal --component rustfmt,clippy
+      - run: make test lint smoke
