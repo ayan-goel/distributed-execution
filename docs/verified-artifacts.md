@@ -25,7 +25,8 @@ Expiry, cancellation, revocation, or takeover during verification prevents regis
 
 Neither stage changes compute reservations, lease deadlines, attempt phase, job
 state, or the accepted result. An artifact is verified data, not a successful job.
-`CompleteAttempt` must later validate its manifest and current authority independently.
+The [completion store](completion.md) validates its manifest and current authority
+independently before accepting a canonical result.
 
 ## Durable identity and limits
 
@@ -119,5 +120,6 @@ finalizing the original version registers exactly that version. Repeated request
 return the same artifact. Subsequent URL reuse cannot alter the selected version,
 and cancellation prevents even a verified replay from claiming current authority.
 
-Terminal manifest validation/publication and the Rust transfer pipeline remain
-separate required work. Multipart completion is still rejected explicitly.
+Terminal manifest validation/publication is implemented in the separate completion
+store; its RPC and the Rust transfer pipeline remain required work. Multipart
+completion is still rejected explicitly.

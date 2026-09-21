@@ -27,7 +27,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D08 Docker adapter | D04 | Real bounded create/start/inspect/stop; ambiguous create reconciles one identity | cached launch, RUNNING/FINALIZING coordination, and phase store/RPC/client gates passed; agent integration, staging, and strict workspaces pending |
 | D09 leases | D06,D07 | Fresh DB-time expiry checks; delayed grants; local monotonic deadline enforcement | deadline, store/RPC/client, watchdog, periodic renewal, and execution refresh gates passed; reaper and production agent integration pending |
 | D10 worker recovery | D08,D09 | Durable journal; agent kill/restart stops old containers before new capacity | journal, discovery/cleanup, and actual startup process gates passed; agent-owned job kill/restart gate pending |
-| D11 artifacts | D03,D04 | Scoped grants; verified exact versions; stale publication rejection | upload grants and fenced exact-version finalization gates passed; terminal publication and worker transfers pending |
+| D11 artifacts | D03,D04 | Scoped grants; verified exact versions; stale publication rejection | upload grants, exact-version finalization, and atomic completion store gates passed; completion RPC and worker transfers pending |
 | D12 first real job | D05–D11 | CLI submit → gRPC → Docker → verified output → CLI download | pending |
 | D13 loss/retry | D09,D12 | Reaper/reconciliation; recorded retry; backoff/deadlines; nonretryable failure | pending |
 | D14 cancellation | D12,D13 | Both completion/cancellation race orders, repeat requests, uncertain cleanup | pending |
@@ -1171,3 +1171,31 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   race-enabled completion tests passed again. No database or runtime behavior changed.
 - Documented the byte encoding and future Rust compatibility requirement in
   `docs/completion.md`. Atomic publication and its RPC remain the next required slice.
+
+### D11g: atomic completion publication and capacity transition
+
+- Added migration 0011 and the authenticated completion transaction. Required
+  outputs must reference verified versions owned by the attempt. Successful
+  completion publishes one immutable manifest with the job spec, attempt history,
+  exact output/log versions, log gaps, and bounded metrics bound to their source
+  artifact bytes. Database constraints bind the canonical job result to this
+  successful completion and prevent result/reference updates.
+- Terminal state, completion identity, artifact references, reservation release
+  or quarantine, retry eligibility, and the event commit together. Authority is
+  checked with fresh database time after locks and again after reference writes.
+  Cancellation intent wins if committed first; uncertain physical stop retains
+  quarantined capacity. No storage I/O occurs inside the transaction.
+- Exact authenticated replay returns the original accepted bytes after lease
+  expiry or session replacement. Changed evidence or a reused completion ID
+  conflicts; historical failed replay cannot mutate a replacement attempt.
+- Verification: native `make test lint smoke` and full `make integration` passed,
+  including Linux Rust, Docker runtime, schema rollback/reapply, versioned storage,
+  and combined PostgreSQL/storage suites. A subsequent `scripts/test-store.sh`
+  run passed after adding the historical replacement/reused-ID regression test.
+  Store tests cover 16 concurrent completions, missing/foreign outputs, cancellation
+  ordering, retry and quarantine, metrics precision/source identity, revoked
+  credentials, immutable replay, and populated schema upgrade. Injected event or
+  manifest errors and expiry while a reference insert waits leave no partial
+  completion, capacity transition, or canonical result.
+- Completion RPC, public result retrieval, and the Rust transfer/completion loop
+  remain subsequent slices; this gate establishes the store transaction only.

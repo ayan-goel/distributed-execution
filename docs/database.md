@@ -112,3 +112,10 @@ Migration 0010 separates replay-stable finalization requests from immutable veri
 artifacts. One artifact version is selected per upload. See
 [verified artifact registration](verified-artifacts.md) for authority checks before
 and after storage verification, request budgets, and atomic event recording.
+
+## Terminal result publication (D11g)
+
+Migration 0011 adds immutable completion manifests and exact artifact references.
+Deferred constraints bind terminal attempt/completion state and the successful
+job's canonical manifest. See [completion publication](completion.md) for capacity,
+retry, cancellation ordering, historical replay, and verification evidence.

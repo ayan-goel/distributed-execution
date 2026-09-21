@@ -5,7 +5,8 @@
 `store.CompletionRequest` carries the complete attempt authority, a completion UUID,
 claimed payload SHA-256, optional exit status, failure reason, confirmed-stop flag,
 verified output references, log completeness/gaps, and optional original metrics
-JSON bytes. The transaction and RPC integration are subsequent slices.
+JSON bytes. The transaction is implemented below; worker RPC integration remains
+the next boundary.
 
 Success uses an empty failure reason, exit status zero, and a confirmed stop.
 Application failure requires a nonzero exit status. Other worker reasons are
@@ -63,4 +64,92 @@ artifact rather than accepting an unrelated metrics claim.
 Unit tests cover reordered sets, changed evidence, a fixed digest vector, malformed
 identifiers, conflicting log claims/ranges, failure evidence, metric count/byte limits,
 duplicate fields, overflow/underflow, and bounded zero normalization. These are
-payload checks; they do not prove ownership, verified outputs, or publication.
+payload checks; publication has the additional real-database gate below.
+
+## Atomic publication (D11g)
+
+`store.CompleteAttempt` validates the supplied digest and authenticated worker, then
+takes the cluster transition lock, credential lock, job/attempt locks, and worker/
+project accounting locks in the established order. It checks the current session,
+ownership, cancellation, phase, and fresh database time. No external I/O occurs.
+
+For success the attempt must be FINALIZING with the previously recorded zero exit
+status and a confirmed stop. Required declared outputs must all reference verified
+artifacts belonging to this attempt, with matching names and allowed sizes. Every
+provided optional/partial output is checked too. Failure may omit required outputs,
+but cannot attach unverified or foreign data. Completion cannot change recorded exit
+evidence; application/OOM/output/finalization failures require FINALIZING, while
+startup/execution timeout reasons are restricted to their relevant phases.
+
+Metrics bytes require a declared, verified output named `metrics`. Its exact size
+and SHA-256 must match the original metrics JSON; a referenced metrics output also
+requires those bytes. Accepted values retain exact numeric text in both the frozen
+manifest and PostgreSQL JSONB. The original artifact is retained by a foreign key.
+
+All verified LOG artifacts are included in the frozen manifest. A complete-log claim
+is rejected if any declared LOG upload remains unverified. Completeness otherwise
+remains the authenticated worker's claim: the log spool and segment sequence catalog
+are still pending. Known gaps and unquantified incompleteness remain explicit in the
+manifest instead of being silently labeled complete.
+
+Migration 0011 adds immutable completion records and artifact references. A completion
+is unique per attempt, and its UUID is unique per worker/session. Artifact foreign
+keys bind the exact attempt/name/kind and verified object. Deferred constraints bind
+the completion's terminal state to its attempt, and require a successful job's
+canonical JSONB manifest to equal the successful completion's immutable manifest.
+
+The manifest is versioned JSON, at most 2 MiB, containing the complete normalized
+job specification/hash, project/authority, terminal evidence, exact output/log object
+versions, metrics/source identity, log gaps, and attempt history. Its byte representation
+is stored for stable response replay. Failure/cancellation manifests are retained as
+attempt diagnostics; only successful completion fills the job's canonical result.
+
+The transaction writes the completion and protected references, then samples database
+time again before terminal mutations. Expiry during a reference-lock wait rolls back
+the entire transaction. The attempt state, job state/pointer/result, reservation,
+completion identity, and one `ATTEMPT_COMPLETED` event commit together.
+
+## Failure, capacity, and cancellation
+
+A confirmed stop releases the reservation only with terminalization. Uncertain stop
+on a failure sets `cleanup_pending` and retains a quarantined reservation. Existing
+recovery/reconciliation must confirm cleanup before that capacity is reusable.
+
+Worker-reported failures use the immutable job retry policy and existing bounded
+deterministic backoff. Retryable failures enter `RETRY_WAIT` while the old attempt
+remains terminal; retry delay is measured from the final publication-time check.
+Nonretryable/exhausted failure produces a FAILED job with no canonical manifest.
+Cancellation acknowledgements never retry.
+
+Committed cancellation intent prevents success and unrelated failure publication.
+A `USER_CANCELLED` acknowledgement can resolve that intent only with a confirmed
+stop and live lease/phase. Otherwise the worker receives stop/fencing instructions;
+expiry/reaping must resolve uncertain cleanup. The public cancellation endpoint is
+still a separate slice. These tests exercise database intent ordering, not that API.
+
+## Completion uncertainty and replay
+
+After a successful commit, the same completion UUID/digest returns its stored terminal
+outcome even after lease expiry or session replacement. This is a historical read,
+not renewed execution authority. It still requires a live credential for the original
+worker. Replays of failed/cancelled completions return their terminal state without
+a canonical manifest; old failures cannot change a replacement attempt's ownership.
+
+Changed payload or completion UUID for an already completed attempt conflicts, as
+does reusing a worker/session completion UUID across attempts. A terminal attempt
+without an accepted completion returns `ALREADY_TERMINAL`. Expired/current-owner
+mismatches return fencing, and cancellation/phase expiry return stop intent.
+
+## Publication verification
+
+Real PostgreSQL tests cover 16 concurrent identical completions; required/unverified
+outputs; digest and exit mismatches; both cancellation-intent ordering cases; stop
+acknowledgement; retryable/nonretryable failure; released/quarantined capacity; pending
+logs; exact metric source binding and integers above 2^53; event/manifest failure
+rollback; and a confirmed reference-lock wait that outlives the lease.
+
+Accepted replay is checked after expiry, session replacement, and replacement-attempt
+acquisition; revoked credentials and cross-attempt UUID reuse fail. A populated
+schema-ten-to-eleven upgrade preserves verified outputs and permits completion.
+Store fixtures use the separately verified artifact boundary; the completion RPC,
+real workload-to-completion path, and public result retrieval remain to integrate.

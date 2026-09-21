@@ -44,7 +44,7 @@ func TestUploadMigrationPreservesAnExistingActiveAttempt(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer rollback(tx)
-	for _, name := range []string{"0010_verified_artifacts", "0009_artifact_uploads"} {
+	for _, name := range []string{"0011_attempt_completions", "0010_verified_artifacts", "0009_artifact_uploads"} {
 		down, err := os.ReadFile("../../migrations/" + name + ".down.sql")
 		if err != nil {
 			t.Fatal(err)
