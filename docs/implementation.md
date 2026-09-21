@@ -24,7 +24,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D05 durable submission | D02,D03 | HTTP/CLI submission; 100 identical requests yield one job; changed payload conflicts | input-free job admission, auth, image resolution, HTTP/CLI gates passed; datasets depend on D16 |
 | D06 worker identities | D03,D04 | Authenticated registration, session takeover/recovery; stale-session rejection | control-plane, executable, and Rust client gates passed; runtime/agent loop pending |
 | D07 acquisition | D03,D06 | Atomic assignment/reservations; concurrent quota/capacity races; acquisition replay | store, RPC, and Rust client gates passed; production agent loop pending |
-| D08 Docker adapter | D04 | Real bounded create/start/inspect/stop; ambiguous create reconciles one identity | spec, cached-image lifecycle, and phase store gates passed; phase RPC/client, image staging, and strict workspace integration pending |
+| D08 Docker adapter | D04 | Real bounded create/start/inspect/stop; ambiguous create reconciles one identity | spec, cached-image lifecycle, and phase store/RPC gates passed; Rust phase client, image staging, and strict workspace integration pending |
 | D09 leases | D06,D07 | Fresh DB-time expiry checks; delayed grants; local monotonic deadline enforcement | local deadline, store, RPC, and Rust renewal client gates passed; production loop, reaper, and supervisor pending |
 | D10 worker recovery | D08,D09 | Durable journal; agent kill/restart stops old containers before new capacity | pending |
 | D11 artifacts | D03,D04 | Scoped grants; verified exact versions; stale publication rejection | pending |
@@ -638,3 +638,21 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   integration requirements in `docs/worker-phases.md`.
 - Phase RPC/client, journaling, production renewal/supervision, and all remaining
   v0.1 release gates stay open. A database phase report is not runtime evidence.
+
+### D08d: authenticated phase-reporting RPC
+
+- Connected the existing `ReportPhase` RPC to the verified store. The adapter
+  binds mTLS worker identity, rejects unreportable/unknown phases and unsigned
+  generation overflow, and preserves explicit zero versus absent exit status.
+- Added strict decision/state mapping so malformed internal results cannot become
+  accepted progress or invented terminal outcomes. Unknown tuples may omit state
+  only with FENCED; terminal decisions must name an actual terminal phase.
+- Added failing adapter tests before implementation. The real mTLS/PostgreSQL
+  workflow now reports startup/running, replays old progress, restarts the service,
+  replays again, and finalizes with zero exit status verified in the database.
+  Invalid evidence, changed payloads, cross-host claims, expiry, replaced sessions,
+  and live credential revocation are rejected through the transport.
+- `sh scripts/test-store.sh` and `make test lint smoke` passed. Reviewed nil request
+  handling, enum conversion, optional-field preservation, and error mapping.
+  Documented RPC semantics and evidence in `docs/worker-phases.md`.
+- Rust phase reporting, journal/supervisor integration, and full v0.1 remain open.

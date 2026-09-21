@@ -163,10 +163,56 @@ func TestMTLSRegistrationHeartbeatRestartAndTakeover(t *testing.T) {
 			t.Fatal("invalid renewal crossed RPC boundary", err, tc.code)
 		}
 	}
+	phase := &pb.ReportPhaseRequest{Authority: assignment.Authority, EventId: uuid.NewString(), Phase: pb.AttemptState_STARTING}
+	if result, err := client.ReportPhase(ctx, phase); err != nil || result.GetDecision() != pb.Decision_ACCEPTED || result.GetState() != pb.AttemptState_STARTING {
+		t.Fatal("startup phase RPC failed", result, err)
+	}
+	starting := proto.Clone(phase).(*pb.ReportPhaseRequest)
+	phase.EventId = uuid.NewString()
+	phase.Phase = pb.AttemptState_RUNNING
+	phase.ContainerId = strings.Repeat("a", 64)
+	if result, err := client.ReportPhase(ctx, phase); err != nil || result.GetDecision() != pb.Decision_ACCEPTED || result.GetState() != pb.AttemptState_RUNNING {
+		t.Fatal("running phase RPC failed", result, err)
+	}
+	if result, err := client.ReportPhase(ctx, starting); err != nil || result.GetState() != pb.AttemptState_RUNNING {
+		t.Fatal("startup replay regressed state", result, err)
+	}
+	for _, tc := range []struct {
+		change func(*pb.ReportPhaseRequest)
+		code   codes.Code
+	}{
+		{func(r *pb.ReportPhaseRequest) { r.Authority.Generation = math.MaxUint64 }, codes.InvalidArgument},
+		{func(r *pb.ReportPhaseRequest) { r.Authority.WorkerId = uuid.NewString() }, codes.PermissionDenied},
+		{func(r *pb.ReportPhaseRequest) { r.Phase = pb.AttemptState_SUCCEEDED }, codes.InvalidArgument},
+		{func(r *pb.ReportPhaseRequest) { r.Phase = pb.AttemptState(999) }, codes.InvalidArgument},
+		{func(r *pb.ReportPhaseRequest) { r.ContainerId = "short" }, codes.InvalidArgument},
+		{func(r *pb.ReportPhaseRequest) { r.ContainerId = strings.Repeat("b", 64) }, codes.AlreadyExists},
+		{func(r *pb.ReportPhaseRequest) { r.Phase = pb.AttemptState_FINALIZING; r.EventId = uuid.NewString() }, codes.InvalidArgument},
+	} {
+		bad := proto.Clone(phase).(*pb.ReportPhaseRequest)
+		tc.change(bad)
+		if _, err := client.ReportPhase(ctx, bad); status.Code(err) != tc.code {
+			t.Fatal("invalid phase crossed RPC boundary", err, tc.code)
+		}
+	}
 	stop()
 	client, _ = start()
 	if again, err := client.RegisterWorker(ctx, r); err != nil || again.GetSessionGeneration() != 1 || again.GetCleanupRequired() {
 		t.Fatal("RPC restart lost reconciled session", err)
+	}
+	if result, err := client.ReportPhase(ctx, phase); err != nil || result.GetDecision() != pb.Decision_ACCEPTED || result.GetState() != pb.AttemptState_RUNNING {
+		t.Fatal("restart lost phase replay", result, err)
+	}
+	code := int32(0)
+	phase.EventId = uuid.NewString()
+	phase.Phase = pb.AttemptState_FINALIZING
+	phase.ExitCode = &code
+	if result, err := client.ReportPhase(ctx, phase); err != nil || result.GetDecision() != pb.Decision_ACCEPTED || result.GetState() != pb.AttemptState_FINALIZING {
+		t.Fatal("explicit zero exit was lost", result, err)
+	}
+	var savedExit *int32
+	if err := pool.QueryRow(ctx, "SELECT exit_code FROM attempts WHERE id=$1", assignment.Authority.AttemptId).Scan(&savedExit); err != nil || savedExit == nil || *savedExit != 0 {
+		t.Fatal(savedExit, err)
 	}
 	if replay, err := client.RenewLeases(ctx, renewal); err != nil || len(replay.GetResults()) != 1 || replay.Results[0].Decision != pb.Decision_ACCEPTED || replay.Results[0].RemainingMs > renewed.Results[0].RemainingMs {
 		t.Fatal("restart lost renewal replay", replay, err)
@@ -198,6 +244,9 @@ func TestMTLSRegistrationHeartbeatRestartAndTakeover(t *testing.T) {
 	if expired, err := client.AcquireWork(ctx, acquire); err != nil || expired.GetRejected() != pb.Decision_FENCED {
 		t.Fatal("expired replay returned authority", expired, err)
 	}
+	if result, err := client.ReportPhase(ctx, phase); err != nil || result.GetDecision() != pb.Decision_FENCED {
+		t.Fatal("expired phase replay accepted", result, err)
+	}
 	if expired, err := client.RenewLeases(ctx, renewal); err != nil || len(expired.GetResults()) != 1 || expired.Results[0].Decision != pb.Decision_FENCED || expired.Results[0].RemainingMs != 0 || expired.Results[0].PhaseRemainingMs != 0 {
 		t.Fatal("expired renewal returned authority", expired, err)
 	}
@@ -228,10 +277,16 @@ func TestMTLSRegistrationHeartbeatRestartAndTakeover(t *testing.T) {
 	if _, err := client.RenewLeases(ctx, renewal); status.Code(err) != codes.FailedPrecondition {
 		t.Fatal("old session replayed renewal", err)
 	}
+	if _, err := client.ReportPhase(ctx, phase); status.Code(err) != codes.FailedPrecondition {
+		t.Fatal("old session replayed phase", err)
+	}
 	if err := store.RevokeWorkerCredential(ctx, pool, id.WorkerID, id.CredentialID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := client.RenewLeases(ctx, renewal); status.Code(err) != codes.Unauthenticated {
 		t.Fatal("revoked credential replayed renewal", err)
+	}
+	if _, err := client.ReportPhase(ctx, phase); status.Code(err) != codes.Unauthenticated {
+		t.Fatal("revoked credential replayed phase", err)
 	}
 }

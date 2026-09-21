@@ -53,6 +53,23 @@ jobs/attempts before replacing their session. SQL lock and statement timeouts ar
 two and four seconds. Event insertion failure rolls back state, evidence, deadlines,
 sequence increments, and replay history together.
 
+## Authenticated RPC (D08d)
+
+The Go service exposes this contract through the existing `ReportPhase` RPC and
+shared mTLS boundary. Only `STARTING`, `RUNNING`, and `FINALIZING` are reportable;
+terminal outcome publication uses the separate completion API. The adapter rejects
+generation values beyond signed bigint range before conversion and preserves the
+optional exit-code pointer, including explicit zero versus missing exit evidence.
+The store validates identifiers, evidence, ownership, replay, and current deadlines.
+
+Malformed inputs map to `InvalidArgument`, changed payloads or fresh backward reports to
+`AlreadyExists / REQUEST_CONFLICT`, replaced sessions to
+`FailedPrecondition / SESSION_FENCED`, and revoked credentials to `Unauthenticated`.
+A mismatched claimed host is `PermissionDenied`. Per-attempt fencing, cancellation,
+and terminal state are explicit decision/state pairs. The response mapper rejects
+unknown or inconsistent pairs; only `FENCED` for an unknown tuple may omit state.
+The shared five-second server deadline and message bounds apply.
+
 ## Worker integration requirements
 
 The worker must journal an assignment before acknowledging startup, inspect its own
@@ -62,7 +79,7 @@ Docker daemon itself. An acknowledged phase is not a new lease grant. After chan
 phases, obtain a fresh renewal batch to learn remaining authority for the new phase;
 an old renewal replay remains bounded by its original phase deadline.
 
-The RPC adapter and Rust phase client are pending. Durable journaling, production
+The Rust phase client is pending. Durable journaling, production
 supervision/renewal, reaping, artifact publication, and completion remain required
 before this becomes a complete worker execution path.
 
@@ -81,3 +98,11 @@ scheduler and worker locks does not block a valid phase report.
 `sh scripts/test-schema.sh` passed fresh apply, complete rollback, and reapply with
 migration 0008. `make test lint smoke` passed. These checks prove the store boundary;
 they do not prove runtime observation, process termination, or complete jobs.
+
+The real mTLS service test additionally reports startup and running, replays an
+older acknowledgement without regression, restarts the service and replays again,
+and enters finalization with explicit exit code zero. PostgreSQL confirms zero is
+persisted rather than treated as missing evidence. Invalid phase enums, overflow,
+short/changed container IDs, missing final exit status, cross-host identity, expired
+reports, replaced sessions, and live credential revocation are checked at this
+boundary. Response-mapping unit tests reject malformed decision/state pairs.
