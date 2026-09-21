@@ -1,8 +1,8 @@
 # Dispatch
 
 A distributed batch execution platform with a Go control plane and Rust workers.
-The implementation is in progress. The binaries currently expose version commands;
-they do not yet submit or execute jobs.
+The implementation is in progress. The server supports project/token provisioning,
+authenticated HTTP submission, and job inspection. Workers do not execute jobs yet.
 
 See [the specification](Dispatch_Project_Spec.md) for the product contract and
 [the verification ledger](docs/implementation.md) for completed slices and release gates.
@@ -29,6 +29,7 @@ repository is chosen. No cloud account is required for development.
 Implementation details and verification records live in `docs/`:
 [contracts](docs/contracts.md), [database](docs/database.md),
 [worker protocol](docs/protocol.md), and [slice ledger](docs/implementation.md).
+See [running the control plane](docs/running.md) for the current operator commands.
 
 ## Build references
 

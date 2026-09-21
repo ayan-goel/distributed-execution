@@ -196,3 +196,15 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   Executable serving and CLI submission remain next; unresolved datasets still fail
   explicitly until their versioned admission slice is implemented.
 - Added `docs/http-api.md` with the implemented contract and remaining endpoints.
+
+### D05e: runnable control plane and operator commands
+
+- Added database migration, project creation, token issuance/revocation, and HTTP
+  serving commands. TLS is required outside explicit literal-loopback development;
+  listen/registry configuration is checked before exposing a listener.
+- Configuration tests first failed with missing parsing. Build, unit tests, static
+  checks, and binary smoke tests now pass. Real database/registry integration covers
+  command entry points, actual HTTP submission, graceful stop, restart, replay with
+  the registry offline, and revocation observed by the running server.
+- Added `docs/running.md`; README accurately describes the queue-only current state.
+  Active execution and the full v0.1 deployment tutorial remain pending.
