@@ -71,5 +71,22 @@ reporter. They check durable ordering, exact STARTING retry, duplicate refusal,
 lost start replies, fast exit, expiry during phase/start, uncertain create, journal
 failure before start, unacknowledged/wrong sessions, mismatched generation, rejection,
 and already-advanced phase acknowledgement. The shared termination/runtime changes
-also retain their real Docker component tests. A combined real service/Docker launch
-fixture and production acquisition/phase orchestration are still pending.
+also retain their real Docker component tests.
+
+`TestRustDurableLaunchAndRenewalStopsRealContainerAfterFencing` runs the Rust
+`launch_probe` subprocess against actual PostgreSQL, the authenticated Go service,
+and Docker. It provisions a unique development worker, queues a pinned sleeping
+workload, and lets the probe durably register, inspect an empty runtime, report
+health, acquire its assignment, and launch it through this coordinator. The service
+commits STARTING but deliberately loses its reply; the retry must preserve the exact
+event and payload. The probe verifies the journal's container binding and actual
+running state, then explicitly prepares/reports RUNNING.
+
+The next periodic renewal expires the attempt's database lease and returns FENCED.
+The real watchdog kills the container and confirms termination; the Go fixture
+independently inspects it as stopped. PostgreSQL retains exactly two phase records,
+STARTING and RUNNING, despite the lost response. Cleanup is restricted to that
+fixture's unpredictable worker label. This test uses the soft-scratch development
+policy and Docker Desktop evidence; it does not prove strict quotas or independent
+Linux hosts. The probe's direct post-launch phase sequence is a test fixture, not
+the missing production acquisition/RUNNING/FINALIZING orchestration.

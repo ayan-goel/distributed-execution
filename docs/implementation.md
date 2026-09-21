@@ -24,7 +24,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D05 durable submission | D02,D03 | HTTP/CLI submission; 100 identical requests yield one job; changed payload conflicts | input-free job admission, auth, image resolution, HTTP/CLI gates passed; datasets depend on D16 |
 | D06 worker identities | D03,D04 | Authenticated registration, session takeover/recovery; stale-session rejection | control-plane, Rust client, and worker startup/health loop gates passed; active-job supervision pending |
 | D07 acquisition | D03,D06 | Atomic assignment/reservations; concurrent quota/capacity races; acquisition replay | store, RPC, and Rust client gates passed; production agent loop pending |
-| D08 Docker adapter | D04 | Real bounded create/start/inspect/stop; ambiguous create reconciles one identity | spec, cached-image lifecycle, and phase store/RPC/Rust client gates passed; image staging and strict workspace integration pending |
+| D08 Docker adapter | D04 | Real bounded create/start/inspect/stop; ambiguous create reconciles one identity | spec, cached lifecycle/launch, and phase store/RPC/client gates passed; staging, strict workspaces, and execution-phase orchestration pending |
 | D09 leases | D06,D07 | Fresh DB-time expiry checks; delayed grants; local monotonic deadline enforcement | deadline, store/RPC/client, watchdog, and periodic batch renewal gates passed; reaper and launch integration pending |
 | D10 worker recovery | D08,D09 | Durable journal; agent kill/restart stops old containers before new capacity | journal, discovery/cleanup, and actual startup process gates passed; agent-owned job kill/restart gate pending |
 | D11 artifacts | D03,D04 | Scoped grants; verified exact versions; stale publication rejection | pending |
@@ -913,3 +913,23 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   cleanup evidence, and verification scope in `docs/worker-launch.md`.
 - Combined real service/Docker launch verification, post-launch phase orchestration,
   acquisition, staging/strict workspaces, and the remaining full v0.1 gates stay open.
+
+### D08g: real authenticated launch, renewal, and fencing fixture
+
+- Added `launch_probe` and a real PostgreSQL/mTLS/Docker integration test. The probe
+  creates a durable incarnation, registers, checks daemon capacity and empty inventory,
+  reports health, acquires a queued pinned workload, and launches through the verified
+  coordinator while a separate task maintains its lease.
+- The service commits STARTING then loses its reply. Exact event/payload replay is
+  asserted before the probe confirms a running container and matching durable binding.
+  The fixture explicitly journals/reports RUNNING; this direct sequence is test setup,
+  not an implementation of general post-launch phase orchestration.
+- A later periodic renewal expires real database authority and returns FENCED. The
+  watchdog kills and confirms the actual container, and independent Docker inspection
+  checks it is stopped. Database phase history contains only STARTING and RUNNING.
+  Test cleanup targets only the unpredictable provisioned worker label.
+- The real race-enabled PostgreSQL/mTLS suite, all-target Clippy, and final Linux
+  worker tests (including fixture compilation) passed. This
+  fixture uses the development soft-scratch policy and does not replace the release
+  gates for strict Linux storage, production acquisition/finalization, complete result
+  publication, independent hosts, or active-job worker restart.
