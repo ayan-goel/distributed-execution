@@ -5,6 +5,8 @@ pub mod completion;
 pub mod control;
 pub mod execution;
 #[cfg(unix)]
+pub mod finalization;
+#[cfg(unix)]
 pub mod journal;
 #[cfg(unix)]
 pub mod launch;

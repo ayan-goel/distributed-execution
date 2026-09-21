@@ -72,9 +72,12 @@ impl Fixture {
     }
 
     fn execution_timeout(&mut self, seconds: u64) {
+        self.timeout("executionSeconds", seconds);
+    }
+    fn timeout(&mut self, phase: &str, seconds: u64) {
         let mut raw: serde_json::Value =
             serde_json::from_slice(&self.assignment.canonical_job_spec_json).unwrap();
-        raw["spec"]["timeouts"]["executionSeconds"] = seconds.into();
+        raw["spec"]["timeouts"][phase] = seconds.into();
         let bytes = serde_json::to_vec(&raw).unwrap();
         self.assignment.spec_sha256 = digest(&SHA256, &bytes)
             .as_ref()
@@ -311,4 +314,76 @@ async fn finalizing_rejection_retains_exit_evidence_and_closes_renewal_consumer(
         0
     );
     assert!(!controller.active());
+}
+
+#[tokio::test]
+async fn finalization_work_stops_on_fencing_before_polling_more_io() {
+    let f = Fixture::new(true);
+    let runtime = f.runtime(Mode::FastExit);
+    let phase = AtomicUsize::new(0);
+    let mut reporter = f.reporter(&runtime, &phase);
+    let (controller, authority) = f.authority(5000);
+    let mut result = tokio::select! {
+        result = execute_inner(&runtime, &mut reporter, &f.journal, f.input(), &f.session, &f.workspace, authority) => result.unwrap(),
+        _ = refreshes(&controller, &phase, &runtime, false) => unreachable!(),
+    };
+    let polled = AtomicBool::new(false);
+    controller.stop(StopReason::Rejected(Decision::Fenced));
+    let error = result
+        .while_finalizing(async {
+            polled.store(true, Ordering::SeqCst);
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(error, StopReason::Rejected(Decision::Fenced));
+    assert!(!polled.load(Ordering::SeqCst));
+}
+
+#[tokio::test]
+async fn finalization_deadline_survives_continuous_fresh_lease_grants() {
+    let mut f = Fixture::new(true);
+    f.timeout("finalizationSeconds", 1);
+    let runtime = f.runtime(Mode::FastExit);
+    let phase = AtomicUsize::new(0);
+    let mut reporter = f.reporter(&runtime, &phase);
+    let (controller, authority) = f.authority(5000);
+    let mut result = tokio::select! {
+        result = execute_inner(&runtime, &mut reporter, &f.journal, f.input(), &f.session, &f.workspace, authority) => result.unwrap(),
+        _ = refreshes(&controller, &phase, &runtime, false) => unreachable!(),
+    };
+    let error = tokio::select! {
+        result = tokio::time::timeout(Duration::from_secs(2), result.while_finalizing(std::future::pending::<()>())) => result.expect("fresh grants extended finalization deadline").unwrap_err(),
+        _ = async { loop { renew(&controller); tokio::time::sleep(Duration::from_millis(25)).await; } } => unreachable!(),
+    };
+    assert_eq!(error, StopReason::AuthorityExpired);
+}
+
+#[tokio::test]
+async fn cancellation_interrupts_inflight_finalization_work() {
+    let f = Fixture::new(true);
+    let runtime = f.runtime(Mode::FastExit);
+    let phase = AtomicUsize::new(0);
+    let mut reporter = f.reporter(&runtime, &phase);
+    let (controller, authority) = f.authority(5000);
+    let mut result = tokio::select! {
+        result = execute_inner(&runtime, &mut reporter, &f.journal, f.input(), &f.session, &f.workspace, authority) => result.unwrap(),
+        _ = refreshes(&controller, &phase, &runtime, false) => unreachable!(),
+    };
+    let started = tokio::sync::Notify::new();
+    let work = result.while_finalizing(async {
+        started.notify_one();
+        std::future::pending::<()>().await;
+    });
+    let cancel = async {
+        started.notified().await;
+        controller.stop(StopReason::Rejected(Decision::StopRequested));
+    };
+    let (error, ()) =
+        tokio::time::timeout(Duration::from_secs(1), async { tokio::join!(work, cancel) })
+            .await
+            .expect("cancellation did not interrupt finalization");
+    assert_eq!(
+        error.unwrap_err(),
+        StopReason::Rejected(Decision::StopRequested)
+    );
 }

@@ -1,16 +1,19 @@
-//! Combined execution fixture; production acquisition and artifact publication remain separate.
+//! Combined Docker execution and publication fixture; the daemon loop remains separate.
 use dispatch_protocol::{
     v1::{AcquireWorkRequest, AttemptState, HeartbeatRequest, RegisterWorkerRequest},
     MAX_MESSAGE_BYTES,
 };
 use dispatch_worker::{
+    completion::{deliver_pending, DeliveryError},
     control::{ControlClient, WorkOutcome},
     execution::ExecutionSpec,
+    finalization::prepare_completion,
     journal::{AsyncJournal, Journal, JournalLimits},
     launch::{execute, launch},
     outputs::{collect_outputs, CollectionLimits},
     runtime::{DockerRuntime, PreparedWorkspace, RecoveryRuntime, Runtime},
     supervisor::{authority_channel, supervise_running, StopReason, SupervisionOutcome},
+    transfer::TransferClient,
 };
 use prost::Message;
 use std::{
@@ -110,8 +113,9 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut renewal_client = client.clone();
     let renewal =
         tokio::spawn(async move { renewal_client.maintain_leases(vec![controller]).await });
-    if std::env::var("DISPATCH_LAUNCH_MODE").as_deref() == Ok("finalize") {
-        let finalizing = execute(
+    let mode = std::env::var("DISPATCH_LAUNCH_MODE")?;
+    if mode == "finalize" || mode == "publish" {
+        let mut finalizing = execute(
             &runtime,
             &mut client,
             &journal,
@@ -133,25 +137,73 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         {
             return Err("finalization did not preserve durable runtime evidence".into());
         }
-        let execution = ExecutionSpec::from_assignment(grant.assignment())?;
-        // Hashing can read large files; keep it off the independent lease task.
-        let outputs = tokio::task::spawn_blocking(move || {
-            collect_outputs(&workspace, &execution, CollectionLimits::default())
-        })
-        .await??;
-        let outputs: Vec<_> = outputs.iter().map(|output| serde_json::json!({
-            "name": output.name(), "size_bytes": output.size_bytes(), "sha256": output.sha256()
+        let completion = if mode == "publish" {
+            prepare_completion(
+                &mut finalizing,
+                &journal,
+                &mut client,
+                &TransferClient::new(true)?,
+                workspace,
+            )
+            .await?;
+            // Terminal delivery replays durable evidence even if lease renewal has
+            // already observed the accepted completion. It never restarts uploads.
+            let mut reply = None;
+            for _ in 0..3 {
+                match deliver_pending(&journal, &mut client, &identity.attempt_id).await {
+                    Ok(value) => {
+                        reply = value;
+                        break;
+                    }
+                    Err(DeliveryError::Control(error)) if error.retryable() => {
+                        if finalizing.authority_mut().refresh().await.is_ok() {
+                            return Err("accepted completion retained execution authority".into());
+                        }
+                    }
+                    Err(error) => return Err(error.into()),
+                }
+            }
+            Some(reply.ok_or("completion retry exhausted")?)
+        } else {
+            let execution = ExecutionSpec::from_assignment(grant.assignment())?;
+            let outputs = tokio::task::spawn_blocking(move || {
+                collect_outputs(&workspace, &execution, CollectionLimits::default())
+            })
+            .await??;
+            for output in outputs {
+                journal
+                    .prepare_output(
+                        identity.attempt_id.clone(),
+                        output.name().into(),
+                        output.size_bytes(),
+                        output.sha256().into(),
+                    )
+                    .await?;
+            }
+            None
+        };
+        let saved = journal
+            .load_attempt(identity.attempt_id.clone())
+            .await?
+            .ok_or("missing evidence")?;
+        if saved.completion_response() != completion.as_ref() {
+            return Err("completion reply was not durable".into());
+        }
+        let outputs: Vec<_> = saved.outputs().iter().map(|output| serde_json::json!({
+            "name": output.declaration().name, "size_bytes": output.declaration().size_bytes,
+            "sha256": output.declaration().sha256,
+            "artifact_id": output.response().map(|r| &r.artifact_id)
         })).collect();
         println!(
             "{}",
             serde_json::json!({
                 "attempt_id":identity.attempt_id,"container_id":finalizing.handle().id(),
                 "exit_code":finalizing.exit().exit_code,"oom_killed":finalizing.exit().oom_killed,
-                "outputs": outputs
+                "outputs": outputs, "completion_decision": completion.as_ref().map(|r| r.decision)
             })
         );
-        // The fixture ends before artifact publication. Stop its renewal task
-        // after dropping the finalization consumer; no live workload remains.
+        // The fixture ends after its selected phase. No live workload remains.
+        // Drop the finalization consumer before retiring its renewal task.
         drop(finalizing);
         renewal.abort();
         let _ = renewal.await;

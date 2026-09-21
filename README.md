@@ -26,8 +26,8 @@ into 27 jobs distributed across your machines.
 ## Project status
 
 **v0.1 is in development and targets CPU workloads.** GPU support is planned for v0.2.
-Submission, inspection, Docker execution, and verified artifact transfers have
-component and integration coverage; the worker's full acquisition and execution
+Integration tests cover submission, inspection, Docker execution, verified output
+publication, and completion recovery; the worker's full acquisition and execution
 loop is still being connected. See the [implementation ledger](docs/implementation.md)
 for verified progress and remaining work.
 

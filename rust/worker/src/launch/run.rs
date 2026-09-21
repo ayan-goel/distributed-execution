@@ -10,6 +10,8 @@ pub struct FinalizingAttempt<H> {
     identity: AttemptAuthority,
     exit: ExitEvidence,
     authority: SupervisedAuthority,
+    deadline: PhaseDeadline,
+    workspace: std::path::PathBuf,
 }
 impl<H> FinalizingAttempt<H> {
     pub fn handle(&self) -> &H {
@@ -23,6 +25,17 @@ impl<H> FinalizingAttempt<H> {
     }
     pub fn authority_mut(&mut self) -> &mut SupervisedAuthority {
         &mut self.authority
+    }
+    pub(crate) fn owns_workspace(&self, workspace: &PreparedWorkspace) -> bool {
+        self.workspace == workspace.root()
+    }
+    pub(crate) async fn while_finalizing<T>(
+        &mut self,
+        operation: impl Future<Output = T>,
+    ) -> Result<T, StopReason> {
+        // Carry the deadline started before FINALIZING across collection and
+        // uploads. New grants or retries cannot restart this phase's budget.
+        bounded(&mut self.authority, &self.deadline, operation).await
     }
 }
 impl<H> fmt::Debug for FinalizingAttempt<H> {
@@ -165,15 +178,17 @@ pub(super) async fn execute_inner<R: Runtime>(
             .await
         })
         .await??;
-        Ok(exit)
+        Ok((exit, deadline))
     }
     .await;
     match outcome {
-        Ok(exit) => Ok(FinalizingAttempt {
+        Ok((exit, deadline)) => Ok(FinalizingAttempt {
             handle,
             identity,
             exit,
             authority,
+            deadline,
+            workspace: workspace.root().to_owned(),
         }),
         Err(cause) => {
             // Retain evidence even after uncertain phase commits. Cleanup confirms
@@ -250,7 +265,7 @@ async fn bounded<T>(
     authority: &mut SupervisedAuthority,
     deadline: &PhaseDeadline,
     operation: impl Future<Output = T>,
-) -> Result<T, LaunchCause> {
+) -> Result<T, StopReason> {
     authority
         .while_live(async {
             tokio::pin!(operation);
@@ -268,5 +283,4 @@ async fn bounded<T>(
             }
         })
         .await?
-        .map_err(LaunchCause::Authority)
 }

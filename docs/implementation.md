@@ -1543,3 +1543,30 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 - Thirty complete Linux journal runs then passed, including both killed-owner
   cases. Native journal tests, final lint, and the complete Linux worker suite
   also passed. No retry or delay was added to production locking.
+
+### D11x: Connect observed container exit to verified output and completion
+
+- Added `finalization::prepare_completion`, which binds the live finalizing
+  handle to its workspace and durable assignment/exit, collects declared outputs
+  off the async executor, delivers journaled uploads, and seals completion with
+  acknowledged artifact IDs. Observed OOM and nonzero exit retain failure reasons;
+  logs are explicitly incomplete until their delivery pipeline is connected.
+- Retained the original local finalization deadline in `FinalizingAttempt`.
+  Collection, uploads, journal access, and transient control-RPC retries share that
+  deadline and live authority. Unit fixtures verify fencing before I/O,
+  cancellation during pending work, and expiry despite repeated fresh grants.
+- Extended the real Docker/PostgreSQL/mTLS/SeaweedFS fixture through successful
+  and failed completion. It loses committed grant/artifact/completion replies,
+  requires exact replay, and observes terminal lease rejection before completion
+  retry. Assertions verify one upload, artifact, completion, and completion event;
+  released reservation; durable worker acknowledgement; exact-version storage
+  integrity; and an accepted manifest only for the successful job.
+- New guard/probe compilation first failed on the missing APIs. Targeted integration
+  exposed an incorrect fixture table name, corrected to `artifact_uploads`, then
+  both publication scenarios passed. Native `make test lint smoke` and the complete
+  combined storage/database integration suite passed. Linux initially exposed the
+  independent journal-test race fixed in D11w; the final Linux suite and lint pass.
+- Added `docs/worker-finalization.md`, updated launch documentation, and refreshed
+  the concise README status. The daemon still needs acquisition/staging/capacity
+  orchestration. Collection/transfer failure completion, cancellation supersession,
+  logs/metrics, multipart, cleanup, and remaining v0.1 release gates are unfinished.

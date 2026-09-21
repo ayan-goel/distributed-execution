@@ -128,10 +128,15 @@ Nonzero exits also enter finalization so their logs and failure evidence can be
 published later.
 
 Success returns `FinalizingAttempt`: the bound handle, full attempt identity, durable
-exit evidence, and the authority consumer retained for artifact work. It is not job
+exit evidence, original finalization deadline, workspace identity, and the authority
+consumer retained for artifact work. It is not job
 completion. Callers must keep renewing and checking authority during publication;
 the returned grant can expire immediately after return. Dropping the result closes
 its consumer so the renewal producer can retire the attempt.
+
+[`finalization::prepare_completion`](worker-finalization.md) now connects this
+handle to output collection, verified upload delivery, and a saved completion
+request. Its guard retains the original phase deadline throughout publication.
 
 Failures before successful launch retain `LaunchError` cleanup evidence. Later
 failures use the same bounded kill-and-confirm path, preserve journal/container/log
