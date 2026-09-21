@@ -209,7 +209,9 @@ func TestLeaseRenewalLosesToObservedSessionTakeover(t *testing.T) {
 		until := time.Now().Add(time.Second)
 		for {
 			var blocked bool
-			if e := pool.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE application_name=$1 AND wait_event_type='Lock')", app).Scan(&blocked); e != nil {
+			// Takeover first waits on the scheduler's database-wide advisory lock.
+			// Only its job-row wait establishes ordering against this renewal.
+			if e := pool.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE application_name=$1 AND wait_event_type='Lock' AND query LIKE 'SELECT %FROM jobs%FOR UPDATE%')", app).Scan(&blocked); e != nil {
 				t.Fatal(e)
 			}
 			if blocked {

@@ -1452,3 +1452,16 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   currently uses the initial 64 MiB single-part limit; multipart, Rust transfer
   and durable upload evidence, live execution wiring, and remaining v0.1 release
   gates remain required. Collection alone neither accepts results nor frees capacity.
+
+### D11s: Observe the intended job lock in the takeover race test
+
+- The full upload verification run exposed an existing lease-test synchronization
+  defect: observing any PostgreSQL lock wait could mistake contention on the
+  database-wide scheduler advisory lock for a wait on the fixture's job row.
+  Renewal could then legitimately reach the job before takeover, contradicting
+  the test's assumed order. The isolated takeover test passed.
+- Restricted the observation to the actual `SELECT ... FROM jobs ... FOR UPDATE`
+  statement, matching the transaction ordering the test intends to prove. No
+  production session, lease, or locking behavior changed.
+- The complete store integration package passed after the correction, alongside
+  admission, API, and worker RPC tests in the combined versioned-storage run.
