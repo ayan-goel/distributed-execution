@@ -25,7 +25,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D06 worker identities | D03,D04 | Authenticated registration, session takeover/recovery; stale-session rejection | control-plane, executable, and Rust client gates passed; runtime/agent loop pending |
 | D07 acquisition | D03,D06 | Atomic assignment/reservations; concurrent quota/capacity races; acquisition replay | store, RPC, and Rust client gates passed; production agent loop pending |
 | D08 Docker adapter | D04 | Real bounded create/start/inspect/stop; ambiguous create reconciles one identity | spec and cached-image lifecycle gates passed; image staging and strict workspace integration pending |
-| D09 leases | D06,D07 | Fresh DB-time expiry checks; delayed grants; local monotonic deadline enforcement | local deadline primitive verified; renewal/reaper/supervisor pending |
+| D09 leases | D06,D07 | Fresh DB-time expiry checks; delayed grants; local monotonic deadline enforcement | local deadline and renewal store gates passed; renewal RPC/loop, reaper, and supervisor pending |
 | D10 worker recovery | D08,D09 | Durable journal; agent kill/restart stops old containers before new capacity | pending |
 | D11 artifacts | D03,D04 | Scoped grants; verified exact versions; stale publication rejection | pending |
 | D12 first real job | D05–D11 | CLI submit → gRPC → Docker → verified output → CLI download | pending |
@@ -541,3 +541,28 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 - This is cached-image execution using explicitly soft development workspaces.
   Image staging, strict filesystem quotas, production journaling/recovery, live
   supervision, artifact transfer, and independent-host release gates remain open.
+
+### D09b: transactional lease renewal and bounded replay grants
+
+- Added migration 0007 and `store.RenewLeases` for 1–64 authorities per current
+  worker session. Only current active, unexpired, uncancelled attempts renew; all
+  other members receive explicit decisions with no execution authority.
+- Persisted original batch grants and a canonical authority-set hash. Concurrent
+  retries return the original remaining authority, preserve caller order, and
+  cannot borrow a newer renewal's expiry. Changed payloads conflict; revoked or
+  replaced sessions cannot replay authority. New periodic renewals use fresh UUIDs.
+- Renewal avoids the scheduler advisory lock and worker row lock. Sorted job and
+  attempt locks coordinate recovery; fresh database wall time follows lock waits.
+  Phase deadlines, physical reservations, and worker readiness remain unchanged.
+- First tests failed for the absent API; after implementation, race-enabled real
+  PostgreSQL tests passed. Additional tests verified observed-lock expiry and
+  takeover races, overlapping opposite-order batches, rollback of both leases on
+  injected history failure, unknown attempts, corrupt history, and independence
+  from held scheduler/worker locks. Validation also covers batch/identity bounds.
+- `sh scripts/test-store.sh`, `sh scripts/test-schema.sh`, and `make test lint smoke`
+  passed. The initial sandboxed workspace check could not bind an existing local
+  HTTP test listener; rerunning with local socket access passed. No production
+  services were modified; the scripts removed their disposable test containers.
+- Documented behavior, locking, replay identity, verification, and pending retention
+  in `docs/worker-leases.md`. Renewal RPC/client/loop, reaper, supervisor, and all
+  remaining full v0.1 gates stay open.

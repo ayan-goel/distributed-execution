@@ -39,6 +39,57 @@ initiate bounded termination early enough for cleanup. This primitive is not a
 running watchdog, renewal loop, reaper, or proof that a frozen host can stop code.
 Server-side fencing remains necessary when physical termination cannot be confirmed.
 
+## Durable batched renewal (D09b)
+
+`store.RenewLeases` accepts 1–64 distinct attempts for one authenticated current
+worker session. Every authority includes job, attempt, worker, session, and positive
+generation. Invalid identifiers, duplicate attempt IDs, and mixed worker/session
+payloads fail before database writes. Results follow input order and contain one
+decision per attempt:
+
+| Decision | Meaning |
+| --- | --- |
+| `ACCEPTED` | Current active attempt, unexpired lease and phase, no cancellation |
+| `FENCED` | Unknown/mismatched authority, expired lease, or changed job ownership |
+| `STOP_REQUESTED` | Cancellation requested or current phase deadline reached |
+| `ALREADY_TERMINAL` | Matching attempt already has a terminal outcome |
+
+Only accepted members extend their lease to fresh database wall time plus 30 seconds.
+Renewal does not change phase deadlines, job/attempt state, reservations, or worker
+readiness. Draining blocks new acquisition but permits valid existing work to renew.
+Rejected members carry no lease or phase authority. A fenced session or revoked
+credential rejects the whole batch, including retries.
+
+Migration `0007_worker_lease_requests` records the original grant atomically with
+lease extensions, keyed by worker/session/request UUID. The payload digest includes
+an operation tag and the sorted authority set; reordering a retry is allowed, but
+changing any authority conflicts. Concurrent retries serialize on that identity
+even when every requested attempt is unknown. A failed transaction returns no grants
+and leaves neither partial renewals nor replay history.
+
+A retry rechecks current authority and returns at most the original grant's lease
+and phase bounds. It never updates leases and cannot borrow time from a later batch
+or phase transition. Original rejected members stay rejected. Missing/malformed
+stored results fail closed. Each new periodic renewal must use a new request UUID;
+transport retries reuse the original UUID and authority set.
+
+The transaction locks the credential, its replay identity, then jobs by UUID and
+attempts by job/attempt UUID. It does not acquire the scheduler's cluster lock or a
+worker row lock. Session recovery follows the same ownership lock order, so the
+post-lock session recheck remains stable for any live authority the batch can grant.
+Unknown/mismatched pairs cannot lock attempts outside the requested job set.
+`clock_timestamp()` is sampled after ownership locks and session revalidation;
+transaction-start time cannot revive a lease that expired while blocked. Local SQL
+lock and statement timeouts remain two and four seconds, respectively. No external
+I/O occurs inside this transaction.
+
+History currently persists for the session lifetime without automatic retention.
+Do not prune records while their UUIDs can still renew active work: deleting one
+would let an old retry look like a new operation. Safe bounded retention remains a
+release requirement. The RPC adapter, Rust renewal client/loop, supervisor, and lease
+reaper remain separate work; this store slice alone does not keep containers alive
+or terminate them at expiry.
+
 ## Verification
 
 Deterministic tests cover delayed receipt, exact expiry, large forward clock advances,
@@ -55,7 +106,25 @@ build directory. `make integration` includes this check. The observed Linux run 
 arm64 on Docker Desktop; independent-host execution and actual pause/termination
 fault tests remain release work.
 
+The race-enabled real PostgreSQL suite (`sh scripts/test-store.sh`) covers concurrent
+identical requests, overlapping batches in opposite input orders, mixed decisions,
+changed payload conflicts, expiry/cancellation/phase rejection, revoked credentials,
+unknown authority batches, corrupt replay records, and fresh requests versus retries.
+An injected history-write failure proves that both members of a renewal roll back.
+Observed PostgreSQL lock waits exercise expiry and approved takeover before renewal
+can acquire its ownership locks. A separate test holds the scheduler advisory lock
+and worker row lock while a draining worker renews successfully. A saved-grant fixture
+moves the original timestamps into the past to verify that a live newer lease cannot
+revive an old request, without a thirty-second test sleep.
+
+`sh scripts/test-schema.sh` passed fresh apply, complete rollback, and reapply with
+the seventh migration. `make test lint smoke` passed after enabling local sockets
+needed by existing HTTP and runtime fixture tests. These results cover the store
+boundary, not the pending renewal RPC or production worker loop.
+
 ## Source references
 
 - [Linux clock_gettime and CLOCK_BOOTTIME](https://man7.org/linux/man-pages/man2/clock_gettime.2.html)
 - [Rust Instant platform and suspend behavior](https://doc.rust-lang.org/std/time/struct.Instant.html)
+- [PostgreSQL explicit row locking](https://www.postgresql.org/docs/current/explicit-locking.html)
+- [PostgreSQL clock_timestamp versus transaction time](https://www.postgresql.org/docs/current/functions-datetime.html)
