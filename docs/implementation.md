@@ -353,3 +353,17 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   semantics. Updated security/session documentation with implemented boundaries.
 - Executable listener/provisioning/takeover commands and the Rust session client
   remain next. This is a working control-plane RPC service, not container execution.
+
+### D06g: worker operator commands
+
+- Added certificate-based worker enrollment, idempotent credential revocation,
+  and exact-source/exact-target takeover approval to `dispatch-server`. Enrollment
+  accepts only bounded public client-certificate PEM input; private keys stay local
+  to the agent. Resource/project/label policy uses the verified store operations.
+- Tests first failed for the absent certificate reader. Unit tests now reject
+  private keys, CA/server-only leaves, missing files, and oversized input. Real
+  PostgreSQL command tests enroll a host, register it, approve and complete takeover,
+  revoke its credential twice, and observe authentication rejection.
+- `make test lint smoke` and race-enabled integration passed. Reviewed certificate
+  handling, authority scope, duplicate labels, and command output. Added the operator
+  workflow and its current limits to `docs/running.md`.

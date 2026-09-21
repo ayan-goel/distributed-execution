@@ -51,7 +51,7 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 		return err
 	}
 	if len(args) == 0 {
-		return errors.New("usage: dispatch-server serve|migrate|project create|token create|token revoke")
+		return errors.New("usage: dispatch-server serve|migrate|project create|token create|token revoke|worker create|worker revoke|worker takeover")
 	}
 	if args[0] == "serve" {
 		c, err := parseServeConfig(args[1:])
@@ -67,6 +67,9 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 			return fmt.Errorf("schema compatibility check: %w", err)
 		}
 		return serve(ctx, pool, c, out)
+	}
+	if args[0] == "worker" {
+		return workerOperator(ctx, args, out)
 	}
 	return operator(ctx, args, out)
 }

@@ -28,7 +28,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func TestServerCommandsSubmitAndRecoverAfterRestart(t *testing.T) {
+func configureServerTestDatabase(t *testing.T) {
+	t.Helper()
 	ctx := context.Background()
 	dsn := os.Getenv("DISPATCH_TEST_DATABASE_URL")
 	if dsn == "" {
@@ -63,6 +64,11 @@ func TestServerCommandsSubmitAndRecoverAfterRestart(t *testing.T) {
 	if err := run(ctx, []string{"project", "create", "--name", "research"}, io.Discard); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestServerCommandsSubmitAndRecoverAfterRestart(t *testing.T) {
+	configureServerTestDatabase(t)
+	ctx := context.Background()
 	var output bytes.Buffer
 	if err := run(ctx, []string{"token", "create", "--project", "research"}, &output); err != nil {
 		t.Fatal(err)

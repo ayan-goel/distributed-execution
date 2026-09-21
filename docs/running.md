@@ -31,6 +31,37 @@ bin/dispatch-server token revoke --project research --id TOKEN_UUID
 
 Revocation is idempotent and takes effect on subsequent authenticated requests.
 
+## Worker operator commands
+
+Enroll the public client-authentication certificate for a dedicated Linux host:
+
+```sh
+bin/dispatch-server worker create --name worker-a --certificate /path/worker.crt --architecture arm64 --project research --cpu-millis 4000 --memory-mib 8192 --scratch-mib 16384 --slots 4
+```
+
+This outputs `{workerId,credentialId}`. Save both IDs. Repeat `--project` to authorize
+additional projects and `--label rack=lab-a` for placement labels. `os=linux` and
+the selected architecture cannot be overridden by generic labels. Advertised
+resources at registration may be lower than these operator-approved ceilings.
+
+Enrollment reads a bounded public PEM certificate chain, with the client leaf
+first. It rejects private keys, CA leaves, expired certificates, and leaves without
+client-authentication purpose. It stores only the leaf fingerprint; the worker
+keeps its private key. Trust-chain verification happens at the mTLS listener, so
+the leaf must be issued by that listener's configured client CA to connect.
+
+```sh
+bin/dispatch-server worker revoke --id WORKER_UUID --credential CREDENTIAL_UUID
+bin/dispatch-server worker takeover --id WORKER_UUID --from-session OLD_SESSION_UUID --to-session NEW_SESSION_UUID
+```
+
+Revocation is idempotent and prevents subsequent authenticated worker operations.
+It does not claim to stop containers. Takeover authorizes only the named replacement
+session; fencing occurs when that incarnation registers successfully. Without an
+approval, automatic recovery requires inactivity and expiry of all active leases.
+These commands require direct operator database access, not a project bearer token.
+The worker listener and Rust client are still pending in this slice.
+
 ## Listener
 
 Explicit loopback-only development:
