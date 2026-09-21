@@ -5,7 +5,7 @@ export GOPATH := $(CURDIR)/.local/go
 export GOTOOLCHAIN := local
 export GO
 
-.PHONY: build test lint smoke integration store-test tools generate protocol-test generate-check
+.PHONY: build test lint smoke integration store-test objectstore-test tools generate protocol-test generate-check
 build:
 	$(GO) build -trimpath -o bin/dispatch ./cmd/dispatch
 	$(GO) build -trimpath -o bin/dispatch-server ./cmd/dispatch-server
@@ -29,7 +29,11 @@ integration:
 	sh scripts/test-worker-linux.sh
 	sh scripts/test-runtime.sh
 	sh scripts/test-schema.sh
+	sh scripts/test-objectstore.sh
 	sh scripts/test-store.sh
+
+objectstore-test:
+	$(GO) test -race -tags integration -count=1 ./internal/objectstore
 
 store-test:
 	cargo build -p dispatch-worker --bins --examples --locked

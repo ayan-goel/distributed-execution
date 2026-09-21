@@ -33,6 +33,8 @@ repository is chosen. No cloud account is required for development.
 Implementation details and verification records live in `docs/`:
 [contracts](docs/contracts.md), [database](docs/database.md),
 [worker protocol](docs/protocol.md), and [slice ledger](docs/implementation.md).
+See [versioned object storage](docs/object-storage.md) for the isolated local backend
+and transfer compatibility gate, which require no AWS account.
 See [running the control plane](docs/running.md) for the current operator commands.
 
 ## Build references

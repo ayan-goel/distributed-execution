@@ -27,7 +27,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D08 Docker adapter | D04 | Real bounded create/start/inspect/stop; ambiguous create reconciles one identity | cached launch, RUNNING/FINALIZING coordination, and phase store/RPC/client gates passed; agent integration, staging, and strict workspaces pending |
 | D09 leases | D06,D07 | Fresh DB-time expiry checks; delayed grants; local monotonic deadline enforcement | deadline, store/RPC/client, watchdog, periodic renewal, and execution refresh gates passed; reaper and production agent integration pending |
 | D10 worker recovery | D08,D09 | Durable journal; agent kill/restart stops old containers before new capacity | journal, discovery/cleanup, and actual startup process gates passed; agent-owned job kill/restart gate pending |
-| D11 artifacts | D03,D04 | Scoped grants; verified exact versions; stale publication rejection | pending |
+| D11 artifacts | D03,D04 | Scoped grants; verified exact versions; stale publication rejection | versioned storage adapter and real backend gate passed; durable grants, fenced verification/publication, and transfers pending |
 | D12 first real job | D05–D11 | CLI submit → gRPC → Docker → verified output → CLI download | pending |
 | D13 loss/retry | D09,D12 | Reaper/reconciliation; recorded retry; backoff/deadlines; nonretryable failure | pending |
 | D14 cancellation | D12,D13 | Both completion/cancellation race orders, repeat requests, uncertain cleanup | pending |
@@ -993,3 +993,41 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 - Updated the component docs, overview, and ledger statuses. Production acquisition,
   staging/image pulling, strict workspaces, artifacts/completion, reaping, and all
   remaining v0.1 acceptance gates stay open.
+
+### D11a: bounded versioned S3-compatible storage adapter
+
+- Added `internal/objectstore` with explicit endpoint/region/bucket/static credentials,
+  versioning checks, signed single-part upload/download capabilities, and exact-version
+  streaming SHA-256 verification. It does not use ambient AWS profiles, instance
+  metadata, or implicit cloud endpoints. Account-free development uses SeaweedFS 4.47
+  pinned by manifest digest; no existing AWS account or user object store is accessed.
+- Upload capabilities bind one key, declared size, and checksum and expire in one
+  second to five minutes. Downloads pin an opaque non-null version. Verification
+  independently checks returned version, size, and bytes rather than trusting ETag.
+  Versioning is rechecked before upload signing; a suspended bucket cannot mint a
+  new grant. Reusable upload URLs may create later versions without changing an
+  already verified exact-version reference.
+- Server requests stay on the configured origin, refuse redirects, use HTTPS except
+  explicit loopback development, and bound response headers/XML bodies. Operations
+  and queued work honor caller deadlines with a 30-second maximum. Concurrency
+  defaults to four; single-part bytes default to 64 MiB and may be lowered. SDK
+  diagnostics are reduced to stable categories so signed URLs and credential data
+  are not copied into errors.
+- Tests first failed for the missing adapter API. Unit tests cover invalid settings,
+  signed fields, exact versions, misleading ETags, integrity mismatches, cancellation,
+  redirect refusal, and the concurrency bound. The real SeaweedFS test rejects
+  unversioned/suspended buckets, tampered checksums/size/key, expired URLs, wrong
+  contents, and deleted versions. It proves overwrites and replayed uploads leave
+  the original version downloadable, and verifies empty and configured-limit outputs.
+- Added `scripts/test-objectstore.sh` and `make objectstore-test`; `make integration`
+  now includes this isolated backend. The fixture uses fresh credentials, a loopback
+  port, bounded container resources, and ephemeral tmpfs. Cleanup targets only its
+  own container. Official SDK modules and transitive versions are pinned in Go's
+  lockfiles; docs record the API references and backend compatibility evidence.
+- `make test lint smoke` and full `make integration` passed with zero exits. After
+  adding real empty/size-boundary coverage, the isolated object-store suite passed
+  again. The full gate retained Linux/Docker, migrations, and race-enabled PostgreSQL,
+  mTLS, and execution-to-finalization checks.
+- This slice is a storage primitive, not artifact authorization or job completion.
+  Pending upload metadata, lease/session fencing during verification/publication,
+  worker transfers, multipart support, retention, and the remaining v0.1 gates stay open.
