@@ -1307,3 +1307,28 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 - Updated README, operator examples, and artifact download documentation. The full
   worker acquisition/staging/transfer/completion loop, multipart objects, and the
   remaining multi-host v0.1 gates remain open.
+
+### D11m: Rust completion payload and Go/Rust parity
+
+- Added `control::completion_digest` with the Go completion contract's authority,
+  failure/exit/stop, output, gap, and metric validation. Normalized views preserve
+  caller-owned evidence and deterministic field/set ordering. Original metrics
+  source bytes are separately hashed; completion UUID and claimed digest stay out
+  of the payload while the UUID is still validated.
+- Enabled `raw_value` on the existing pinned serde_json version so exact numeric
+  text survives serialization. A map visitor rejects duplicate decoded keys before
+  insertion. Float parsing enforces finite export bounds without rounding stored
+  integers/exponents; nonzero underflow is rejected and true zero is normalized.
+  No dependency versions or lockfile changed.
+- Initial Rust tests failed for the missing helper. Golden, ordering/immutability,
+  evidence, numeric, count, and byte-bound tests pass. `make protocol-test` now sends
+  Go protobuf fixtures through Rust hashing/rejection and checks each outcome against
+  the Go store contract, including numeric edge cases and int64 boundaries.
+- Native tests and the full `make integration` gate passed, including Linux Rust,
+  real Docker runtime, migration rollback/reapply, PostgreSQL, and versioned storage
+  with CLI downloads. Clippy caught an equivalent boolean simplification and an
+  unnecessary Copy-value clone in a test; both were fixed, and final
+  `make lint smoke protocol-test` passed with zero exit.
+- Updated completion/protocol documentation. This verifies worker-side payload
+  compatibility; completion RPC delivery, durable retry/recovery, Rust transfers,
+  and the production worker job loop remain separate required work.

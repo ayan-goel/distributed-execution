@@ -10,7 +10,7 @@ futures-util = "=0.3.34"
 libc = "=0.2.189"
 ring = "=0.17.14"
 serde = { version = "=1.0.229", features = ["derive"] }
-serde_json = "=1.0.151"
+serde_json = { version = "=1.0.151", features = ["raw_value"] }
 dispatch-protocol = { path = "../protocol" }
 prost = "=0.14.3"
 tonic = { version = "=0.14.6", features = ["tls-ring"] }

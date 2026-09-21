@@ -42,7 +42,9 @@ whitespace, so publication can match it to a verified metrics output. Other valu
 use Go `encoding/json` compact encoding. Numbers retain their validated JSON text,
 except all numeric zero representations become `0`. The fixed digest test in
 `internal/store/completion_contract_test.go` is a cross-language implementation vector.
-Rust completion support must reproduce this before sending live requests.
+The Rust `control::completion_digest` helper reproduces this contract and is checked
+against Go by the cross-language fixture below. Completion delivery/journaling remain
+separate integration work.
 
 ## Bounded metrics
 
@@ -186,3 +188,26 @@ versions, missing outputs, spoofed authority, lease/phase expiry, cancellation
 acknowledgement, credential revocation, and event-failure rollback with redacted
 errors. A discarded acknowledgement is recovered on retry. Storage is deliberately
 unavailable after initial artifact verification to detect accidental completion I/O.
+
+## Rust payload parity (D11m)
+
+The worker validates complete authority and completion identity, integer ranges,
+failure/exit/stop evidence, output uniqueness/count, and log gap ranges/count before
+constructing normalized JSON. Sorting uses separate output/gap views and leaves the
+caller's durable evidence unchanged. The helper excludes completion ID and claimed
+digest from the hash while still validating the completion UUID.
+
+Metrics use the existing pinned `serde_json` crate's `raw_value` feature. A custom
+map visitor rejects duplicate decoded keys, and raw numeric JSON retains exact large
+integers and exponent spelling. Parsing through float64 only checks the agreed
+finite export range; it never supplies serialized metric values. Nonzero underflow
+is invalid, while true zero normalizes to `0`. The exact original metrics bytes
+remain bound by a separate SHA-256. No dependency version or lockfile changed.
+
+`make protocol-test` now has Go encode framed completion protobuf fixtures, Rust
+decode and hash/reject each request, and Go compare against its own store contract.
+Cases cover the fixed golden vector, empty and reordered data, counters above 2^53,
+int64 limits, numeric precision/exponents/subnormals/zero, byte/count limits,
+duplicate keys, malformed metrics, conflicting outputs/gaps, failure reasons, and
+missing exit evidence. This establishes payload compatibility, not worker delivery,
+artifact transfer, or completion-journal recovery.

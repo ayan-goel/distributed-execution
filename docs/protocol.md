@@ -95,6 +95,11 @@ cursor. It exercises a generation above 2^53, resource sizes
 above 2^32, Unicode arguments, authority identity, lease duration, and JSON bytes.
 This is wire compatibility evidence, not a real worker execution or mTLS test.
 
+The same gate sends completion protobuf fixtures from Go to the Rust worker's
+digest helper, then compares each hash or rejection with Go's completion contract.
+It covers exact metric number text, source-byte binding, normalization, and invalid
+evidence. See [Rust completion parity](completion.md#rust-payload-parity-d11m).
+
 `make generate-check` compares checked-in Go output with freshly generated files.
 Rust regeneration is part of every build when the schema changes. CI installs the
 official Linux protoc archive by fixed version with a recorded SHA-256 check.
