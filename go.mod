@@ -4,6 +4,7 @@ go 1.27.1
 
 require (
 	github.com/google/go-containerregistry v0.22.1
+	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.11.0
 	go.yaml.in/yaml/v3 v3.0.5
 	google.golang.org/grpc v1.83.2

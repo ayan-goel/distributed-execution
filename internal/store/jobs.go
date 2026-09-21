@@ -37,6 +37,17 @@ type rowQuerier interface {
 	QueryRow(context.Context, string, ...any) pgx.Row
 }
 
+func GetJob(ctx context.Context, pool *pgxpool.Pool, projectID, id string) (JobRecord, error) {
+	var job JobRecord
+	// Scope the lookup in SQL so a valid UUID cannot reveal another tenant's job.
+	err := pool.QueryRow(ctx, `SELECT id::text,project_id::text,state,spec,spec_hash,created_at FROM jobs WHERE id=$1 AND project_id=$2`, id, projectID).Scan(&job.ID, &job.ProjectID, &job.State, &job.Spec, &job.SpecHash, &job.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return job, ErrNotFound
+	}
+	job.CreatedAt = job.CreatedAt.UTC()
+	return job, err
+}
+
 func LookupSubmission(ctx context.Context, pool *pgxpool.Pool, project, key, requestHash string) (JobRecord, error) {
 	return lookupSubmission(ctx, pool, project, key, requestHash)
 }

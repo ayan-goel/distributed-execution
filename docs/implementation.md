@@ -183,3 +183,16 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   wrong digests, malformed responses, cancellation, and explicit development HTTP.
 - `make test lint build` and race-enabled store/registry integration tests passed.
 - Updated `docs/contracts.md` with resolution policy and documented its limits.
+
+### D05d: authenticated HTTP admission
+
+- Added bounded HTTP handlers for readiness, submission, and project-scoped job
+  inspection. Request IDs, structured sanitized errors, request/body/concurrency
+  bounds, a global rate cap, and read/submit role checks apply at the boundary.
+- Tests first failed with missing handlers. Real PostgreSQL HTTP tests now pass for
+  100 concurrent duplicate requests, role and tenant isolation, changed payloads,
+  replay without registry access, unavailable resolution, and malformed/large bodies.
+- `make test lint build` and race-enabled store/registry/API integration tests passed.
+  Executable serving and CLI submission remain next; unresolved datasets still fail
+  explicitly until their versioned admission slice is implemented.
+- Added `docs/http-api.md` with the implemented contract and remaining endpoints.
