@@ -4,11 +4,11 @@ A distributed batch execution platform with a Go control plane and Rust workers.
 The implementation is in progress. The server supports project/token provisioning,
 authenticated HTTP/CLI submission, and job inspection. The CLI can validate
 job files offline and download accepted artifacts with version/size/checksum checks.
-The worker command registers, reconciles old containers, and
-reports health; its acquisition loop is still pending. The execution component is
+The worker command registers, reconciles old containers, recovers journaled completion
+requests, and reports health; its acquisition loop is still pending. The execution component is
 integration-tested through Docker exit and FINALIZING. The server supports verified
-artifact publication and atomic completion; Rust transfers and the completion loop
-remain to integrate.
+artifact publication and atomic completion; Rust transfers and connecting live
+execution to completion delivery remain to integrate.
 
 See [the specification](Dispatch_Project_Spec.md) for the product contract and
 [the verification ledger](docs/implementation.md) for completed slices and release gates.

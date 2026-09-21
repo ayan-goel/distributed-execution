@@ -1401,3 +1401,32 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 - Updated completion/journal documentation. No network or runtime operation occurs
   under the journal lock. A persisted publication decision does not prove physical
   cleanup or release local capacity; delivery integration and retention remain open.
+
+### D11q: Actual agent completion recovery after process death
+
+- Added one-attempt `completion::deliver_pending`: read durable evidence, reuse an
+  immutable saved decision when present, otherwise send the exact request and sync
+  its validated acknowledgement before returning. Network I/O holds no journal lock.
+- Connected recovery to the actual startup command after durable registration and
+  predecessor fencing. A bounded attempt-ID queue and one completion RPC at a time
+  run concurrently with health reporting/Docker cleanup through a cloned client.
+  Retryable errors and stop responses requeue after one second; permanent errors
+  retain evidence and stop the agent. Resolved events omit manifest/spec contents.
+- The initial fixture build failed because delivery did not exist. The real
+  PostgreSQL/mTLS test now withholds an already-committed reply and kills the Rust
+  delivery process. The actual worker registers a new incarnation, retries an
+  injected transient outage, recovers and persists the original accepted result.
+  A second worker restart uses the persisted reply without another completion RPC.
+- Added the complementary unaccepted case: startup fences the old attempt as LOST,
+  persists ALREADY_TERMINAL, and produces no accepted manifest, completion row, or
+  completion event. Both cases verify unchanged request evidence and no new storage
+  reads. Runtime observations are fixture-seeded; these are completion recovery
+  tests, not an acquired-workload execution/restart release gate.
+- Native `make test lint smoke`, Linux worker tests, and the complete
+  `scripts/test-store.sh` suite passed, including existing real Docker startup and
+  Go/Rust RPC workflows. After adding the unaccepted fixture case, both recovery
+  scenarios passed together and final `make lint smoke` passed.
+- Updated README, operator guidance, completion, journal, and worker-agent docs.
+  Live acquisition/execution still needs output verification and delivery wiring;
+  safe cancellation supersession, local cleanup/retention, and remaining v0.1
+  features/release gates are still required.

@@ -87,8 +87,9 @@ the journal's normal poison/reopen rules.
 A reply records publication status, not physical cleanup. In particular, a failed
 completion submitted with `stopped=false` still needs runtime reconciliation even
 when its failure was accepted. The journal does not delete workspaces or release
-local capacity. Resolved-record retention and the production delivery/recovery
-loop remain separate required work. Process-death tests cover both a pending
+local capacity. [Startup recovery](worker-agent.md#completion-recovery-d11q) now
+delivers pending entries and uses resolved replies without resending. Resolved-record
+retention and live execution delivery remain required. Process-death tests cover both a pending
 request and a persisted accepted reply; successful manifest tests preserve the
 original formatting and exact large-integer bytes through reopening.
 
@@ -262,10 +263,10 @@ operations. `make integration` runs this gate plus the separate real Docker,
 migration, and PostgreSQL/mTLS fixtures. The focused clock script remains available.
 
 Session/registration persistence and labeled-container discovery are implemented as
-components. Completion acknowledgement/recovery delivery, transfer identities,
-terminal cleanup, and the production job loop remain required. The startup agent
-already reconciles old-session containers before advertising capacity; pending job
-delivery still needs to be connected to that startup path.
+components. The startup agent reconciles old-session containers before advertising
+capacity and recovers pending completions concurrently. Transfer identities,
+terminal cleanup/retention, and the production job acquisition/execution loop
+remain required.
 
 Persistence references: [Rust rename](https://doc.rust-lang.org/std/fs/fn.rename.html),
 [File::sync_all](https://doc.rust-lang.org/std/fs/struct.File.html#method.sync_all),

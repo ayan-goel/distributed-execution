@@ -87,6 +87,9 @@ impl AsyncJournal {
     pub async fn load_attempt(&self, id: String) -> Result<Option<RecoveredAttempt>, JournalError> {
         self.apply(move |journal| journal.load_attempt(&id)).await
     }
+    pub async fn attempt_ids(&self) -> Result<Vec<String>, JournalError> {
+        self.apply(|journal| journal.attempt_ids()).await
+    }
     pub async fn persist_completion(
         &self,
         request: CompleteAttemptRequest,

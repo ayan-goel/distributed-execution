@@ -1,16 +1,17 @@
 //! Worker registration, startup cleanup, and health reporting. Acquisition follows separately.
 use crate::{
+    completion::{deliver_pending, DeliveryError},
     control::{canonical_uuid, ClientError, ControlClient},
     journal::{new_uuid, AsyncJournal, Journal, JournalError, JournalLimits},
     runtime::{DockerRuntime, RecoveryRuntime, RuntimeError},
 };
 use dispatch_protocol::{
-    v1::{ExecutionInventory, HeartbeatRequest, RegisterWorkerRequest, Resources},
+    v1::{Decision, ExecutionInventory, HeartbeatRequest, RegisterWorkerRequest, Resources},
     VERSION,
 };
 use serde::Deserialize;
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, VecDeque},
     fmt,
     io::Read,
     os::unix::fs::{MetadataExt, OpenOptionsExt},
@@ -53,6 +54,14 @@ impl From<ClientError> for AgentError {
 impl From<RuntimeError> for AgentError {
     fn from(e: RuntimeError) -> Self {
         Self::Runtime(e)
+    }
+}
+impl From<DeliveryError> for AgentError {
+    fn from(e: DeliveryError) -> Self {
+        match e {
+            DeliveryError::Journal(e) => Self::Journal(e),
+            DeliveryError::Control(e) => Self::Control(e),
+        }
     }
 }
 
@@ -246,9 +255,52 @@ pub async fn run(config: AgentConfig) -> Result<(), AgentError> {
     // runs off Tokio's I/O threads and finishes before any readiness report.
     let journal = AsyncJournal::new(journal);
     journal.record_registration(registration).await?;
-    let _journal_guard = journal;
     event("registered", &config.worker_id, &session_id);
-    health_loop(&config, &root, &session_id, &runtime, &mut client).await
+    let mut completion_client = client.clone();
+    // Recovery starts only after registration fences the predecessor. A separate
+    // RPC handle lets old completion delivery wait without delaying physical cleanup.
+    tokio::try_join!(
+        health_loop(&config, &root, &session_id, &runtime, &mut client),
+        recover_completions(
+            &journal,
+            &mut completion_client,
+            &config.worker_id,
+            &session_id
+        ),
+    )?;
+    Ok(())
+}
+
+async fn recover_completions(
+    journal: &AsyncJournal,
+    client: &mut ControlClient,
+    worker: &str,
+    session: &str,
+) -> Result<(), AgentError> {
+    let mut pending: VecDeque<_> = journal.attempt_ids().await?.into();
+    while let Some(attempt) = pending.pop_front() {
+        let retry = match deliver_pending(journal, client, &attempt).await {
+            Ok(Some(reply)) if reply.decision == Decision::StopRequested as i32 => true,
+            Ok(Some(reply)) => {
+                println!(
+                    "{}",
+                    serde_json::json!({"event":"completion_recovered","worker_id":worker,
+                    "session_id":session,"attempt_id":attempt,"decision":reply.decision,"state":reply.state})
+                );
+                false
+            }
+            Ok(None) => false,
+            Err(DeliveryError::Control(error)) if error.retryable() => true,
+            Err(error) => return Err(error.into()),
+        };
+        if retry {
+            // One outstanding request and a bounded ID queue prevent recovery
+            // from flooding the server. Requeue failures so other attempts progress.
+            pending.push_back(attempt);
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+    }
+    Ok(())
 }
 
 fn registration_retryable(error: &ClientError) -> bool {

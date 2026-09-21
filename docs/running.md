@@ -127,8 +127,9 @@ not required: the integration fixture uses isolated local SeaweedFS. See
 [upload capabilities](artifact-uploads.md) for limits and replay behavior, and
 [verified artifacts](verified-artifacts.md) for `FinalizeUpload`. The server can
 verify uploaded versions and accept terminal results through `CompleteAttempt`;
-see [completion publication](completion.md). The Rust transfer/completion loop
-is still in progress. `GET /v1/jobs/{id}/artifacts` uses the same storage adapter for
+see [completion publication](completion.md). Worker startup now recovers journaled
+completions; Rust transfers and live job execution/delivery remain in progress.
+`GET /v1/jobs/{id}/artifacts` uses the same storage adapter for
 project-authorized output download grants; see [artifact downloads](artifact-downloads.md).
 
 ## Submit and inspect from the CLI

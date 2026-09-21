@@ -2,7 +2,8 @@
 
 The actual `dispatch-worker` executable now opens its journal, registers a fresh
 incarnation over mTLS, reconciles previous-session Docker containers, and reports
-health/readiness periodically. Job acquisition and per-attempt execution are not
+health/readiness periodically. Startup also delivers journaled completion requests
+and persists their authoritative outcomes. Job acquisition and per-attempt execution are not
 connected yet. A READY worker currently remains idle; this is not the completed
 CLI-to-result execution path.
 
@@ -102,11 +103,40 @@ requests retry after one second. RPC/runtime deadlines remain in their adapters.
 There is no active-job lease maintenance in this loop yet.
 
 JSON state-change events are `session_pending`, `registered`, `reconciling`, `ready`,
-`draining`, and `control_unavailable`. Terminal fencing/authentication/conflict
+`draining`, and `control_unavailable`. `completion_recovered` reports a durably
+resolved attempt with its attempt ID and numeric protocol decision/state; it never
+includes manifest, spec, metrics, or credentials. Terminal fencing/authentication/conflict
 errors exit nonzero. The exclusive journal lock remains held throughout the process,
 so a second process using the same state directory exits with `Busy`. Signal-driven
 job drain/termination is not implemented; this slice has no acquired jobs, and normal
 OS process termination releases the journal lock.
+
+## Completion recovery (D11q)
+
+After recording its new registration, the agent starts a bounded scan of the
+journal alongside the health/cleanup loop. Registration first fences the preceding
+session. Recovery never resumes its execution authority or starts containers.
+Each record without a completion is skipped. A validated accepted/fenced/terminal
+reply already on disk needs no network request. Otherwise `deliver_pending` sends
+the exact saved request over mTLS and syncs its validated reply before returning.
+
+The scan retains only the journal's bounded attempt-ID inventory (at most 4096)
+and loads one record at a time. At most one completion RPC is outstanding. Retryable
+transport errors and STOP_REQUESTED are requeued with a one-second delay so other
+records can progress. A cloned RPC handle and asynchronous journal access keep
+recovery waits separate from heartbeats and physical container cleanup. Terminal
+RPC errors, conflicting replies, or corrupt journal evidence end the agent with
+the original evidence retained. Cancelling a filesystem await still follows the
+journal's existing ambiguous-write/reopen rules.
+
+An accepted historical completion is replayable after session replacement. A
+completion that never committed is rejected after the old attempt is fenced; it
+must not become a newly accepted result. A recovered rejection is an outcome, not
+a reason to re-execute that attempt. The server's retry policy owns replacement work.
+
+This scans startup evidence only. Live acquisition/execution must still call the
+delivery component after output verification. Cancellation supersession, local
+capacity/workspace cleanup, and retention of resolved records remain required.
 
 ## Verification and limits
 
@@ -119,6 +149,16 @@ the database commit and verifies an unchanged replay while cleanup proceeds. A
 second worker process cannot share the journal; credential revocation terminates
 the running process on its next report.
 
+The completion recovery integration tests seed synthetic local execution evidence
+for a real PostgreSQL attempt with a verified artifact. One case commits completion
+and withholds its reply while the Rust delivery process is killed. The actual
+worker executable then registers a new session, retries a transient server failure,
+recovers the original manifest, and persists it. A second restart reads that reply
+without resending completion. Another case seeds an unaccepted request: session
+takeover marks the old attempt LOST, and recovery persists rejection without any
+completion row, accepted result, or completion event. Both use real mTLS and Docker
+inventory access; the fixture does not run the workload itself.
+
 `make integration` runs this alongside Linux worker tests, real Docker lifecycle
 checks, migrations, and existing Go/Rust mTLS workflows. `make test lint smoke`
 covers config rejection, binary argument handling, protocol regression, and lint.
@@ -126,5 +166,5 @@ covers config rejection, binary argument handling, protocol regression, and lint
 The old container in this test is fixture-created. The stronger release gate still
 requires the agent itself to acquire/start a job, be killed while it runs, restart,
 and recover through this startup path. Acquisition/supervision, strict scratch,
-transfers/completion, signal shutdown, multi-host verification, and the rest of
+transfers/live completion, signal shutdown, multi-host verification, and the rest of
 v0.1 remain required.

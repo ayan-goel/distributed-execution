@@ -246,6 +246,7 @@ an unknown attempt is fenced. No storage request occurs after artifact verificat
 
 The probe is a protocol fixture, not a production delivery loop. The
 [worker journal](worker-journal.md#pending-completion-evidence-d11o) now persists and
-recovers pending request evidence and validated acknowledgements. Delivery after
-process restart, output transfers, and connecting these operations to the worker's
-execution loop remain required.
+recovers pending request evidence and validated acknowledgements. The actual
+[startup agent](worker-agent.md#completion-recovery-d11q) now delivers these after
+process restart. Output transfers and connecting live execution to delivery remain
+required.

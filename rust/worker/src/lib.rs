@@ -1,5 +1,7 @@
 #[cfg(unix)]
 pub mod agent;
+#[cfg(unix)]
+pub mod completion;
 pub mod control;
 pub mod execution;
 #[cfg(unix)]
