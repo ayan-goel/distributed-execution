@@ -13,7 +13,8 @@ three exact phase-report requests. UUIDs and the spec SHA-256 are validated befo
 writing and after reading. Replaying an identical assignment preserves all evidence;
 changing its identity or execution specification returns `Conflict`.
 
-The intended supervisor order is:
+The [launch coordinator](worker-launch.md) now implements the first three steps of
+this supervisor order; execution/finalization phase orchestration remains pending:
 
 1. Persist the assignment before taking any action on it.
 2. Persist a STARTING report with `prepare_phase`, then send that exact request.

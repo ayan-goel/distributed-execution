@@ -138,6 +138,7 @@ pub struct ContainerLogs {
 // without exposing Docker-specific response types to the future supervisor.
 pub trait Runtime {
     type Handle: Send + Sync;
+    fn container_id(handle: &Self::Handle) -> &str;
     fn create(
         &self,
         identity: &AttemptAuthority,
@@ -259,6 +260,9 @@ impl DockerRuntime {
 
 impl Runtime for DockerRuntime {
     type Handle = ContainerHandle;
+    fn container_id(handle: &ContainerHandle) -> &str {
+        handle.id()
+    }
     async fn create(
         &self,
         identity: &AttemptAuthority,

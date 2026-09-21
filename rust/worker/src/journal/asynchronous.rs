@@ -1,5 +1,7 @@
 use super::{Journal, JournalError, RecoveredAttempt};
-use dispatch_protocol::v1::{Assignment, AttemptState, RegisterWorkerResponse, ReportPhaseRequest};
+use dispatch_protocol::v1::{
+    Assignment, AttemptState, RegisterWorkerResponse, ReportPhaseRequest, WorkerSession,
+};
 use std::sync::{Arc, Mutex};
 use tokio::sync::Semaphore;
 
@@ -47,6 +49,35 @@ impl AsyncJournal {
     ) -> Result<(), JournalError> {
         self.apply(move |journal| journal.record_registration(&reply))
             .await
+    }
+    pub(crate) async fn prepare_launch(
+        &self,
+        assignment: Assignment,
+        session: WorkerSession,
+    ) -> Result<ReportPhaseRequest, JournalError> {
+        self.apply(move |journal| {
+            let identity = assignment.authority.as_ref().ok_or(JournalError::Invalid)?;
+            let saved = journal.load_session()?.ok_or(JournalError::Identity)?;
+            // Only the acknowledged incarnation begun by this open owner may
+            // launch. Reopening historical session metadata restores no authority.
+            if journal.incarnation.as_deref() != Some(session.session_id.as_str())
+                || journal.worker_id != session.worker_id
+                || saved.generation().is_none()
+                || saved.registration().requested_session_id != session.session_id
+                || identity.worker_id != session.worker_id
+                || identity.session_id != session.session_id
+            {
+                return Err(JournalError::Identity);
+            }
+            // Claim the attempt while serialized with all journal mutations.
+            // Even an incomplete earlier launch requires reconciliation, not replay.
+            if journal.load_attempt(&identity.attempt_id)?.is_some() {
+                return Err(JournalError::Conflict);
+            }
+            journal.persist_assignment(&assignment)?;
+            journal.prepare_phase(&identity.attempt_id, AttemptState::Starting)
+        })
+        .await
     }
     pub async fn persist_assignment(&self, assignment: Assignment) -> Result<(), JournalError> {
         self.apply(move |journal| journal.persist_assignment(&assignment))

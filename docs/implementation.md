@@ -888,3 +888,28 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   PostgreSQL/mTLS/Docker startup suite passed. The actual startup test still rejects
   a second process sharing the journal and exits after credential revocation.
 - Durable launch/phase sequencing and the remaining full v0.1 gates stay open.
+
+### D08f: durable cached-image launch coordinator
+
+- Connected exact assignment/session/channel/workspace identity, acknowledged current
+  journal incarnation, a serialized unique attempt claim, durable STARTING intent,
+  phase acknowledgement, Docker creation, durable container binding, one start call,
+  and post-start inspection. Repeated deliveries and already-advanced phase replies
+  cannot initiate another launch. A fast exit is accepted as process evidence.
+- STARTING transport retries preserve the journaled request. Runtime start uncertainty
+  is resolved through inspection without repeating start. Live authority checks bound
+  journal/RPC/runtime waits; failure with a known handle uses shared bounded kill and
+  confirmation. Unknown create outcomes remain explicitly uncertain. No cleanup path
+  deletes logs/containers or releases server capacity.
+- Added receiver identity/current-window access within the worker and a runtime
+  container-ID accessor for journal binding. Factored the existing watchdog termination
+  sequence into a shared helper without changing its stop-confirmation requirements.
+- Tests first failed for the missing launch API. Seven real-journal/fake-runtime tests
+  cover ordering and exact phase replay, duplicate delivery, ambiguous start, fast
+  exit, expiry during RPC/start, unknown create, failed durable binding, unacknowledged
+  or wrong session, generation mismatch, and server rejection/advanced progress.
+- `make test lint smoke`, Linux worker tests, and real Docker lifecycle/recovery
+  checks passed. Documented the component, caller preconditions, cancellation limits,
+  cleanup evidence, and verification scope in `docs/worker-launch.md`.
+- Combined real service/Docker launch verification, post-launch phase orchestration,
+  acquisition, staging/strict workspaces, and the remaining full v0.1 gates stay open.

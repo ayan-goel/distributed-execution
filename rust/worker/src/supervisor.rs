@@ -37,7 +37,10 @@ pub struct AuthorityController {
     identity: AttemptAuthority,
     state: watch::Sender<AuthorityState>,
 }
-pub struct SupervisedAuthority(watch::Receiver<AuthorityState>);
+pub struct SupervisedAuthority {
+    identity: AttemptAuthority,
+    state: watch::Receiver<AuthorityState>,
+}
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum AuthorityUpdateError {
@@ -74,8 +77,14 @@ pub fn authority_channel(
         .map_err(|_| AuthorityUpdateError::Expired)?;
     let (state, receiver) = watch::channel(AuthorityState::Live(window));
     Ok((
-        AuthorityController { identity, state },
-        SupervisedAuthority(receiver),
+        AuthorityController {
+            identity: identity.clone(),
+            state,
+        },
+        SupervisedAuthority {
+            identity,
+            state: receiver,
+        },
     ))
 }
 
@@ -152,24 +161,44 @@ fn live(state: &AuthorityState) -> Result<Duration, StopReason> {
 }
 
 impl SupervisedAuthority {
+    pub(crate) fn identity(&self) -> &AttemptAuthority {
+        &self.identity
+    }
+
+    pub(crate) fn window(&mut self) -> Result<AuthorityWindow, StopReason> {
+        self.check()?;
+        match *self.state.borrow() {
+            AuthorityState::Live(window) => {
+                window
+                    .remaining()
+                    .map_err(|_| StopReason::AuthorityExpired)?;
+                Ok(window)
+            }
+            AuthorityState::Stop(reason) => Err(reason),
+        }
+    }
+
     fn check(&mut self) -> Result<Duration, StopReason> {
-        let current = *self.0.borrow_and_update();
+        let current = *self.state.borrow_and_update();
         if let AuthorityState::Stop(reason) = current {
             return Err(reason);
         }
-        if self.0.has_changed().is_err() {
+        if self.state.has_changed().is_err() {
             return Err(StopReason::ControllerLost);
         }
         live(&current)
     }
 
-    async fn while_live<T>(&mut self, operation: impl Future<Output = T>) -> Result<T, StopReason> {
+    pub(crate) async fn while_live<T>(
+        &mut self,
+        operation: impl Future<Output = T>,
+    ) -> Result<T, StopReason> {
         tokio::pin!(operation);
         loop {
             let until_check = self.check()?.min(OBSERVATION_TICK);
             tokio::select! {
                 result = &mut operation => { self.check()?; return Ok(result); },
-                _ = self.0.changed() => {},
+                _ = self.state.changed() => {},
                 _ = tokio::time::sleep(until_check) => {},
             }
         }
@@ -203,18 +232,22 @@ pub async fn supervise_running<R: Runtime>(
             break reason;
         }
     };
+    let confirmed = terminate(runtime, handle).await;
+    SupervisionOutcome::Stopped { reason, confirmed }
+}
+
+pub(crate) async fn terminate<R: Runtime>(runtime: &R, handle: &R::Handle) -> bool {
     // Loss of authority uses immediate kill, not a grace period that could extend
     // execution. A stalled daemon is uncertainty: never release local reservations
     // merely because the kill request was sent or timed out.
     let _ = tokio::time::timeout(CLEANUP_BUDGET, runtime.kill(handle)).await;
-    let confirmed = match tokio::time::timeout(CLEANUP_BUDGET, runtime.inspect(handle)).await {
+    match tokio::time::timeout(CLEANUP_BUDGET, runtime.inspect(handle)).await {
         Ok(Ok(status)) => {
             !status.running && matches!(status.state, ContainerState::Exited | ContainerState::Dead)
         }
         Ok(Err(crate::runtime::RuntimeError::Daemon(404))) => true,
         _ => false,
-    };
-    SupervisionOutcome::Stopped { reason, confirmed }
+    }
 }
 
 #[cfg(test)]
@@ -237,6 +270,9 @@ mod tests {
     }
     impl Runtime for Fake {
         type Handle = ();
+        fn container_id(_: &()) -> &str {
+            "unused-watchdog-handle"
+        }
         async fn create(
             &self,
             _: &AttemptAuthority,
