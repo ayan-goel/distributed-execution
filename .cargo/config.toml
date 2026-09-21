@@ -1,0 +1,4 @@
+[build]
+# Go's ./... traversal ignores dot-directories. Isolating Cargo's changing build
+# tree prevents Go package discovery from racing Rust incremental compilation.
+target-dir = ".local/cargo-target"

@@ -1,0 +1,198 @@
+syntax = "proto3";
+package dispatch.worker.v1;
+option go_package = "dispatch.local/dispatch/gen/dispatch/worker/v1;workerv1";
+
+// Mutations carry stable request identities; transport retries alone never grant
+// execution authority. Removed field numbers must be reserved, never reused.
+service WorkerService {
+  rpc RegisterWorker(RegisterWorkerRequest) returns (RegisterWorkerResponse);
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+  rpc AcquireWork(AcquireWorkRequest) returns (AcquireWorkResponse);
+  rpc ListAssignments(ListAssignmentsRequest) returns (ListAssignmentsResponse);
+  rpc ReportPhase(ReportPhaseRequest) returns (MutationResponse);
+  rpc RenewLeases(RenewLeasesRequest) returns (RenewLeasesResponse);
+  rpc CreateUpload(CreateUploadRequest) returns (CreateUploadResponse);
+  rpc FinalizeUpload(FinalizeUploadRequest) returns (FinalizeUploadResponse);
+  rpc RegisterLogSegment(RegisterLogSegmentRequest) returns (MutationResponse);
+  rpc CompleteAttempt(CompleteAttemptRequest) returns (CompleteAttemptResponse);
+}
+
+message WorkerSession { string worker_id = 1; string session_id = 2; }
+message AttemptAuthority {
+  string job_id = 1;
+  string attempt_id = 2;
+  uint64 generation = 3;
+  string worker_id = 4;
+  string session_id = 5;
+}
+message Resources { uint32 cpu_millis = 1; uint64 memory_bytes = 2; uint64 scratch_bytes = 3; }
+
+enum AttemptState {
+  ATTEMPT_STATE_UNSPECIFIED = 0;
+  ASSIGNED = 1; STARTING = 2; RUNNING = 3; FINALIZING = 4;
+  SUCCEEDED = 5; FAILED = 6; LOST = 7; CANCELLED = 8;
+}
+enum FailureReason {
+  FAILURE_REASON_UNSPECIFIED = 0;
+  WORKER_LOST = 1; RUNTIME_UNAVAILABLE = 2; TRANSFER_FAILED = 3;
+  APPLICATION_EXIT = 4; OOM = 5; STARTUP_TIMEOUT = 6;
+  EXECUTION_TIMEOUT = 7; OUTPUT_INVALID = 8; USER_CANCELLED = 9;
+  FINALIZATION_TIMEOUT = 10;
+}
+enum Decision {
+  DECISION_UNSPECIFIED = 0;
+  ACCEPTED = 1; FENCED = 2; STOP_REQUESTED = 3; ALREADY_TERMINAL = 4;
+}
+enum NoWorkReason {
+  NO_WORK_REASON_UNSPECIFIED = 0;
+  QUEUE_EMPTY = 1; NO_RESOURCE_FIT = 2; PROJECT_QUOTA = 3;
+  SWEEP_CONCURRENCY = 4; PLACEMENT_MISMATCH = 5; WORKER_NOT_READY = 6;
+}
+message MutationResponse { Decision decision = 1; AttemptState state = 2; }
+
+message RegisterWorkerRequest {
+  string worker_id = 1;
+  string request_id = 2;
+  string requested_session_id = 3;
+  uint32 protocol_version = 4;
+  Resources allocatable = 5;
+  uint32 execution_slots = 6;
+  map<string,string> labels = 7;
+  repeated string capabilities = 8;
+}
+message RegisterWorkerResponse {
+  WorkerSession session = 1;
+  uint64 session_generation = 2;
+  uint32 protocol_version = 3;
+  bool cleanup_required = 4;
+}
+message ExecutionInventory {
+  AttemptAuthority authority = 1;
+  string container_id = 2;
+  bool running = 3;
+}
+message HeartbeatRequest {
+  WorkerSession session = 1;
+  string request_id = 2;
+  bool runtime_healthy = 3;
+  bool disk_pressure = 4;
+  bool reconciliation_complete = 5;
+  repeated ExecutionInventory inventory = 6;
+}
+message HeartbeatResponse {
+  bool drain = 1;
+  bool reconcile = 2;
+  repeated AttemptAuthority stop = 3;
+}
+
+message Assignment {
+  AttemptAuthority authority = 1;
+  string image_digest = 2;
+  repeated string argv = 3;
+  Resources resources = 4;
+  bytes canonical_job_spec_json = 5;
+  string spec_sha256 = 6;
+  // Remaining validity is recomputed on replay. The worker subtracts elapsed
+  // RPC time and a safety margin; receipt never starts a fresh full lease.
+  uint64 lease_duration_ms = 7;
+  int64 server_time_unix_ms = 8;
+  uint64 phase_remaining_ms = 9;
+  repeated InputManifest inputs = 10;
+}
+message InputManifest {
+  string dataset_id = 1;
+  string mount_path = 2;
+  repeated InputObject objects = 3;
+}
+message ObjectVersion {
+  string key = 1;
+  string version_id = 2;
+  uint64 size_bytes = 3;
+  string sha256 = 4;
+}
+message InputObject {
+  string relative_path = 1;
+  ObjectVersion object = 2;
+  string download_url = 3;
+  int64 expires_unix_ms = 4;
+}
+message AcquireWorkRequest { WorkerSession session = 1; string request_id = 2; }
+message AcquireWorkResponse {
+  oneof outcome { Assignment assignment = 1; NoWorkReason no_work = 2; Decision rejected = 3; }
+}
+message ListAssignmentsRequest { WorkerSession session = 1; }
+message ListAssignmentsResponse { repeated Assignment assignments = 1; }
+message ReportPhaseRequest {
+  AttemptAuthority authority = 1;
+  string event_id = 2;
+  AttemptState phase = 3;
+  string container_id = 4;
+  optional int32 exit_code = 5;
+}
+message RenewLeasesRequest { WorkerSession session = 1; string request_id = 2; repeated AttemptAuthority attempts = 3; }
+message LeaseResult {
+  AttemptAuthority authority = 1;
+  Decision decision = 2;
+  uint64 remaining_ms = 3;
+  int64 server_time_unix_ms = 4;
+  uint64 phase_remaining_ms = 5;
+}
+message RenewLeasesResponse { repeated LeaseResult results = 1; }
+
+enum ArtifactKind { ARTIFACT_KIND_UNSPECIFIED = 0; OUTPUT = 1; LOG = 2; MANIFEST = 3; }
+message CreateUploadRequest {
+  AttemptAuthority authority = 1;
+  string request_id = 2;
+  string name = 3;
+  ArtifactKind kind = 4;
+  uint64 size_bytes = 5;
+  string sha256 = 6;
+  uint32 part_count = 7;
+}
+message UploadPart { uint32 number = 1; string url = 2; }
+message CreateUploadResponse {
+  string upload_id = 1;
+  string object_key = 2;
+  string upload_url = 3;
+  map<string,string> required_headers = 4;
+  int64 expires_unix_ms = 5;
+  repeated UploadPart parts = 6;
+}
+message CompletedPart { uint32 number = 1; string etag = 2; }
+message FinalizeUploadRequest {
+  AttemptAuthority authority = 1;
+  string request_id = 2;
+  string upload_id = 3;
+  ObjectVersion object = 4;
+  repeated CompletedPart parts = 5;
+}
+message FinalizeUploadResponse { string artifact_id = 1; ObjectVersion object = 2; }
+enum LogStream { LOG_STREAM_UNSPECIFIED = 0; STDOUT = 1; STDERR = 2; }
+message LogGap { LogStream stream = 1; uint64 first_sequence = 2; uint64 last_sequence = 3; }
+message RegisterLogSegmentRequest {
+  AttemptAuthority authority = 1;
+  string request_id = 2;
+  string artifact_id = 3;
+  LogStream stream = 4;
+  uint64 first_sequence = 5;
+  uint64 last_sequence = 6;
+  repeated LogGap gaps = 7;
+}
+message OutputReference { string name = 1; string artifact_id = 2; }
+message CompleteAttemptRequest {
+  AttemptAuthority authority = 1;
+  string completion_id = 2;
+  string payload_sha256 = 3;
+  optional int32 exit_code = 4;
+  FailureReason reason = 5;
+  bool stopped = 6;
+  repeated OutputReference outputs = 7;
+  bool logs_complete = 8;
+  repeated LogGap gaps = 9;
+  bytes metrics_json = 10;
+}
+message CompleteAttemptResponse {
+  Decision decision = 1;
+  AttemptState state = 2;
+  bytes accepted_manifest_json = 3;
+}

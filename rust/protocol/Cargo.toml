@@ -1,0 +1,13 @@
+[package]
+name = "dispatch-protocol"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+prost = "=0.14.3"
+tonic = "=0.14.6"
+tonic-prost = "=0.14.6"
+
+[build-dependencies]
+tonic-prost-build = "=0.14.6"

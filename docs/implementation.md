@@ -20,7 +20,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D01 build foundation | none | Pinned Go/Cargo builds, binary smoke checks, CI configuration | local gate passed; remote CI pending |
 | D02 job and sweep contracts | D01 | Strict schema, unsafe input rejection, stable canonical hash, deterministic expansion | parser/expansion gates passed; published schemas pending |
 | D03 database invariants | D01 | Real PostgreSQL migrations up/down/upgrade; uniqueness, references, checks | core schema gate passed; migration runner and later tables pending |
-| D04 worker protocol | D01 | Generated Go/Rust gRPC bindings; cross-language golden round-trip, drift check | pending |
+| D04 worker protocol | D01 | Generated Go/Rust gRPC bindings; cross-language golden round-trip, drift check | wire generation/round-trip passed; service boundary tests pending |
 | D05 durable submission | D02,D03 | HTTP/CLI submission; 100 identical requests yield one job; changed payload conflicts | pending |
 | D06 worker identities | D03,D04 | Authenticated registration, session takeover/recovery; stale-session rejection | pending |
 | D07 acquisition | D03,D06 | Atomic assignment/reservations; concurrent quota/capacity races; acquisition replay | pending |
@@ -131,3 +131,20 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 - `scripts/test-store.sh` passed with Go race detection; `make test lint build`
   passed. The integration command runs schema and store suites in disposable DBs.
 - Documented history/checksum behavior and test isolation in `docs/database.md`.
+
+### D04a: generated Go/Rust worker protocol
+
+- Defined all ten worker RPCs and explicit authority, session, phase, decision,
+  upload, object-version, log-gap, and completion types. Generated checked-in Go
+  bindings; Rust builds from the same proto using pinned Tonic/Prost dependencies.
+- Golden test initially failed because bindings were absent. Go → Rust → Go now
+  preserves all assignment fields, including Unicode and integers above 2^53/2^32.
+- Clippy exposed a large generated acquisition enum. Inspected Prost's oneof path
+  matching and configured only the assignment variant to be boxed; lint now passes.
+- A concurrent Go module scan raced Cargo's incremental directory. Moved Cargo
+  output into ignored `.local/cargo-target`, outside Go's `./...` traversal.
+- `make test lint smoke` and `make generate-check` passed. Store integration tests
+  passed again after shared Go dependencies changed. Existing pinned generator
+  binaries are reused so drift checks do not require a network download each run.
+- Documented protocol semantics, limits to enforce, version pins, and evidence in
+  `docs/protocol.md`. Authentication and RPC boundary enforcement remain unimplemented.

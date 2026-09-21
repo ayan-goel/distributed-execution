@@ -9,11 +9,13 @@ See [the specification](Dispatch_Project_Spec.md) for the product contract and
 
 ## Build
 
-Install Go 1.27.1 and Rust 1.88.0, then run:
+Install Go 1.27.1, Rust 1.88.0, and protoc 34.1, then run:
 
 ```sh
 make build
 make test lint smoke
+make integration
+make generate-check
 ```
 
 On macOS with separately installed Command Line Tools, use
@@ -23,6 +25,10 @@ Docker Desktop tests do not substitute for the independent-host release test.
 
 Go/Cargo dependency versions are locked. The Go module path is local until a public
 repository is chosen. No cloud account is required for development.
+
+Implementation details and verification records live in `docs/`:
+[contracts](docs/contracts.md), [database](docs/database.md),
+[worker protocol](docs/protocol.md), and [slice ledger](docs/implementation.md).
 
 ## Build references
 
