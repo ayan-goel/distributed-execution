@@ -3,19 +3,23 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"flag"
 	"io"
 	"log/slog"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
 	"dispatch.local/dispatch/internal/admission"
 	"dispatch.local/dispatch/internal/api"
+	"dispatch.local/dispatch/internal/workerapi"
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"google.golang.org/grpc"
 )
 
 type stringsFlag []string
@@ -24,9 +28,10 @@ func (s *stringsFlag) String() string         { return strings.Join(*s, ",") }
 func (s *stringsFlag) Set(value string) error { *s = append(*s, value); return nil }
 
 type serveConfig struct {
-	listen, cert, key     string
-	dev                   bool
-	registries, authHosts stringsFlag
+	listen, cert, key                             string
+	dev                                           bool
+	registries, authHosts                         stringsFlag
+	workerListen, workerCert, workerKey, workerCA string
 }
 
 func flags(name string) *flag.FlagSet {
@@ -44,6 +49,10 @@ func parseServeConfig(args []string) (serveConfig, error) {
 	f.BoolVar(&c.dev, "dev-insecure", false, "allow plaintext loopback development")
 	f.Var(&c.registries, "allow-registry", "approved registry host (repeatable)")
 	f.Var(&c.authHosts, "allow-registry-auth-host", "approved registry auth host (repeatable)")
+	f.StringVar(&c.workerListen, "worker-listen", "", "optional worker gRPC listen address; mTLS always required")
+	f.StringVar(&c.workerCert, "worker-tls-cert", "", "worker listener server certificate")
+	f.StringVar(&c.workerKey, "worker-tls-key", "", "worker listener server private key")
+	f.StringVar(&c.workerCA, "worker-client-ca", "", "trusted worker client CA bundle")
 	if err := f.Parse(args); err != nil {
 		return c, err
 	}
@@ -68,6 +77,16 @@ func parseServeConfig(args []string) (serveConfig, error) {
 	if (c.cert == "") != (c.key == "") {
 		return c, errors.New("TLS certificate and key must be supplied together")
 	}
+	if c.workerListen != "" {
+		if _, _, err := net.SplitHostPort(c.workerListen); err != nil {
+			return c, errors.New("invalid worker listen address")
+		}
+		if c.workerCert == "" || c.workerKey == "" || c.workerCA == "" {
+			return c, errors.New("worker listener requires --worker-tls-cert, --worker-tls-key, and --worker-client-ca")
+		}
+	} else if c.workerCert != "" || c.workerKey != "" || c.workerCA != "" {
+		return c, errors.New("worker TLS options require --worker-listen")
+	}
 	if len(c.registries) == 0 {
 		return c, errors.New("at least one --allow-registry is required")
 	}
@@ -82,36 +101,104 @@ func parseServeConfig(args []string) (serveConfig, error) {
 func serve(ctx context.Context, pool *pgxpool.Pool, c serveConfig, out io.Writer) error {
 	images := admission.RegistryResolver{Allowed: c.registries, AuthHosts: c.authHosts, AllowLoopbackHTTP: c.dev}
 	server := &http.Server{Handler: api.New(pool, images), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 20 * time.Second, WriteTimeout: 20 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10, TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13}}
+	// Validate both TLS configurations before opening either listener. Startup
+	// must not advertise a working HTTP service when worker credentials are broken.
+	if c.cert != "" {
+		certificate, err := tls.LoadX509KeyPair(c.cert, c.key)
+		if err != nil {
+			return errors.New("cannot load HTTP TLS certificate/key")
+		}
+		server.TLSConfig.Certificates = []tls.Certificate{certificate}
+	}
+	var worker *grpc.Server
+	if c.workerListen != "" {
+		certificate, err := tls.LoadX509KeyPair(c.workerCert, c.workerKey)
+		if err != nil {
+			return errors.New("cannot load worker listener TLS certificate/key")
+		}
+		file, err := os.Open(c.workerCA)
+		if err != nil {
+			return errors.New("cannot read worker client CA bundle")
+		}
+		body, err := io.ReadAll(io.LimitReader(file, (1<<20)+1))
+		_ = file.Close()
+		if err != nil || len(body) > 1<<20 {
+			return errors.New("worker client CA bundle must be readable and at most 1 MiB")
+		}
+		roots := x509.NewCertPool()
+		if !roots.AppendCertsFromPEM(body) {
+			return errors.New("worker client CA bundle contains no valid certificates")
+		}
+		worker, err = workerapi.NewServer(pool, certificate, roots, workerapi.NewService(pool))
+		if err != nil {
+			return err
+		}
+	}
 	listener, err := net.Listen("tcp", c.listen)
 	if err != nil {
 		return err
 	}
 	defer listener.Close()
+	var workerListener net.Listener
+	if worker != nil {
+		workerListener, err = net.Listen("tcp", c.workerListen)
+		if err != nil {
+			return err
+		}
+		defer workerListener.Close()
+	}
 	logger := slog.New(slog.NewJSONHandler(out, nil))
-	logger.Info("http_listening", "address", listener.Addr().String(), "tls", c.cert != "")
-	finished := make(chan error, 1)
+	finished := make(chan error, 2)
 	go func() {
 		if c.cert != "" {
-			finished <- server.ServeTLS(listener, c.cert, c.key)
+			finished <- server.ServeTLS(listener, "", "")
 		} else {
 			finished <- server.Serve(listener)
 		}
 	}()
+	if worker != nil {
+		go func() { finished <- worker.Serve(workerListener) }()
+	}
+	logger.Info("http_listening", "address", listener.Addr().String(), "tls", c.cert != "")
+	if worker != nil {
+		logger.Info("worker_listening", "address", workerListener.Addr().String(), "mtls", true)
+	}
+	var servingError error
 	select {
 	case err := <-finished:
-		if errors.Is(err, http.ErrServerClosed) {
-			return nil
+		if !errors.Is(err, http.ErrServerClosed) && !errors.Is(err, grpc.ErrServerStopped) {
+			servingError = err
 		}
-		return err
 	case <-ctx.Done():
-		// Drain accepted HTTP requests before closing the pool. Force-close only
-		// after the bounded shutdown budget, preserving durable submission replay.
-		shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if err := server.Shutdown(shutdown); err != nil {
-			_ = server.Close()
-			return err
-		}
-		return nil
 	}
+	return errors.Join(servingError, shutdownServers(server, worker, 10*time.Second))
+}
+
+func shutdownServers(server *http.Server, worker *grpc.Server, budget time.Duration) error {
+	// Stop both admission paths before the caller closes their shared pool.
+	// Force-close after one common budget; durable request IDs resolve uncertainty.
+	ctx, cancel := context.WithTimeout(context.Background(), budget)
+	defer cancel()
+	done := make(chan struct{})
+	if worker != nil {
+		go func() { worker.GracefulStop(); close(done) }()
+	} else {
+		close(done)
+	}
+	httpErr := server.Shutdown(ctx)
+	if httpErr != nil {
+		_ = server.Close()
+	}
+	if worker == nil {
+		return httpErr
+	}
+	var workerErr error
+	select {
+	case <-done:
+	case <-ctx.Done():
+		worker.Stop()
+		<-done
+		workerErr = errors.New("worker RPC shutdown deadline exceeded")
+	}
+	return errors.Join(httpErr, workerErr)
 }

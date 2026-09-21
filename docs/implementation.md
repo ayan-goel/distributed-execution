@@ -22,7 +22,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D03 database invariants | D01 | Real PostgreSQL migrations up/down/upgrade; uniqueness, references, checks | core schema and migration runner gates passed; later feature tables pending |
 | D04 worker protocol | D01 | Generated Go/Rust gRPC bindings; cross-language golden round-trip, drift check | wire generation/round-trip passed; service boundary tests pending |
 | D05 durable submission | D02,D03 | HTTP/CLI submission; 100 identical requests yield one job; changed payload conflicts | input-free job admission, auth, image resolution, HTTP/CLI gates passed; datasets depend on D16 |
-| D06 worker identities | D03,D04 | Authenticated registration, session takeover/recovery; stale-session rejection | provisioning, mTLS, durable sessions/recovery/heartbeat and RPC gates passed; executable/agent wiring pending |
+| D06 worker identities | D03,D04 | Authenticated registration, session takeover/recovery; stale-session rejection | control-plane and executable gates passed; Rust agent wiring pending |
 | D07 acquisition | D03,D06 | Atomic assignment/reservations; concurrent quota/capacity races; acquisition replay | pending |
 | D08 Docker adapter | D04 | Real bounded create/start/inspect/stop; ambiguous create reconciles one identity | pending |
 | D09 leases | D06,D07 | Fresh DB-time expiry checks; delayed grants; local monotonic deadline enforcement | pending |
@@ -367,3 +367,18 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 - `make test lint smoke` and race-enabled integration passed. Reviewed certificate
   handling, authority scope, duplicate labels, and command output. Added the operator
   workflow and its current limits to `docs/running.md`.
+
+### D06h: combined HTTP and worker gRPC executable
+
+- Added optional worker listener flags with mandatory certificate/key/client-CA
+  configuration. HTTP development mode does not weaken worker mTLS. Both TLS setups
+  load and both ports bind before announcing readiness; either listener failing
+  shuts down the other. Both share a bounded graceful shutdown budget.
+- Config tests first failed on the missing flags. Unit/build checks and real
+  PostgreSQL command integration now pass for HTTP readiness, mTLS registration
+  and heartbeat, restart/replay, live operator revocation, and bad-TLS startup.
+- Review found a nil gRPC pointer on forced HTTP-only shutdown. A blocked HTTP
+  request reproduced the panic; the fix and regression test pass. `make test lint
+  smoke` and the race-enabled command/database integration suite passed afterward.
+- Reviewed startup failure cleanup, mTLS isolation, listener lifetime, and pool
+  shutdown ordering. Updated the operator/session docs with runnable commands.

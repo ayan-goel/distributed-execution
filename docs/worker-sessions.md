@@ -125,9 +125,10 @@ identity mismatch remains PermissionDenied. Registration retries return current
 cleanup requirements without manufacturing another session or refreshing liveness.
 Other worker methods still return Unimplemented until their execution slices land.
 
-The service constructor is verified through real listeners but is not yet wired to
-`dispatch-server` commands. Operator provisioning/takeover commands and the Rust
-registration/heartbeat client remain required before a user can run a worker.
+The service is now wired into `dispatch-server serve --worker-listen ...` with
+explicit mTLS configuration. Operator enrollment, revocation, and takeover commands
+are documented in [running the control plane](running.md). The Rust agent's
+registration/heartbeat client and runtime integration remain required.
 
 ## Verification
 
@@ -148,5 +149,6 @@ rollback of both cleanup and sequence after an injected state-audit failure.
 All session migrations passed fresh apply, rollback, and reapply. A real mTLS gRPC
 test now covers registration, heartbeat readiness, malformed byte/sequence bounds,
 server restart with durable session recovery, live-session conflict, approved
-takeover, and old-session rejection. Executable wiring and physical runtime cleanup
-remain required.
+takeover, and old-session rejection. Command-level integration also covers actual
+HTTP/worker listeners, restart, and live revocation. Physical runtime cleanup remains
+required.

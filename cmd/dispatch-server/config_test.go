@@ -20,3 +20,22 @@ func TestServingConfigurationRequiresSecureListener(t *testing.T) {
 		}
 	}
 }
+
+func TestWorkerListenerAlwaysRequiresCompleteMTLSConfiguration(t *testing.T) {
+	base := []string{"--dev-insecure", "--listen", "127.0.0.1:0", "--allow-registry", "index.docker.io"}
+	for _, tc := range []struct {
+		args  []string
+		valid bool
+	}{
+		{[]string{"--worker-listen", "127.0.0.1:0", "--worker-tls-cert", "server.pem", "--worker-tls-key", "server.key", "--worker-client-ca", "ca.pem"}, true},
+		{[]string{"--worker-listen", ":8444"}, false},
+		{[]string{"--worker-listen", ":8444", "--worker-tls-cert", "server.pem", "--worker-tls-key", "server.key"}, false},
+		{[]string{"--worker-client-ca", "ca.pem"}, false},
+		{[]string{"--worker-listen", "not-an-address", "--worker-tls-cert", "server.pem", "--worker-tls-key", "server.key", "--worker-client-ca", "ca.pem"}, false},
+	} {
+		_, err := parseServeConfig(append(append([]string{}, base...), tc.args...))
+		if (err == nil) != tc.valid {
+			t.Fatalf("worker listener config mismatch: %v: %v", tc.args, err)
+		}
+	}
+}

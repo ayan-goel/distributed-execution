@@ -60,7 +60,6 @@ It does not claim to stop containers. Takeover authorizes only the named replace
 session; fencing occurs when that incarnation registers successfully. Without an
 approval, automatic recovery requires inactivity and expiry of all active leases.
 These commands require direct operator database access, not a project bearer token.
-The worker listener and Rust client are still pending in this slice.
 
 ## Listener
 
@@ -76,6 +75,18 @@ Remote deployment requires a TLS certificate/key:
 bin/dispatch-server serve --listen :8443 --tls-cert /path/server.crt --tls-key /path/server.key --allow-registry index.docker.io
 ```
 
+Enable worker gRPC in the same process with a server certificate/key and the CA
+bundle allowed to issue worker client certificates:
+
+```sh
+bin/dispatch-server serve --listen :8443 --tls-cert /path/server.crt --tls-key /path/server.key --allow-registry index.docker.io --worker-listen :8444 --worker-tls-cert /path/server.crt --worker-tls-key /path/server.key --worker-client-ca /path/worker-ca.crt
+```
+
+The worker server certificate must be valid for the hostname/IP the agents connect
+to; workers verify it against their configured server CA. The worker listener always
+requires mTLS, including when HTTP uses `--dev-insecure` on loopback. Partial worker
+TLS options are rejected. Omitting all worker options runs HTTP only.
+
 TLS requires version 1.3 or newer. Repeat `--allow-registry` for additional approved
 registries; use `--allow-registry-auth-host` for separate authentication hosts.
 Private registry credential provisioning remains pending. Plain HTTP registry access
@@ -84,7 +95,11 @@ is restricted to explicit loopback development. A blank registry allowlist is re
 Startup checks/applies embedded migrations before listening; checksum drift or an
 unknown schema version stops startup. JSON startup logs include the listen address
 and TLS mode but no credentials. SIGINT/SIGTERM drain HTTP requests for up to 10
-seconds before closing the database pool. Header/body/write/idle timeouts are bounded.
+seconds before closing the database pool. HTTP and worker RPCs share this shutdown
+budget; either listener failing stops the other. Both TLS configurations load and
+both ports bind before startup events are logged. Header/body/write/idle timeouts
+are bounded. Worker registration and heartbeat RPCs are available; the Rust agent
+and job execution pipeline remain in progress.
 
 ## Submit and inspect from the CLI
 
@@ -137,3 +152,9 @@ digest/spec hash, and retries with the original key after restart during the reg
 outage. CLI unit tests cover offline commands, invalid usage, terminal-safe errors,
 and separation of recovery diagnostics from JSON output. Binary smoke tests validate
 the checked-in CPU example through the actual `dispatch` executable.
+
+Worker command integration verifies enrollment/takeover/revocation, then starts
+both actual listeners, registers and reconciles a host over mTLS, restarts the
+command, recovers the same session, and observes revocation on an existing channel.
+Bad worker TLS fails before either listener is announced. A blocked-request test
+verifies that HTTP-only forced shutdown closes requests within its supplied budget.
