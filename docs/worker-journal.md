@@ -51,9 +51,10 @@ older binaries reject records containing it rather than silently dropping eviden
 
 Tests cover reopening pending and acknowledged evidence, asynchronous journal
 access, rejected mutations, and omission of signed capabilities from saved files.
-This is storage support only: the live transfer coordinator, upload-specific
-process-death tests, and execution integration remain unfinished. Recovered records
-do not restore a lease or authorize publication under an old session.
+The [upload delivery component](worker-transfers.md#journaled-output-delivery) now
+uses these records and is tested across process death with real versioned storage.
+Live execution integration remains unfinished. Recovered records do not restore a
+lease or authorize publication under an old session.
 
 ## Pending completion evidence (D11o)
 

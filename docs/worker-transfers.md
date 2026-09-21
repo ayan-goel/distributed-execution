@@ -8,11 +8,33 @@
 3. Retain the returned immutable version, size, checksum, and object key.
 4. Submit that exact object to server verification and retain its artifact ID.
 
-The caller owns operation IDs and must persist evidence before retrying uncertain
-operations. These methods do not generate IDs, automatically repeat PUTs, renew
-authority, or complete an attempt. Upload intent/version journaling and production
-execution integration remain required. Until those are connected, the actual
-worker startup command still does not acquire work.
+The low-level methods do not generate IDs, automatically repeat PUTs, renew
+authority, or complete an attempt. The journal and delivery path below now manage
+durable output evidence. Production execution integration remains required; the
+actual worker startup command still does not acquire work.
+
+## Journaled output delivery
+
+First call `AsyncJournal::prepare_output` with a declared output's name, size, and
+hash. Then `upload::deliver_output` advances that saved declaration:
+
+- Without a saved storage version, require an open source file, obtain a grant,
+  sync its stable scope, upload, and sync the exact version/finalization request.
+- With a saved finalization request, retry only that request. No local source or
+  additional PUT is required, including after reopening the journal.
+- With a saved artifact acknowledgement, return it without storage or control RPCs.
+
+The reply is synced before delivery returns. Missing bytes before a storage version
+is saved produce an explicit `MissingSource` error with no network mutation.
+Network operations hold no journal lock. Callers own bounded retries, live
+authority checks, and cancellation at lease/phase deadlines; this function does
+not restore authority or run a background retry loop.
+
+A PUT may commit without returning its version, or the process may die before that
+version is synced. In those cases, the journal cannot recover unknown bytes or
+select the latest object version. Retrying while still authorized needs the exact
+source bytes and can leave an unreferenced version for later cleanup. Once a version
+is saved, retrying never repeats PUT or selects another version.
 
 ## Control-plane validation
 
@@ -67,11 +89,19 @@ grown files, expired grants, unsafe destinations/headers, redirects, stalled
 responses, and missing/null/duplicate version headers.
 
 The real versioned-storage integration suite invokes `upload_probe` with fixture
-bytes and an existing FINALIZING assignment. Rust requests a grant over real mTLS,
-uploads to isolated SeaweedFS, and calls finalization. The server commits then
-drops the first create/finalize replies; identical retries and an additional
-finalization replay leave one durable upload and one exact-version artifact.
-This proves the transfer components, not crash-safe live execution integration.
+bytes and an existing FINALIZING assignment. It first checks that missing local
+bytes fail before any upload RPC. With bytes available, the first committed grant
+reply is lost; Rust retries its journaled declaration unchanged. After finalization
+commits, the server withholds the reply while the parent kills the Rust process.
+The test deletes the source, reopens the journal in another process, and recovers
+the same artifact by retrying the exact saved request. A further reopen succeeds
+with upload RPCs unavailable. Database counts and object-version listing require
+one declaration, one artifact, and exactly one stored version.
+
+This fixture seeds runtime observations and retains its existing server session to
+isolate delivery recovery. It is not the production worker startup path: a full
+worker restart registers a fresh incarnation and fences unfinished old attempts.
+Recovered upload evidence alone must never authorize execution or publication.
 
 Reqwest 0.13.5 is pinned with defaults disabled and streaming/rustls support enabled.
 It is MIT OR Apache-2.0 licensed and declares Rust 1.85 compatibility, below this
@@ -81,5 +111,5 @@ adding a second crypto provider. The lockfile records the HTTP/platform trust
 dependencies. See the [client builder API](https://docs.rs/reqwest/0.13.5/reqwest/struct.ClientBuilder.html)
 and [streaming body API](https://docs.rs/reqwest/0.13.5/reqwest/struct.Body.html).
 
-Multipart, durable transfer intent/version recovery, and the agent's live
-acquisition/execution/publication loop remain part of the v0.1 work.
+Multipart, authority-aware live finalization, and the agent's acquisition/execution/
+publication loop remain part of the v0.1 work.

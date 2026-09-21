@@ -1506,3 +1506,26 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   slice at the user's request. Updated `docs/worker-journal.md` with its contract.
 - The broader build remains paused. Upload-specific process-death testing and
   live transfer/execution coordination remain unfinished.
+
+### D11v: Deliver journaled uploads and recover a lost artifact reply
+
+- Added `upload::deliver_output`, which advances an existing output declaration
+  through grant, PUT, exact-version finalization, and a synced acknowledgement.
+  A durable version skips PUT; a durable reply skips all network operations.
+  Missing source bytes before a version is saved fail without network mutation.
+- Connected the real-storage Rust probe to the journal and delivery component.
+  The fixture loses a committed grant reply, then withholds a committed artifact
+  reply while killing the Rust process. It deletes the source and reopens twice:
+  first to replay the exact finalization, then to use the saved reply while upload
+  RPCs are unavailable. PostgreSQL and version listing prove one upload, artifact,
+  and object version. Changed declarations/finalizations are rejected by the fixture.
+- The initial probe build failed for the missing component. Integration first
+  exposed a noncanonical macOS fixture path, corrected without weakening journal
+  path checks. Targeted real-storage verification then passed, followed by native
+  `make test lint smoke`, Linux worker tests, and the entire combined storage/
+  PostgreSQL/mTLS/Docker integration suite, including both real artifact workflows.
+- Updated transfer/journal documentation. Runtime observations are seeded and the
+  fixture retains its server session to isolate delivery; a full worker restart
+  must still register a new incarnation and fence old unfinished attempts. Live
+  authority/cancellation orchestration, execution integration, multipart, and the
+  remaining v0.1 features/release gates are still required.
