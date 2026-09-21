@@ -854,8 +854,11 @@ type HeartbeatRequest struct {
 	DiskPressure           bool                   `protobuf:"varint,4,opt,name=disk_pressure,json=diskPressure,proto3" json:"disk_pressure,omitempty"`
 	ReconciliationComplete bool                   `protobuf:"varint,5,opt,name=reconciliation_complete,json=reconciliationComplete,proto3" json:"reconciliation_complete,omitempty"`
 	Inventory              []*ExecutionInventory  `protobuf:"bytes,6,rep,name=inventory,proto3" json:"inventory,omitempty"`
-	unknownFields          protoimpl.UnknownFields
-	sizeCache              protoimpl.SizeCache
+	// Increase within one session and retain the same value on request retry.
+	// Old reports must not refresh liveness or overwrite newer reconciliation.
+	ReportSequence uint64 `protobuf:"varint,7,opt,name=report_sequence,json=reportSequence,proto3" json:"report_sequence,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *HeartbeatRequest) Reset() {
@@ -928,6 +931,13 @@ func (x *HeartbeatRequest) GetInventory() []*ExecutionInventory {
 		return x.Inventory
 	}
 	return nil
+}
+
+func (x *HeartbeatRequest) GetReportSequence() uint64 {
+	if x != nil {
+		return x.ReportSequence
+	}
+	return 0
 }
 
 type HeartbeatResponse struct {
@@ -2634,7 +2644,7 @@ const file_dispatch_worker_v1_worker_proto_rawDesc = "" +
 	"\x12ExecutionInventory\x12B\n" +
 	"\tauthority\x18\x01 \x01(\v2$.dispatch.worker.v1.AttemptAuthorityR\tauthority\x12!\n" +
 	"\fcontainer_id\x18\x02 \x01(\tR\vcontainerId\x12\x18\n" +
-	"\arunning\x18\x03 \x01(\bR\arunning\"\xbb\x02\n" +
+	"\arunning\x18\x03 \x01(\bR\arunning\"\xe4\x02\n" +
 	"\x10HeartbeatRequest\x12;\n" +
 	"\asession\x18\x01 \x01(\v2!.dispatch.worker.v1.WorkerSessionR\asession\x12\x1d\n" +
 	"\n" +
@@ -2642,7 +2652,8 @@ const file_dispatch_worker_v1_worker_proto_rawDesc = "" +
 	"\x0fruntime_healthy\x18\x03 \x01(\bR\x0eruntimeHealthy\x12#\n" +
 	"\rdisk_pressure\x18\x04 \x01(\bR\fdiskPressure\x127\n" +
 	"\x17reconciliation_complete\x18\x05 \x01(\bR\x16reconciliationComplete\x12D\n" +
-	"\tinventory\x18\x06 \x03(\v2&.dispatch.worker.v1.ExecutionInventoryR\tinventory\"\x81\x01\n" +
+	"\tinventory\x18\x06 \x03(\v2&.dispatch.worker.v1.ExecutionInventoryR\tinventory\x12'\n" +
+	"\x0freport_sequence\x18\a \x01(\x04R\x0ereportSequence\"\x81\x01\n" +
 	"\x11HeartbeatResponse\x12\x14\n" +
 	"\x05drain\x18\x01 \x01(\bR\x05drain\x12\x1c\n" +
 	"\treconcile\x18\x02 \x01(\bR\treconcile\x128\n" +

@@ -24,7 +24,7 @@ mean unspecified, not authorization or success. Exit status uses presence-aware
 | Operation | Required replay behavior in the service implementation |
 | --- | --- |
 | Register | Same request/incarnation returns its existing session; stale sessions remain fenced |
-| Heartbeat | Inventory is reconciled; repeating a request cannot create authority |
+| Heartbeat | Positive per-session report sequence increases; retry preserves sequence/request/payload; old reports cannot refresh liveness |
 | Acquire | Same session/request returns the stored assignment or no-work outcome |
 | List assignments | Recompute remaining authority, never replay a fresh lease |
 | Report phase | Event identity deduplicates; phase cannot move backward |
@@ -36,6 +36,14 @@ mean unspecified, not authorization or success. Exit status uses presence-aware
 Workers interpret lease durations conservatively from request-send time with a
 safety margin. A late response does not restart the lease. `STOP_REQUESTED` is
 separate from `FENCED`; neither authorizes further workload execution.
+
+Heartbeats carry `report_sequence` (field 7), starting at 1 in each incarnation.
+The server stores the latest sequence, request ID, and payload hash. An exact retry
+can retrieve current instructions but does not reapply the observation. Older
+sequences are stale; the same sequence with different identity or content conflicts.
+This bounds heartbeat deduplication state without retaining every liveness tick.
+The worker serializes heartbeat reporting and preserves the current report across
+transport retries. The database range is 1 through 2^63−1; a new session resets it.
 
 Remote authentication binds these claimed worker IDs to provisioned mTLS identities.
 Transfer URLs are sensitive bearer capabilities and must not be logged. Object

@@ -78,6 +78,9 @@ message HeartbeatRequest {
   bool disk_pressure = 4;
   bool reconciliation_complete = 5;
   repeated ExecutionInventory inventory = 6;
+  // Increase within one session and retain the same value on request retry.
+  // Old reports must not refresh liveness or overwrite newer reconciliation.
+  uint64 report_sequence = 7;
 }
 message HeartbeatResponse {
   bool drain = 1;

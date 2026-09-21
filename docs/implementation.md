@@ -309,3 +309,13 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   test also passed in the race-enabled integration suite. Fifth-migration rollback
   and reapply passed. Updated `docs/worker-sessions.md`; heartbeat reconciliation
   and registration RPC/executable integration remain required.
+
+### D04b: ordered heartbeat wire reports
+
+- Added additive field 7, `report_sequence`, to heartbeat requests. Its per-session
+  monotonic value will reject delayed observations and permit bounded replay state
+  without storing every liveness tick. Exact retries retain sequence/request/payload.
+- Regenerated Go and Rust bindings. `make generate generate-check test lint smoke`
+  passed, including cross-language round-trip and generated-code drift checks.
+- Documented sequence range and replay rules in `docs/protocol.md`. Database and
+  handler enforcement are the next slice; the wire field alone grants no behavior.
