@@ -1155,3 +1155,19 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 - Updated the protocol, operator, storage, and verification docs. Terminal manifest
   validation/publication, Rust transfers, multipart support, retention, and the
   remaining v0.1 acceptance requirements stay open.
+
+### D11f: bounded completion payload and digest contract
+
+- Added completion request types and a deterministic payload digest that binds
+  authority, exit/failure/stop evidence, verified output references, log completeness
+  and gaps, and exact metrics source bytes. Output/gap ordering is normalized without
+  mutating caller buffers; request UUID and the claimed digest remain outside payload.
+- Enforced output identity/count, nonoverlapping positive log ranges, valid failure
+  evidence, and bounded finite numeric metrics with duplicate-key rejection. Kept
+  numeric source text to avoid rounding large integers, rejected nonzero underflow,
+  and normalized true zero to bound extreme exponent representations.
+- Initial tests failed for the missing contract. `make test lint smoke` passed;
+  after adding the fixed digest vector and count/zero boundaries, the targeted
+  race-enabled completion tests passed again. No database or runtime behavior changed.
+- Documented the byte encoding and future Rust compatibility requirement in
+  `docs/completion.md`. Atomic publication and its RPC remain the next required slice.
