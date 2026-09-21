@@ -2,7 +2,8 @@
 
 A distributed batch execution platform with a Go control plane and Rust workers.
 The implementation is in progress. The server supports project/token provisioning,
-authenticated HTTP submission, and job inspection. Workers do not execute jobs yet.
+authenticated HTTP/CLI submission, and job inspection. The CLI can also validate
+job files offline. Workers do not execute jobs yet.
 
 See [the specification](Dispatch_Project_Spec.md) for the product contract and
 [the verification ledger](docs/implementation.md) for completed slices and release gates.

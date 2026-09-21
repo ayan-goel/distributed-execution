@@ -19,9 +19,9 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | --- | --- | --- | --- |
 | D01 build foundation | none | Pinned Go/Cargo builds, binary smoke checks, CI configuration | local gate passed; remote CI pending |
 | D02 job and sweep contracts | D01 | Strict schema, unsafe input rejection, stable canonical hash, deterministic expansion | parser/expansion gates passed; published schemas pending |
-| D03 database invariants | D01 | Real PostgreSQL migrations up/down/upgrade; uniqueness, references, checks | core schema gate passed; migration runner and later tables pending |
+| D03 database invariants | D01 | Real PostgreSQL migrations up/down/upgrade; uniqueness, references, checks | core schema and migration runner gates passed; later feature tables pending |
 | D04 worker protocol | D01 | Generated Go/Rust gRPC bindings; cross-language golden round-trip, drift check | wire generation/round-trip passed; service boundary tests pending |
-| D05 durable submission | D02,D03 | HTTP/CLI submission; 100 identical requests yield one job; changed payload conflicts | database admission gate passed; auth/resolution/HTTP/CLI pending |
+| D05 durable submission | D02,D03 | HTTP/CLI submission; 100 identical requests yield one job; changed payload conflicts | input-free job admission, auth, image resolution, HTTP/CLI gates passed; datasets depend on D16 |
 | D06 worker identities | D03,D04 | Authenticated registration, session takeover/recovery; stale-session rejection | pending |
 | D07 acquisition | D03,D06 | Atomic assignment/reservations; concurrent quota/capacity races; acquisition replay | pending |
 | D08 Docker adapter | D04 | Real bounded create/start/inspect/stop; ambiguous create reconciles one identity | pending |
@@ -223,3 +223,21 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   response rejection, and argument validation. The loopback redirect test requires
   network-enabled execution; `make test lint smoke` passed with that permission.
 - CLI commands and client-to-server database integration remain the next slice.
+
+### D05g: CLI validation, submission, and inspection
+
+- Added offline validation, authenticated submission, and project-scoped job
+  inspection commands with JSON output, bounded client calls, signal cancellation,
+  and exit 2 on client errors. Submission prints a generated or explicit recovery
+  key to stderr before sending; retries preserve job identity without registry access.
+- Tests first failed with the missing CLI entry point. Unit tests now cover offline
+  behavior, invalid usage, key preservation, JSON/diagnostic separation, and safe
+  terminal errors. `make test lint smoke` passed, including actual-binary validation
+  of a new deterministic CPU example.
+- Race-enabled PostgreSQL/registry/server integration passed: CLI submission and
+  inspection preserve the resolved digest and hash; restart followed by an offline
+  registry retry returns the same job. Reviewed request bounds, credential handling,
+  argument rejection, output errors, and dependency direction before committing.
+- Expanded `docs/running.md` with the current CLI workflow and uncertainty recovery.
+  This establishes durable admission only; jobs still cannot execute. D06 worker
+  identities and session fencing are next, with remaining CLI commands tracked above.

@@ -1,0 +1,35 @@
+apiVersion: dispatch.dev/v1alpha1
+kind: Job
+metadata:
+  name: cpu-sum
+  project: research
+spec:
+  image: python:3.12-slim
+  command: [python, -c]
+  args:
+    - |
+      import json
+      from pathlib import Path
+      result = {"sum": sum(range(100000)), "count": 100000}
+      Path("/outputs/result.json").write_text(json.dumps(result, sort_keys=True) + "\n")
+      print(json.dumps(result, sort_keys=True), flush=True)
+  resources:
+    cpuMillis: 1000
+    memoryMiB: 256
+    scratchMiB: 64
+  outputs:
+    - name: result
+      path: /outputs/result.json
+      required: true
+      maxBytes: 1024
+  timeouts:
+    startupSeconds: 300
+    executionSeconds: 60
+    finalizationSeconds: 120
+  retry:
+    maxAttempts: 3
+    on: [WORKER_LOST, RUNTIME_UNAVAILABLE, TRANSFER_FAILED]
+    initialBackoffSeconds: 5
+    maxBackoffSeconds: 60
+  terminationGraceSeconds: 10
+  network: disabled

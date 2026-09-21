@@ -13,10 +13,12 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"dispatch.local/dispatch/internal/cli"
 	"dispatch.local/dispatch/internal/spec"
 	"dispatch.local/dispatch/internal/store"
 	"github.com/google/go-containerregistry/pkg/name"
@@ -150,12 +152,40 @@ func TestServerCommandsSubmitAndRecoverAfterRestart(t *testing.T) {
 	if status != 201 || first.ID == "" || first.State != "QUEUED" {
 		t.Fatal("real submission failed", status)
 	}
+	file := filepath.Join(t.TempDir(), "job.json")
+	if err := os.WriteFile(file, b, 0600); err != nil {
+		t.Fatal(err)
+	}
+	cliRun := func(args ...string) store.JobRecord {
+		t.Helper()
+		var out, errs bytes.Buffer
+		env := func(key string) string {
+			return map[string]string{"DISPATCH_URL": address, "DISPATCH_TOKEN": credential.Token, "DISPATCH_DEV_INSECURE": "1"}[key]
+		}
+		if code := cli.Run(ctx, args, env, &out, &errs); code != 0 {
+			t.Fatalf("CLI failed: %d %s", code, errs.String())
+		}
+		var job store.JobRecord
+		if err := json.Unmarshal(out.Bytes(), &job); err != nil {
+			t.Fatal(err)
+		}
+		return job
+	}
+	cliFirst := cliRun("submit", file, "--idempotency-key", "cli-recovery", "--json")
+	inspected := cliRun("jobs", "get", cliFirst.ID, "--json")
+	if cliFirst.ID == first.ID || inspected.ID != cliFirst.ID || inspected.State != "QUEUED" || inspected.SpecHash != cliFirst.SpecHash || !bytes.Contains(inspected.Spec, []byte("@sha256:")) {
+		t.Fatal("CLI did not inspect the admitted immutable job")
+	}
 	stop()
 	reg.Close()
 	address, _ = start()
 	again, status := submit(address)
 	if status != 200 || again.ID != first.ID {
 		t.Fatal("restart/outage recovery changed job", status)
+	}
+	cliAgain := cliRun("submit", file, "--idempotency-key", "cli-recovery", "--json")
+	if cliAgain.ID != cliFirst.ID || cliAgain.SpecHash != cliFirst.SpecHash {
+		t.Fatal("CLI retry changed the admitted job")
 	}
 	if err := run(ctx, []string{"token", "revoke", "--project", "research", "--id", credential.ID}, io.Discard); err != nil {
 		t.Fatal(err)

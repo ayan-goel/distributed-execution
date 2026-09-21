@@ -1,15 +1,17 @@
 package main
 
 import (
-	"fmt"
+	"context"
 	"os"
+	"os/signal"
+	"syscall"
+
+	"dispatch.local/dispatch/internal/cli"
 )
 
 func main() {
-	if len(os.Args) == 2 && os.Args[1] == "--version" {
-		fmt.Println("dispatch 0.1.0-dev")
-		return
-	}
-	fmt.Fprintln(os.Stderr, "usage: dispatch --version")
-	os.Exit(2)
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	code := cli.Run(ctx, os.Args[1:], os.Getenv, os.Stdout, os.Stderr)
+	cancel()
+	os.Exit(code)
 }

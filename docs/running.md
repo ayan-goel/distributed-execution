@@ -55,9 +55,54 @@ unknown schema version stops startup. JSON startup logs include the listen addre
 and TLS mode but no credentials. SIGINT/SIGTERM drain HTTP requests for up to 10
 seconds before closing the database pool. Header/body/write/idle timeouts are bounded.
 
+## Submit and inspect from the CLI
+
+Validate the CPU example without a server or credentials:
+
+```sh
+bin/dispatch validate examples/cpu/job.yaml --json
+```
+
+For the loopback server above, load the token from the operator setup file (this
+example uses Python 3 to read JSON without printing the token):
+
+```sh
+export DISPATCH_URL=http://127.0.0.1:8080
+export DISPATCH_DEV_INSECURE=1
+export DISPATCH_TOKEN="$(python3 -c 'import json; print(json.load(open(".local/token.json"))["token"])')"
+bin/dispatch submit examples/cpu/job.yaml --idempotency-key cpu-demo-1 --json
+bin/dispatch jobs get JOB_UUID --json
+```
+
+Use an HTTPS origin and omit `DISPATCH_DEV_INSECURE` for remote servers. The client
+uses the system certificate trust store and refuses redirects. Environment tokens
+are never included in normal output. Do not enable shell tracing while loading them.
+
+Submission resolves the image tag to a verified digest. The example needs no
+dataset and will eventually produce the deterministic sum 4,999,950,000, but at
+this implementation stage it only queues. Execution and artifact download are
+still pending. The server must permit Docker Hub via `--allow-registry index.docker.io`.
+
+The CLI prints `Idempotency-Key` to stderr **before** sending a submission. If you
+omit `--idempotency-key`, it generates a UUID. Save that key and reuse it with the
+same file after a timeout, lost response, or output failure; using a new key can
+create another job. Changing the request while reusing the key returns `CONFLICT`.
+A successful submission means durable admission, not completed execution.
+
+Options follow the file or job ID. Successful commands exit 0; validation, API,
+configuration, transport, and output errors exit 2. `--json` writes one job object
+to stdout for submit/get, or `{valid,specHash}` for validation; diagnostics stay on
+stderr. Human submit/get output includes the job UUID and quoted state. Wait,
+list, cancel, logs, datasets, and artifact commands will be added in their slices.
+
 ## Current verification
 
 `make integration` verifies command entry points and a real HTTP listener with
 PostgreSQL and a local registry: migrate, create project, issue token, submit, stop,
 restart, replay while the registry is offline, and revoke the token. This verifies
 durable queued-job recovery; active worker recovery remains a separate release gate.
+The same test now exercises CLI submission and inspection, checks the stored image
+digest/spec hash, and retries with the original key after restart during the registry
+outage. CLI unit tests cover offline commands, invalid usage, terminal-safe errors,
+and separation of recovery diagnostics from JSON output. Binary smoke tests validate
+the checked-in CPU example through the actual `dispatch` executable.
