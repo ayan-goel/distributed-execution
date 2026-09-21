@@ -31,7 +31,7 @@ integration:
 	sh scripts/test-store.sh
 
 store-test:
-	cargo build -p dispatch-worker --example session_probe --locked
+	cargo build -p dispatch-worker --examples --locked
 	$(GO) test -race -tags integration -count=1 ./internal/store ./internal/admission ./internal/api ./internal/workerapi ./cmd/dispatch-server
 
 tools:

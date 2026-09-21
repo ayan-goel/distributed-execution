@@ -29,6 +29,11 @@ serialized into the worker journal or recovered as authority after restart. Reco
 must obtain current grants and apply the same send-time calculation. A valid grant
 also does not prove that runtime/spec validation or reconciliation has completed.
 
+The Rust acquisition and assignment-page client now applies this calculation to
+each response. Expired responses preserve only attempt identity for reconciliation;
+they cannot return a live execution window. The mTLS delayed-grant integration test
+checks elapsed RPC time against this boundary using the actual client.
+
 The future supervisor must recheck authority before starting/continuing work and
 initiate bounded termination early enough for cleanup. This primitive is not a
 running watchdog, renewal loop, reaper, or proof that a frozen host can stop code.

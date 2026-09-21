@@ -94,7 +94,34 @@ Recovery must pause new acquisitions while following cursors, process pages with
 retaining every spec, and continue until the cursor is blank. The cursor grants no
 cross-host/session visibility. Each page can reflect newer cancellation or expiry;
 this is not a frozen snapshot and an omitted assignment is not proof of completion
-or successful container cleanup. The Rust recovery loop remains to be implemented.
+or successful container cleanup.
+
+## Rust acquisition and recovery client (D07d)
+
+`ControlClient::acquire` and `list_assignments` use the existing mTLS channel and
+five-second RPC deadline. Callers retain the acquisition request UUID across retries;
+the client never silently converts an uncertain response into a new request.
+Both operations sample the local monotonic clock before sending and after receiving,
+then construct [conservative authority windows](worker-leases.md). A delayed response
+cannot start a fresh lease. An expired grant returns its identity separately, without
+execution authority, so reconciliation can still account for it.
+
+Responses must bind to the requested worker/session and carry canonical nonzero UUIDs,
+a positive signed-range generation, bounded resources/argv/spec bytes, a pinned image,
+and a lowercase SHA-256 hash. Unknown or missing outcomes fail closed. Recovery checks
+page counts, strict job ordering, unique jobs, and forward cursor progress; expired
+items retain their identities without blocking traversal of the remaining page.
+
+These are protocol checks, not complete execution-spec validation. Parsing canonical
+JSON, verifying its checksum and agreement with duplicated wire fields, staging inputs,
+and enforcing runtime settings remain prerequisites before Docker execution. Inputs
+are rejected until D16 staging support. A returned window must be rechecked before
+acting; it is not a running watchdog or a durable journal entry.
+
+`rust/worker/examples/work_probe.rs` exercises acquisition, exact replay, and incremental
+single-item recovery pages against the Go service. It pauses acquisitions during the
+scan and retains only IDs to check traversal. The production journal and agent loop
+are still pending; the fixture does not create containers or advertise runtime health.
 
 ## Verification and remaining integration
 
@@ -106,7 +133,13 @@ backfill, cancellation, session takeover, and injected event failure rollback.
 An expiry test observes a replay blocked on a real job lock, expires its lease after
 that transaction started, and confirms the replay rejects authority after release.
 
-The store, AcquireWork RPC, and paginated ListAssignments RPC are implemented.
-The Rust acquisition/recovery loop, Docker execution, renewal/reaper, sweep limits, and final
+The Rust fixture also verifies stable empty-queue replay after jobs arrive, three
+distinct acquisitions with no duplicate attempts, inventory recovery, and expired
+replay rejection through the real Go executable and PostgreSQL. A separate mTLS
+fixture delays a grant beyond its usable local lifetime and confirms the client
+rejects execution authority despite receiving a successful RPC response.
+
+The store, RPCs, and Rust acquisition/recovery client are implemented.
+The production agent loop, Docker execution, renewal/reaper, sweep limits, and final
 fair scheduling remain required. Two registered database identities are not evidence
 for the release gate requiring execution on two independent Linux hosts.

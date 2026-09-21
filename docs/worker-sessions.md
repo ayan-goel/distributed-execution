@@ -132,7 +132,8 @@ are documented in [running the control plane](running.md).
 
 ## Rust control-plane client (D06i)
 
-`dispatch_worker::control::ControlClient` implements registration and heartbeat over
+`dispatch_worker::control::ControlClient` implements registration, heartbeat,
+[acquisition, and paginated assignment recovery](acquisition.md) over
 Tonic mTLS. Connection configuration accepts an HTTPS origin, an explicit server CA,
 and a client certificate/key. Credentials in URLs, paths, queries, fragments, and
 plaintext endpoints are rejected. No system-root fallback or TLS key logging is
@@ -156,7 +157,7 @@ and RPC diagnostic text is escaped for terminal output.
 a bounded protobuf registration from stdin, registers twice, sends the same heartbeat
 twice, and writes the registration reply as protobuf. It always reports an unhealthy,
 unreconciled runtime, so it cannot make a host schedulable or release old reservations.
-`make store-test` builds this fixture before running integration tests. The production
+`make store-test` builds all worker protocol fixtures before integration tests. The production
 agent still needs runtime discovery, durable session state, reconciliation, and its
 supervision loop before it can advertise readiness or execute jobs.
 

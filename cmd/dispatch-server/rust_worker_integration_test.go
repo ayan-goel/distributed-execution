@@ -24,7 +24,12 @@ import (
 
 func rustSessionProbe(t *testing.T, address string, p workerPKI, request *pb.RegisterWorkerRequest) ([]byte, string, error) {
 	t.Helper()
-	binary, err := filepath.Abs("../../.local/cargo-target/debug/examples/session_probe")
+	return rustProtocolProbe(t, "session_probe", address, p, request)
+}
+
+func rustProtocolProbe(t *testing.T, fixture, address string, p workerPKI, request proto.Message) ([]byte, string, error) {
+	t.Helper()
+	binary, err := filepath.Abs("../../.local/cargo-target/debug/examples/" + fixture)
 	if err != nil {
 		t.Fatal(err)
 	}

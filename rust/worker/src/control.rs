@@ -13,12 +13,16 @@ use tonic::{
 
 const RPC_TIMEOUT: Duration = Duration::from_secs(5);
 
+mod work;
+pub use work::{AssignmentPage, GrantedAssignment, WorkOutcome};
+
 #[derive(Debug)]
 pub enum ClientError {
     Configuration,
     Connection,
     Deadline,
     Response,
+    Clock,
     Rpc(Box<tonic::Status>),
 }
 
@@ -38,6 +42,7 @@ impl fmt::Display for ClientError {
             Self::Connection => write!(f, "worker connection failed"),
             Self::Deadline => write!(f, "worker request deadline exceeded"),
             Self::Response => write!(f, "invalid control-plane response"),
+            Self::Clock => write!(f, "worker monotonic clock failed"),
             Self::Rpc(status) => {
                 write!(f, "worker RPC {:?}: {:?}", status.code(), status.message())
             }

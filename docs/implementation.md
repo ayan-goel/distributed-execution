@@ -23,7 +23,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D04 worker protocol | D01 | Generated Go/Rust gRPC bindings; cross-language golden round-trip, drift check | wire generation/round-trip passed; service boundary tests pending |
 | D05 durable submission | D02,D03 | HTTP/CLI submission; 100 identical requests yield one job; changed payload conflicts | input-free job admission, auth, image resolution, HTTP/CLI gates passed; datasets depend on D16 |
 | D06 worker identities | D03,D04 | Authenticated registration, session takeover/recovery; stale-session rejection | control-plane, executable, and Rust client gates passed; runtime/agent loop pending |
-| D07 acquisition | D03,D06 | Atomic assignment/reservations; concurrent quota/capacity races; acquisition replay | store, acquisition RPC, and paginated inventory gates passed; Rust integration pending |
+| D07 acquisition | D03,D06 | Atomic assignment/reservations; concurrent quota/capacity races; acquisition replay | store, RPC, and Rust client gates passed; production agent loop pending |
 | D08 Docker adapter | D04 | Real bounded create/start/inspect/stop; ambiguous create reconciles one identity | pending |
 | D09 leases | D06,D07 | Fresh DB-time expiry checks; delayed grants; local monotonic deadline enforcement | local deadline primitive verified; renewal/reaper/supervisor pending |
 | D10 worker recovery | D08,D09 | Durable journal; agent kill/restart stops old containers before new capacity | pending |
@@ -470,3 +470,22 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   tests inside the pinned official Rust 1.88.0 Linux arm64 container with no network.
   Added that platform check to `make integration` and documented sources, semantics,
   platform limitations, and remaining supervision/renewal work in `docs/worker-leases.md`.
+
+### D07d: Rust acquisition and paginated recovery client
+
+- Added bounded, deadline-aware acquisition and assignment-page operations over the
+  existing mTLS channel. Validates session/attempt identity, resources, argv, pinned
+  image, known outcomes, page ordering, and cursor progress. Expired grants retain
+  identity for reconciliation without returning execution authority.
+- The Go executable/PostgreSQL integration fixture verifies stable empty-queue
+  replay, three acquisitions, exact request replay without duplicate attempts,
+  single-item recovery traversal, and expired replay fencing. A separate mTLS
+  service deliberately delays a grant past its usable lease; the Rust client rejects
+  it. These fixtures do not claim physical execution or runtime health discovery.
+- Reviewed identity binding, bounded decoding, monotonic send-time authority,
+  independent page-count/order checks, and incremental recovery. A regression test
+  exposed acceptance of NUL in image names; image control characters now fail closed.
+- `make test lint smoke` and the real PostgreSQL/mTLS integration suite passed;
+  workspace checks passed again after the image-validation fix. Documented contracts
+  and remaining full spec validation, journal, runtime, and supervisor requirements
+  in `docs/acquisition.md`, `docs/worker-leases.md`, and `docs/worker-sessions.md`.
