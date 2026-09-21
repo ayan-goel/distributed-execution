@@ -173,3 +173,13 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 - Full schema migration/rollback/reapply and race-enabled store tests passed;
   `make test lint build` passed. No HTTP authentication endpoint is exposed yet.
 - Added `docs/security.md` with implemented boundaries and remaining release work.
+
+### D05c: immutable image admission
+
+- Added approved-registry image resolution with bounded response bodies/deadlines,
+  manifest digest verification, and outbound host checks covering auth and redirects.
+- Tests first failed with missing resolver types. Unit tests and a real loopback
+  registry now pass, including tag movement with old digest recovery, denied hosts,
+  wrong digests, malformed responses, cancellation, and explicit development HTTP.
+- `make test lint build` and race-enabled store/registry integration tests passed.
+- Updated `docs/contracts.md` with resolution policy and documented its limits.

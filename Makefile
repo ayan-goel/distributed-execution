@@ -30,7 +30,7 @@ integration:
 	sh scripts/test-store.sh
 
 store-test:
-	$(GO) test -race -tags integration -count=1 ./internal/store
+	$(GO) test -race -tags integration -count=1 ./internal/store ./internal/admission
 
 tools:
 	@if test "$$($(CURDIR)/.tools/bin/protoc-gen-go --version 2>/dev/null)" != 'protoc-gen-go v1.36.11'; then GOBIN=$(CURDIR)/.tools/bin $(GO) install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.11; fi

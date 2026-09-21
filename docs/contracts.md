@@ -74,3 +74,23 @@ canonical specifications, and a concurrency cap of 1–1000. Count multiplicatio
 checked before allocation. Empty dimensions and reserved environment names fail.
 Repeated values remain separate children. `cancelRunningOnFailure` requires
 `failFast`. This slice validates policy; execution-time enforcement belongs to D17.
+
+## Image resolution (D05c)
+
+Admission resolves approved image tags to repository@sha256 references using the
+manifest bytes returned by an OCI/Docker registry. Supported media types are OCI
+images/indexes and Docker schema-2 images/manifest lists. The computed digest must
+match both the descriptor and any digest supplied by the caller. A mutable tag can
+move later without altering an admitted job's pinned reference.
+
+Resolution has a 10-second deadline and 4-MiB response limit. Registry, bearer-auth,
+and redirect destinations are checked against operator configuration. Docker Hub's
+registry/auth endpoints are allowed when its canonical `index.docker.io` registry is
+approved. Other auth hosts require explicit configuration. Plain HTTP is allowed
+only for explicitly enabled loopback development registries. Host Docker credentials
+are not loaded implicitly; private registry provisioning remains an operator feature.
+
+Tests include a real local registry, moving a tag between two manifests and fetching
+the first pinned digest afterward. Unit cases reject wrong digests, unapproved hosts,
+insecure requests, auth/redirect escapes, malformed manifests, and cancelled lookups.
+Reference: [go-containerregistry remote API](https://pkg.go.dev/github.com/google/go-containerregistry/pkg/v1/remote).
