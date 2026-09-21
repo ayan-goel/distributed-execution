@@ -2,6 +2,8 @@
 
 The control plane can now admit and inspect queued jobs. Worker execution and
 artifact retrieval are not implemented yet; queued jobs will remain queued.
+The [worker startup command](worker-agent.md) now registers, cleans old Docker
+containers, and reports health, but its acquisition/execution loop is still pending.
 
 ## Prerequisites
 

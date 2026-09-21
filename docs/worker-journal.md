@@ -1,8 +1,8 @@
 # Durable worker attempt journal
 
 `rust/worker/src/journal.rs` implements the local evidence portion of spec §11.1.
-It is a library prerequisite for the worker supervisor. The worker executable does
-not yet run jobs or perform startup reconciliation.
+The [worker startup command](worker-agent.md) uses it for durable incarnation state
+and performs Docker reconciliation. The worker executable does not yet run jobs.
 
 ## Stored state and ordering
 

@@ -132,7 +132,7 @@ fn rpc_request<T>(message: T) -> Request<T> {
     request
 }
 
-fn endpoint(address: &str) -> Result<Endpoint, ClientError> {
+pub(crate) fn endpoint(address: &str) -> Result<Endpoint, ClientError> {
     if address.contains(['@', '?', '#']) {
         return Err(ClientError::Configuration);
     }

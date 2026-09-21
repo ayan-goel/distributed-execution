@@ -161,9 +161,9 @@ a bounded protobuf registration from stdin, registers twice, sends the same hear
 twice, and writes the registration reply as protobuf. It always reports an unhealthy,
 unreconciled runtime, so it cannot make a host schedulable or release old reservations.
 `make store-test` builds all worker protocol fixtures before integration tests. The production
-agent still needs to integrate durable session state and runtime discovery with
-registration, reconciliation, and its supervision loop before it can advertise
-readiness or execute jobs.
+agent now integrates durable session state, registration, Docker reconciliation,
+and readiness through the [worker startup command](worker-agent.md). Acquisition
+and the per-attempt supervision loop remain pending before it can execute jobs.
 
 ## Verification
 

@@ -348,7 +348,7 @@ impl Record {
     }
 }
 
-fn new_uuid() -> Result<String, JournalError> {
+pub(crate) fn new_uuid() -> Result<String, JournalError> {
     let mut bytes = [0u8; 16];
     SystemRandom::new()
         .fill(&mut bytes)

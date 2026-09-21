@@ -22,11 +22,11 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D03 database invariants | D01 | Real PostgreSQL migrations up/down/upgrade; uniqueness, references, checks | core schema and migration runner gates passed; later feature tables pending |
 | D04 worker protocol | D01 | Generated Go/Rust gRPC bindings; cross-language golden round-trip, drift check | wire generation/round-trip passed; service boundary tests pending |
 | D05 durable submission | D02,D03 | HTTP/CLI submission; 100 identical requests yield one job; changed payload conflicts | input-free job admission, auth, image resolution, HTTP/CLI gates passed; datasets depend on D16 |
-| D06 worker identities | D03,D04 | Authenticated registration, session takeover/recovery; stale-session rejection | control-plane, executable, and Rust client gates passed; runtime/agent loop pending |
+| D06 worker identities | D03,D04 | Authenticated registration, session takeover/recovery; stale-session rejection | control-plane, Rust client, and worker startup/health loop gates passed; active-job supervision pending |
 | D07 acquisition | D03,D06 | Atomic assignment/reservations; concurrent quota/capacity races; acquisition replay | store, RPC, and Rust client gates passed; production agent loop pending |
 | D08 Docker adapter | D04 | Real bounded create/start/inspect/stop; ambiguous create reconciles one identity | spec, cached-image lifecycle, and phase store/RPC/Rust client gates passed; image staging and strict workspace integration pending |
 | D09 leases | D06,D07 | Fresh DB-time expiry checks; delayed grants; local monotonic deadline enforcement | local deadline, store, RPC, and Rust renewal client gates passed; production loop, reaper, and supervisor pending |
-| D10 worker recovery | D08,D09 | Durable journal; agent kill/restart stops old containers before new capacity | attempt/session journal and runtime discovery/cleanup gates passed; agent recovery integration pending |
+| D10 worker recovery | D08,D09 | Durable journal; agent kill/restart stops old containers before new capacity | journal, discovery/cleanup, and actual startup process gates passed; agent-owned job kill/restart gate pending |
 | D11 artifacts | D03,D04 | Scoped grants; verified exact versions; stale publication rejection | pending |
 | D12 first real job | D05–D11 | CLI submit → gRPC → Docker → verified output → CLI download | pending |
 | D13 loss/retry | D09,D12 | Reaper/reconciliation; recorded retry; backoff/deadlines; nonretryable failure | pending |
@@ -767,3 +767,37 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   `docs/worker-journal.md` and `docs/worker-sessions.md`. No worker RPC or database
   semantics changed in this slice. Production startup orchestration, heartbeat and
   supervisor loops, storage/publication, and all remaining v0.1 gates stay open.
+
+### D10d: actual worker startup, cleanup, and health loop
+
+- Added `dispatch-worker run --config FILE --dev-soft-scratch` with bounded strict
+  configuration, explicit TLS credentials, private nonoverlapping state/workspace
+  directories, and durable fresh-incarnation registration. The development flag
+  prevents implying that quota-backed scratch or the release profile is complete.
+- Connected the verified journal, mTLS client, and Docker recovery adapter. The
+  process persists its acknowledgement before readiness, interleaves heartbeats
+  with one-container cleanup steps, and requires a fresh empty healthy inventory
+  plus server agreement before announcing READY. CPU/memory/architecture claims
+  are checked against Docker; workspace space checks report pressure conservatively.
+- Added stable heartbeat sequences/request IDs across uncertain replies. Cleanup
+  continues while retrying an unchanged pending report. Registration retries use
+  the same durable identity, including while SESSION_ACTIVE awaits automatic
+  recovery or explicit operator approval. Revocation/fencing errors remain terminal.
+- Configuration tests first failed because the agent module did not exist. They
+  now cover bounds, unknown/duplicate fields and labels, HTTPS/local paths, and the
+  required development profile. Local file errors omit paths/content; key files
+  reject public permissions, foreign ownership, symlink leaves, and hard links.
+- The real process integration test uses PostgreSQL, mTLS, and an old Docker
+  container. It approves exactly the emitted replacement session, verifies cleanup
+  before any complete health report, observes generation 2 and one registration,
+  loses a committed heartbeat reply and checks replay, rejects a second process
+  sharing state, and verifies process exit after credential revocation. `store-test`
+  now builds worker binaries in addition to its protocol fixtures.
+- `make test lint smoke` and `make integration` passed, including Linux worker
+  tests, real Docker checks, fresh/down/up migrations, and all Go/Rust PostgreSQL
+  workflows. Documented setup, retries, state events, and limitations in
+  `docs/worker-agent.md`, with links from the running/session/journal documentation.
+- The old container in this test is fixture-created. The agent-owned job kill/restart
+  gate still depends on acquisition and supervision. This worker reports readiness
+  but does not yet acquire work. Strict scratch, signal shutdown, leases during
+  active work, storage/publication, and the remaining complete v0.1 gates stay open.

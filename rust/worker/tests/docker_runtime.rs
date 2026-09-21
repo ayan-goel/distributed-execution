@@ -63,6 +63,19 @@ async fn real_container_lifecycle_is_bounded_owned_and_constrained() {
     let workspace =
         PreparedWorkspace::soft_development(std::env::var("DISPATCH_TEST_WORKSPACE").unwrap())
             .unwrap();
+    assert_eq!(
+        runtime
+            .check_capacity(
+                &Resources {
+                    cpu_millis: u32::MAX,
+                    memory_bytes: u64::MAX,
+                    scratch_bytes: 1
+                },
+                "arm64"
+            )
+            .await,
+        Err(RuntimeError::Unsupported)
+    );
     let constraints = r#"set -eu
 test "$(awk '$1=="CapEff:" {print $2}' /proc/self/status)" = 0000000000000000
 test "$(awk '$1=="NoNewPrivs:" {print $2}' /proc/self/status)" = 1

@@ -180,6 +180,32 @@ pub struct DockerRuntime {
     start_gate: tokio::sync::Mutex<()>,
 }
 impl DockerRuntime {
+    pub async fn check_capacity(
+        &self,
+        resources: &dispatch_protocol::v1::Resources,
+        architecture: &str,
+    ) -> Result<(), RuntimeError> {
+        let info = bounded(RPC_TIMEOUT, self.docker.info()).await?;
+        let arch = match info.architecture.as_deref() {
+            Some("aarch64" | "arm64") => "arm64",
+            Some("x86_64" | "amd64") => "amd64",
+            _ => return Err(RuntimeError::Unsupported),
+        };
+        // Operator ceilings still apply on the server. This local check prevents
+        // claims exceeding the actual daemon host or advertising the wrong ISA.
+        if resources.cpu_millis == 0
+            || resources.memory_bytes == 0
+            || arch != architecture
+            || info.ncpu.unwrap_or(0) <= 0
+            || info.mem_total.unwrap_or(0) <= 0
+            || u128::from(resources.cpu_millis) > info.ncpu.unwrap() as u128 * 1000
+            || u128::from(resources.memory_bytes) > info.mem_total.unwrap() as u128
+        {
+            return Err(RuntimeError::Unsupported);
+        }
+        Ok(())
+    }
+
     pub async fn connect(socket: &str) -> Result<Self, RuntimeError> {
         // Docker grants host-level power. Only an explicit local absolute socket
         // is accepted; environment-based TCP/TLS discovery is never used.

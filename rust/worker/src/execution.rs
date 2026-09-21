@@ -281,7 +281,9 @@ fn overlaps(a: &str, b: &str) -> bool {
         || b.strip_prefix(a).is_some_and(|rest| rest.starts_with('/'))
 }
 
-fn unique_map<'de, D: Deserializer<'de>>(decoder: D) -> Result<BTreeMap<String, String>, D::Error> {
+pub(crate) fn unique_map<'de, D: Deserializer<'de>>(
+    decoder: D,
+) -> Result<BTreeMap<String, String>, D::Error> {
     struct Visitor;
     impl<'de> de::Visitor<'de> for Visitor {
         type Value = BTreeMap<String, String>;
