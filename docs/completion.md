@@ -5,8 +5,7 @@
 `store.CompletionRequest` carries the complete attempt authority, a completion UUID,
 claimed payload SHA-256, optional exit status, failure reason, confirmed-stop flag,
 verified output references, log completeness/gaps, and optional original metrics
-JSON bytes. The transaction is implemented below; worker RPC integration remains
-the next boundary.
+JSON bytes. The transaction and authenticated worker RPC are implemented below.
 
 Success uses an empty failure reason, exit status zero, and a confirmed stop.
 Application failure requires a nonzero exit status. Other worker reasons are
@@ -151,5 +150,37 @@ rollback; and a confirmed reference-lock wait that outlives the lease.
 Accepted replay is checked after expiry, session replacement, and replacement-attempt
 acquisition; revoked credentials and cross-attempt UUID reuse fail. A populated
 schema-ten-to-eleven upgrade preserves verified outputs and permits completion.
-Store fixtures use the separately verified artifact boundary; the completion RPC,
-real workload-to-completion path, and public result retrieval remain to integrate.
+Store fixtures use the separately verified artifact boundary. The real Rust
+workload-to-completion path and public result retrieval remain to integrate.
+
+## Authenticated completion RPC (D11h)
+
+`CompleteAttempt` binds the authority to the provisioned mTLS worker identity,
+preserves optional exit status, and rejects unsigned values outside PostgreSQL's
+int64 range before conversion. Output/gap counts and metrics bytes are bounded
+before allocation; the store validates UUIDs, enums, evidence, and the digest before
+opening a transaction. The unspecified failure reason represents the empty success
+reason and therefore requires observed exit zero and a confirmed stop. Unknown
+failure reasons and the server-only `WORKER_LOST` reason are invalid.
+
+Replies carry `ACCEPTED` with SUCCEEDED, FAILED, or CANCELLED; `ALREADY_TERMINAL`
+with a known terminal state; `STOP_REQUESTED` with an active state; or `FENCED`
+with an active state or no state for an unknown authority tuple. Only accepted
+SUCCEEDED responses contain the canonical manifest, as its original stored bytes.
+Invalid internal decision/state/manifest combinations fail with
+`Internal/INVALID_COMPLETION_RESULT` rather than acknowledging ambiguous success.
+
+Changed accepted evidence returns `AlreadyExists/REQUEST_CONFLICT`. Malformed or
+unverified evidence returns `InvalidArgument/INVALID_ARGUMENT`. Credential failures
+remain unauthenticated, cross-worker claims are permission denied, and database
+failures expose only the stable `DATABASE_UNAVAILABLE` reason. Completion performs
+no storage calls and works with storage unconfigured once artifact verification is
+durable. An object-store outage does not prevent completion or accepted replay.
+
+Unit tests exercise optional presence, unknown enums, nil entries, int64 boundaries,
+field limits, and malformed internal publication responses. The mTLS/PostgreSQL
+tests cover concurrent identical calls, byte-identical durable replies, exact output
+versions, missing outputs, spoofed authority, lease/phase expiry, cancellation
+acknowledgement, credential revocation, and event-failure rollback with redacted
+errors. A discarded acknowledgement is recovered on retry. Storage is deliberately
+unavailable after initial artifact verification to detect accidental completion I/O.

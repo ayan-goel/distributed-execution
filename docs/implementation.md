@@ -27,7 +27,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D08 Docker adapter | D04 | Real bounded create/start/inspect/stop; ambiguous create reconciles one identity | cached launch, RUNNING/FINALIZING coordination, and phase store/RPC/client gates passed; agent integration, staging, and strict workspaces pending |
 | D09 leases | D06,D07 | Fresh DB-time expiry checks; delayed grants; local monotonic deadline enforcement | deadline, store/RPC/client, watchdog, periodic renewal, and execution refresh gates passed; reaper and production agent integration pending |
 | D10 worker recovery | D08,D09 | Durable journal; agent kill/restart stops old containers before new capacity | journal, discovery/cleanup, and actual startup process gates passed; agent-owned job kill/restart gate pending |
-| D11 artifacts | D03,D04 | Scoped grants; verified exact versions; stale publication rejection | upload grants, exact-version finalization, and atomic completion store gates passed; completion RPC and worker transfers pending |
+| D11 artifacts | D03,D04 | Scoped grants; verified exact versions; stale publication rejection | upload grants, exact-version finalization, and authenticated atomic completion gates passed; public result retrieval and worker transfers pending |
 | D12 first real job | D05–D11 | CLI submit → gRPC → Docker → verified output → CLI download | pending |
 | D13 loss/retry | D09,D12 | Reaper/reconciliation; recorded retry; backoff/deadlines; nonretryable failure | pending |
 | D14 cancellation | D12,D13 | Both completion/cancellation race orders, repeat requests, uncertain cleanup | pending |
@@ -1199,3 +1199,24 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   completion, capacity transition, or canonical result.
 - Completion RPC, public result retrieval, and the Rust transfer/completion loop
   remain subsequent slices; this gate establishes the store transaction only.
+
+### D11h: authenticated completion RPC
+
+- Connected `CompleteAttempt` to the verified completion transaction with mTLS
+  worker binding, bounded wire conversion, and presence-preserving exit evidence.
+  Replies validate decision/state combinations and expose the original canonical
+  manifest bytes only for accepted success. Database errors retain stable, redacted
+  reasons. Completion needs no object-store calls or configured storage adapter.
+- Initial boundary tests failed for missing conversion/response implementation.
+  Unit checks now pass for malformed/nil entries, unknown reasons, unsigned integer
+  overflow, field bounds, omitted exit versus zero, and invalid internal results.
+- Native `make test lint smoke` and `scripts/test-store.sh` passed with zero exits.
+  The real mTLS/PostgreSQL tests exercise 16 equal concurrent calls yielding one
+  completion/event and released reservation, byte-identical retries, exact verified
+  versions, changed evidence, missing outputs, foreign authority, lease/phase expiry,
+  cancellation acknowledgement, revoked credentials, and rollback after event failure.
+  A discarded acknowledgement is recovered over mTLS. Storage is unavailable after
+  verification; completion never reads it. The preceding full Linux/Docker/schema/
+  versioned-storage gate remains applicable; no schema or Rust runtime changed here.
+- Updated completion, protocol, operator, and README status. Public canonical-result
+  retrieval and the Rust transfer/completion loop remain subsequent slices.

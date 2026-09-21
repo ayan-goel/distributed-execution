@@ -72,7 +72,11 @@ phase rules, limits, failure reasons, and the real storage integration gate.
 `FinalizeUpload` verifies and registers an exact object version with current
 authority rechecked after streaming the bytes. Its response is an artifact UUID
 and exact object reference; see [verified artifacts](verified-artifacts.md) for
-replay and failure semantics. Terminal result publication remains unimplemented.
+replay and failure semantics. `CompleteAttempt` atomically publishes verified
+results and terminalizes the attempt; accepted successful retries return identical
+manifest bytes without storage I/O. See [completion](completion.md) for digest,
+field bounds, decision/state combinations, and failure/cancellation semantics.
+The Rust transfer/completion loop remains pending.
 
 ## Generation and verification
 

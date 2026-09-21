@@ -5,8 +5,9 @@ The implementation is in progress. The server supports project/token provisionin
 authenticated HTTP/CLI submission, and job inspection. The CLI can also validate
 job files offline. The worker command registers, reconciles old containers, and
 reports health; its acquisition loop is still pending. The execution component is
-integration-tested through Docker exit and FINALIZING, with artifact publication
-and terminal completion still to implement.
+integration-tested through Docker exit and FINALIZING. The server supports verified
+artifact publication and atomic completion; Rust transfers and the completion loop
+remain to integrate.
 
 See [the specification](Dispatch_Project_Spec.md) for the product contract and
 [the verification ledger](docs/implementation.md) for completed slices and release gates.
