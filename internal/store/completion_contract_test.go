@@ -44,6 +44,26 @@ func completionRequest() CompletionRequest {
 	return CompletionRequest{Authority: uploadRequest().Authority, CompletionID: uuid.NewString(), ExitCode: &code, Stopped: true, LogsComplete: true, Outputs: []CompletionOutput{{Name: "result", ArtifactID: uuid.NewString()}}}
 }
 
+func TestCompletionCoversSegmentGap(t *testing.T) {
+	known := LogSequenceGap{FirstSequence: 3, LastSequence: 7}
+	for _, test := range []struct {
+		name   string
+		claims []CompletionLogGap
+		want   bool
+	}{
+		{"exact", []CompletionLogGap{{Stream: "stdout", First: 3, Last: 7}}, true},
+		{"adjacent claims", []CompletionLogGap{{Stream: "stdout", First: 3, Last: 4}, {Stream: "stdout", First: 5, Last: 7}}, true},
+		{"missing middle", []CompletionLogGap{{Stream: "stdout", First: 3, Last: 4}, {Stream: "stdout", First: 6, Last: 7}}, false},
+		{"wrong stream", []CompletionLogGap{{Stream: "stderr", First: 3, Last: 7}}, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := completionCoversSegmentGap(test.claims, "stdout", known); got != test.want {
+				t.Fatalf("coverage = %v, want %v", got, test.want)
+			}
+		})
+	}
+}
+
 func TestCompletionDigestNormalizesSetsAndBindsEvidence(t *testing.T) {
 	r := completionRequest()
 	r.Outputs = append(r.Outputs, CompletionOutput{Name: "other", ArtifactID: uuid.NewString()})

@@ -64,7 +64,7 @@ func validateUploadDeclaration(r UploadRequest, job spec.Job, state string) erro
 		if !slices.Contains([]string{"STARTING", "RUNNING", "FINALIZING"}, state) {
 			return ErrConflict
 		}
-		if r.LogicalName != "stdout" && r.LogicalName != "stderr" {
+		if (r.LogicalName != "stdout" && r.LogicalName != "stderr") || r.SizeBytes < 1 || r.SizeBytes > MaxLogSegmentBytes {
 			return ErrInvalid
 		}
 		return nil

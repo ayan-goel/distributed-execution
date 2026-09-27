@@ -87,11 +87,14 @@ and SHA-256 must match the original metrics JSON; a referenced metrics output al
 requires those bytes. Accepted values retain exact numeric text in both the frozen
 manifest and PostgreSQL JSONB. The original artifact is retained by a foreign key.
 
-All verified LOG artifacts are included in the frozen manifest. A complete-log claim
-is rejected if any declared LOG upload remains unverified. Completeness otherwise
-remains the authenticated worker's claim: the log spool and segment sequence catalog
-are still pending. Known gaps and unquantified incompleteness remain explicit in the
-manifest instead of being silently labeled complete.
+Only verified and registered LOG segments are included in the frozen manifest. A
+complete-log claim is rejected if any declared LOG upload remains unverified or
+unregistered, or a registered segment reports a gap. Known segment gaps must
+also be covered by the completion's gap claims. Completeness otherwise remains
+the authenticated worker's claim: the [segment catalog](log-catalog.md) cannot
+detect content never declared by a worker, and the bounded spool is still
+pending. Known gaps and unquantified incompleteness remain explicit in the
+manifest.
 
 Migration 0011 adds immutable completion records and artifact references. A completion
 is unique per attempt, and its UUID is unique per worker/session. Artifact foreign

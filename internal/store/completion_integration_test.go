@@ -308,6 +308,74 @@ func TestCompletionCannotClaimCompleteLogsWithPendingUploads(t *testing.T) {
 	}
 }
 
+func TestCompletionPublishesOnlyRegisteredLogSegments(t *testing.T) {
+	t.Run("verified but unregistered", func(t *testing.T) {
+		pool, id, r := completedOutputFixture(t)
+		ctx := context.Background()
+		verifiedCatalogArtifact(t, pool, id, r.Authority, "LOG", "stdout")
+		if _, err := CompleteAttempt(ctx, pool, id, r); !errors.Is(err, ErrInvalid) {
+			t.Fatal("unregistered log marked complete", err)
+		}
+		r.LogsComplete = false
+		signCompletion(t, &r)
+		result, err := CompleteAttempt(ctx, pool, id, r)
+		if err != nil || result.State != "SUCCEEDED" {
+			t.Fatal(result, err)
+		}
+		var manifest resultManifest
+		if err := json.Unmarshal(result.Manifest, &manifest); err != nil || len(manifest.LogArtifacts) != 0 || manifest.LogsComplete {
+			t.Fatal("unregistered object entered the manifest", err)
+		}
+	})
+	t.Run("registered", func(t *testing.T) {
+		pool, id, r := completedOutputFixture(t)
+		ctx := context.Background()
+		artifactID := verifiedCatalogArtifact(t, pool, id, r.Authority, "LOG", "stderr")
+		registration := LogSegmentRequest{Authority: r.Authority, RequestID: uuid.NewString(), ArtifactID: artifactID, Stream: "STDERR", FirstSequence: 1, LastSequence: 1}
+		if result, err := RegisterLogSegment(ctx, pool, id, registration); err != nil || result.Decision != "ACCEPTED" {
+			t.Fatal(result, err)
+		}
+		result, err := CompleteAttempt(ctx, pool, id, r)
+		if err != nil || result.State != "SUCCEEDED" {
+			t.Fatal(result, err)
+		}
+		var manifest resultManifest
+		if err := json.Unmarshal(result.Manifest, &manifest); err != nil || !manifest.LogsComplete || len(manifest.LogArtifacts) != 1 || manifest.LogArtifacts[0].ArtifactID != artifactID {
+			t.Fatal("registered log missing from the manifest", err)
+		}
+		if replay, err := RegisterLogSegment(ctx, pool, id, registration); err != nil || replay.Decision != "ACCEPTED" || replay.State != "SUCCEEDED" {
+			t.Fatal("terminalized log replay changed", replay, err)
+		}
+	})
+	t.Run("registered gap", func(t *testing.T) {
+		pool, id, r := completedOutputFixture(t)
+		ctx := context.Background()
+		artifactID := verifiedCatalogArtifact(t, pool, id, r.Authority, "LOG", "stdout")
+		registration := LogSegmentRequest{Authority: r.Authority, RequestID: uuid.NewString(), ArtifactID: artifactID, Stream: "STDOUT", FirstSequence: 1, LastSequence: 3, Gaps: []LogSequenceGap{{FirstSequence: 2, LastSequence: 2}}}
+		if result, err := RegisterLogSegment(ctx, pool, id, registration); err != nil || result.Decision != "ACCEPTED" {
+			t.Fatal(result, err)
+		}
+		if _, err := CompleteAttempt(ctx, pool, id, r); !errors.Is(err, ErrInvalid) {
+			t.Fatal("known dropped records marked complete", err)
+		}
+		r.LogsComplete = false
+		signCompletion(t, &r)
+		if _, err := CompleteAttempt(ctx, pool, id, r); !errors.Is(err, ErrInvalid) {
+			t.Fatal("known dropped records omitted from incomplete manifest", err)
+		}
+		r.Gaps = []CompletionLogGap{{Stream: "stdout", First: 2, Last: 2}}
+		signCompletion(t, &r)
+		result, err := CompleteAttempt(ctx, pool, id, r)
+		if err != nil || result.State != "SUCCEEDED" {
+			t.Fatal(result, err)
+		}
+		var manifest resultManifest
+		if err := json.Unmarshal(result.Manifest, &manifest); err != nil || manifest.LogsComplete || len(manifest.Gaps) != 1 || len(manifest.LogArtifacts) != 1 {
+			t.Fatal("known loss missing from the manifest", err)
+		}
+	})
+}
+
 func TestCompletionEventAndManifestFailuresRollBackAllState(t *testing.T) {
 	for _, trigger := range []string{
 		`CREATE FUNCTION reject_completion() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.type='ATTEMPT_COMPLETED' THEN RAISE EXCEPTION 'injected completion event failure'; END IF; RETURN NEW; END $$; CREATE TRIGGER reject_completion BEFORE INSERT ON job_events FOR EACH ROW EXECUTE FUNCTION reject_completion()`,
@@ -401,6 +469,16 @@ func TestCompletionMigrationPreservesVerifiedArtifact(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer rollback(tx)
+	logDown, err := os.ReadFile("../../migrations/0012_log_segments.down.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, string(logDown)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, "DELETE FROM schema_migrations WHERE name='0012_log_segments.up.sql'"); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := tx.Exec(ctx, string(down)); err != nil {
 		t.Fatal(err)
 	}

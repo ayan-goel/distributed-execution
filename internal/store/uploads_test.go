@@ -74,10 +74,19 @@ func TestUploadDeclarationsRequireDeclaredOutputsAndAppropriatePhase(t *testing.
 	}
 	r.Kind = "LOG"
 	r.LogicalName = "stdout"
+	r.SizeBytes = 1
 	for _, state := range []string{"STARTING", "RUNNING", "FINALIZING"} {
 		if err := validateUploadDeclaration(r, job, state); err != nil {
 			t.Fatal(err)
 		}
+	}
+	r.SizeBytes = 0
+	if err := validateUploadDeclaration(r, job, "RUNNING"); !errors.Is(err, ErrInvalid) {
+		t.Fatal("empty log segment accepted", err)
+	}
+	r.SizeBytes = MaxLogSegmentBytes + 1
+	if err := validateUploadDeclaration(r, job, "RUNNING"); !errors.Is(err, ErrInvalid) {
+		t.Fatal("oversized log segment accepted", err)
 	}
 	r.LogicalName = "arbitrary"
 	if err := validateUploadDeclaration(r, job, "RUNNING"); !errors.Is(err, ErrInvalid) {
@@ -85,6 +94,7 @@ func TestUploadDeclarationsRequireDeclaredOutputsAndAppropriatePhase(t *testing.
 	}
 	r.Kind = "MANIFEST"
 	r.LogicalName = "result"
+	r.SizeBytes = 0
 	if err := validateUploadDeclaration(r, job, "FINALIZING"); err != nil {
 		t.Fatal(err)
 	}

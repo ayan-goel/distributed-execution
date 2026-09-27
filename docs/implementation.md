@@ -31,7 +31,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D12 first real job | D05–D11 | CLI submit → gRPC → Docker → verified output → CLI download | full component chain passed with cached digest and fixed fixture resolver; external registry and image pull pending |
 | D13 loss/retry | D09,D12 | Reaper/reconciliation; recorded retry; backoff/deadlines; nonretryable failure | reaper, server loop, and real two-identity retry on one Docker daemon passed; natural timer and independent-host gates pending |
 | D14 cancellation | D12,D13 | Both completion/cancellation race orders, repeat requests, uncertain cleanup | pending |
-| D15 logs | D08,D11 | Bounded queues/spool, noisy-job truncation, stream cursors, reconnect | pending |
+| D15 logs | D08,D11 | Bounded queues/spool, noisy-job truncation, stream cursors, reconnect | verified segment catalog passed; worker spool, HTTP/CLI retrieval pending |
 | D16 datasets | D11 | Immutable registration/cache; corruption rejection; pin-aware eviction | pending |
 | D17 sweeps/metrics | D05,D13,D16 | Atomic 27-child sweep; 1000 cap; concurrency; fail-fast; finite scalar export | pending |
 | D18 placement | D07,D17 | Project fairness/aging, blockers, two real independent hosts without oversubscription | pending |
@@ -1836,3 +1836,22 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 - Native `make test lint smoke`, the pinned Linux worker profile, and the full
   isolated PostgreSQL/object-storage suite passed.
 - Wider cancellation/expiry/fencing fault interleavings remain open.
+
+### D15a: Catalog verified log segments
+
+- Migration 0012 adds immutable, attempt-scoped log ranges and verified artifact
+  references. Each stdout/stderr stream starts at sequence 1, advances by
+  contiguous inclusive ranges, and records internal missing ranges explicitly.
+  Authenticated `RegisterLogSegment` checks fresh authority and exact upload
+  scope; identical requests replay, changed requests and reused objects conflict.
+- LOG declarations are capped at 1 MiB. Completion publishes only registered
+  segments, rejects complete claims with pending objects or known loss, and
+  requires registered gaps to appear in its frozen gap claims.
+- Unit tests cover range normalization and gap coverage. Real PostgreSQL tests
+  cover replay, ordering, immutability, stale cancellation, terminal replay,
+  manifest publication, and upgrade from schema 11. A real mTLS gRPC test
+  covers registration and changed retry errors. Native test/lint/smoke and the
+  full isolated PostgreSQL/object-storage gate passed after the migration
+  count assertion was updated.
+- The worker spool, binary-safe record format, bounded saturation behavior,
+  HTTP cursor, and reconnectable CLI follow remain required D15 work.

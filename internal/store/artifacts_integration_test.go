@@ -313,6 +313,16 @@ func TestArtifactMigrationPreservesExistingUpload(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer rollback(tx)
+	logDown, err := os.ReadFile("../../migrations/0012_log_segments.down.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, string(logDown)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, "DELETE FROM schema_migrations WHERE name='0012_log_segments.up.sql'"); err != nil {
+		t.Fatal(err)
+	}
 	completionDown, err := os.ReadFile("../../migrations/0011_attempt_completions.down.sql")
 	if err != nil {
 		t.Fatal(err)

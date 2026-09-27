@@ -70,7 +70,7 @@ Artifact declarations obey these rules:
 | Kind | Logical name | Allowed phase | Additional bound |
 | --- | --- | --- | --- |
 | `OUTPUT` | Exact name from immutable job outputs | FINALIZING | Declared output `maxBytes` |
-| `LOG` | `stdout` or `stderr` | STARTING, RUNNING, FINALIZING | Global single-part limit |
+| `LOG` | `stdout` or `stderr` | STARTING, RUNNING, FINALIZING | 1 MiB; [segment registration](log-catalog.md) required for publication |
 | `MANIFEST` | `result` | FINALIZING | 1 MiB |
 
 Every artifact is at most 64 MiB and uses one part. Each attempt is limited to 1024

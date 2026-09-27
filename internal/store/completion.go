@@ -298,15 +298,29 @@ func completionManifest(ctx context.Context, tx pgx.Tx, r CompletionRequest, p c
 	if len(r.MetricsJSON) > 0 && m.MetricsArtifactID == "" {
 		return nil, nil, ErrInvalid
 	}
-	rows, err := tx.Query(ctx, `SELECT a.id::text,u.upload_id::text,u.logical_name,u.kind,u.object_key,a.object_version,u.size_bytes,u.sha256 FROM artifacts a JOIN artifact_uploads u ON u.upload_id=a.upload_id WHERE u.attempt_id=$1 AND u.kind='LOG' ORDER BY u.logical_name,u.created_at,u.upload_id`, r.Authority.AttemptID)
+	rows, err := tx.Query(ctx, `SELECT a.id::text,u.upload_id::text,u.logical_name,u.kind,u.object_key,a.object_version,u.size_bytes,u.sha256,s.gaps FROM log_segments s JOIN artifacts a ON a.id=s.artifact_id JOIN artifact_uploads u ON u.upload_id=s.upload_id WHERE s.attempt_id=$1 ORDER BY s.stream,s.first_sequence`, r.Authority.AttemptID)
 	if err != nil {
 		return nil, nil, err
 	}
 	for rows.Next() {
 		var a publishedArtifact
-		if err = rows.Scan(&a.ArtifactID, &a.UploadID, &a.Name, &a.Kind, &a.Object.Key, &a.Object.Version, &a.Object.SizeBytes, &a.Object.SHA256); err != nil {
+		var gapJSON []byte
+		if err = rows.Scan(&a.ArtifactID, &a.UploadID, &a.Name, &a.Kind, &a.Object.Key, &a.Object.Version, &a.Object.SizeBytes, &a.Object.SHA256, &gapJSON); err != nil {
 			rows.Close()
 			return nil, nil, err
+		}
+		var knownGaps []LogSequenceGap
+		if err = json.Unmarshal(gapJSON, &knownGaps); err != nil {
+			rows.Close()
+			return nil, nil, err
+		}
+		// INVARIANT: a worker cannot hide known dropped records by omitting
+		// their registered ranges from the frozen completion manifest.
+		for _, gap := range knownGaps {
+			if !completionCoversSegmentGap(p.Gaps, a.Name, gap) {
+				rows.Close()
+				return nil, nil, ErrInvalid
+			}
 		}
 		m.LogArtifacts = append(m.LogArtifacts, a)
 	}
@@ -317,7 +331,9 @@ func completionManifest(ctx context.Context, tx pgx.Tx, r CompletionRequest, p c
 	}
 	if r.LogsComplete {
 		var pending bool
-		if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM artifact_uploads u LEFT JOIN artifacts a ON a.upload_id=u.upload_id WHERE u.attempt_id=$1 AND u.kind='LOG' AND a.id IS NULL)`, r.Authority.AttemptID).Scan(&pending); err != nil {
+		// INVARIANT: every declared log object must be verified and cataloged
+		// before the worker can publish a complete-stream claim.
+		if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM artifact_uploads u LEFT JOIN artifacts a ON a.upload_id=u.upload_id LEFT JOIN log_segments s ON s.artifact_id=a.id WHERE u.attempt_id=$1 AND u.kind='LOG' AND (a.id IS NULL OR s.id IS NULL))`, r.Authority.AttemptID).Scan(&pending); err != nil {
 			return nil, nil, err
 		}
 		if pending {
@@ -352,4 +368,22 @@ func completionManifest(ctx context.Context, tx pgx.Tx, r CompletionRequest, p c
 		return nil, nil, ErrInvalid
 	}
 	return body, append(m.Outputs, m.LogArtifacts...), nil
+}
+
+func completionCoversSegmentGap(claims []CompletionLogGap, stream string, known LogSequenceGap) bool {
+	next := int64(known.FirstSequence)
+	end := int64(known.LastSequence)
+	for _, claim := range claims {
+		if claim.Stream != stream || claim.Last < next {
+			continue
+		}
+		if claim.First > next {
+			return false
+		}
+		if claim.Last >= end {
+			return true
+		}
+		next = claim.Last + 1
+	}
+	return false
 }
