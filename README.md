@@ -30,8 +30,8 @@ An integration test now runs CLI submission through the real worker daemon and
 Docker, then verifies the output with a CLI download. A second integration test
 verifies worker-loss retry across two worker identities. Running-job cancellation
 is also verified through worker stop, durable acknowledgement, cleanup, and
-subsequent admission. Cancellation during finalization is covered for both
-pending uploads and a result rejected after it was sealed. Strict scratch limits,
+subsequent admission. Cancellations before launch and during finalization are
+also covered. Strict scratch limits,
 input staging, logs, full retry policy coverage, and other v0.1 gates remain. See the
 [implementation ledger](docs/implementation.md) for verified progress and remaining work.
 

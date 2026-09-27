@@ -104,16 +104,32 @@ async fn run_assignment(
         .as_ref()
         .ok_or(AgentError::Task)?
         .scratch_bytes;
-    let workspace = authority
-        .while_live(async {
-            tokio::task::spawn_blocking(move || {
-                prepare_attempt_workspace(&root, &attempt_id, scratch)
-            })
-            .await
-            .map_err(|_| AgentError::Task)?
-        })
-        .await
-        .map_err(|_| AgentError::Task)??;
+    context
+        .journal
+        .claim_assignment(grant.assignment().clone(), session.clone())
+        .await?;
+    if let Err(reason) = authority.window() {
+        if reason == StopReason::Rejected(Decision::StopRequested) {
+            return acknowledge_unlaunched(context, client, identity, None).await;
+        }
+        return Err(AgentError::Task);
+    }
+    let mut preparation =
+        tokio::task::spawn_blocking(move || prepare_attempt_workspace(&root, &attempt_id, scratch));
+    let workspace = match authority.while_live(&mut preparation).await {
+        Ok(result) => result.map_err(|_| AgentError::Task)??,
+        Err(reason) => {
+            // Dropping a blocking task does not stop its filesystem writes.
+            // Wait for it before acknowledging that no execution was created.
+            let prepared = preparation.await.map_err(|_| AgentError::Task)??;
+            drop(prepared);
+            if reason == StopReason::Rejected(Decision::StopRequested) {
+                return acknowledge_unlaunched(context, client, identity, Some(path)).await;
+            }
+            remove_workspace(path).await?;
+            return Err(AgentError::Task);
+        }
+    };
     let outcome = execute(
         context.runtime,
         client,
@@ -215,6 +231,23 @@ async fn run_assignment(
     context.runtime.remove(finalizing.handle()).await?;
     drop(finalizing);
     remove_workspace(path).await
+}
+
+async fn acknowledge_unlaunched(
+    context: &ExecutionContext<'_>,
+    client: &mut ControlClient,
+    identity: &dispatch_protocol::v1::AttemptAuthority,
+    workspace: Option<std::path::PathBuf>,
+) -> Result<(), AgentError> {
+    prepare_cancelled_completion(context.journal, identity, CleanupEvidence::NotCreated).await?;
+    if let Some(path) = workspace {
+        remove_workspace(path).await?;
+    }
+    let reply = deliver_terminal(context.journal, client, &identity.attempt_id).await?;
+    if !terminal_decision(&reply) {
+        return Err(AgentError::Task);
+    }
+    Ok(())
 }
 
 fn confirmed_cancellation(error: &ExecutionError) -> Option<CleanupEvidence> {

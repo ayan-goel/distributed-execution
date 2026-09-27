@@ -313,6 +313,78 @@ impl Runtime for FakeRuntime {
 mod execution;
 
 #[tokio::test]
+async fn assignment_claim_precedes_workspace_and_allows_unlaunched_cancellation() {
+    let unacknowledged = Fixture::new(false);
+    assert_eq!(
+        unacknowledged
+            .journal
+            .claim_assignment(
+                unacknowledged.assignment.clone(),
+                unacknowledged.session.clone()
+            )
+            .await,
+        Err(JournalError::Identity)
+    );
+
+    let f = Fixture::new(true);
+    f.journal
+        .claim_assignment(f.assignment.clone(), f.session.clone())
+        .await
+        .unwrap();
+    let saved = f
+        .journal
+        .load_attempt(ATTEMPT.into())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(saved.phase_reports().is_empty());
+    assert!(saved.container_id().is_none());
+    assert_eq!(
+        f.journal
+            .claim_assignment(f.assignment.clone(), f.session.clone())
+            .await,
+        Err(JournalError::Conflict)
+    );
+    let cancelled = crate::finalization::prepare_cancelled_completion(
+        &f.journal,
+        f.assignment.authority.as_ref().unwrap(),
+        CleanupEvidence::NotCreated,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        cancelled.reason,
+        dispatch_protocol::v1::FailureReason::UserCancelled as i32
+    );
+    assert!(cancelled.exit_code.is_none());
+}
+
+#[tokio::test]
+async fn preclaimed_assignment_can_advance_to_starting_once() {
+    let f = Fixture::new(true);
+    f.journal
+        .claim_assignment(f.assignment.clone(), f.session.clone())
+        .await
+        .unwrap();
+    let runtime = f.runtime(Mode::Normal);
+    let mut phase = f.phase();
+    let (_control, mut authority) = f.authority(5000);
+    let handle = launch_inner(
+        &runtime,
+        &mut phase,
+        &f.journal,
+        f.input(),
+        &f.session,
+        &f.workspace,
+        &mut authority,
+    )
+    .await
+    .unwrap();
+    assert_eq!(handle, "a".repeat(64));
+    assert_eq!(phase.requests.len(), 1);
+}
+
+#[tokio::test]
 async fn durable_launch_replays_starting_and_never_launches_duplicate_delivery() {
     let f = Fixture::new(true);
     let runtime = f.runtime(Mode::Normal);

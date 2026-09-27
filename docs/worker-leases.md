@@ -316,9 +316,10 @@ the stopped container, delivers the same completion through retries, then
 removes its workspace before admitting another job. The server releases the
 reservation only with the accepted completion. If cleanup cannot be proven,
 the agent stops rather than reusing capacity, and lease expiry fences the job.
-Cancellation during finalization now has live release gates before completion
-is sealed and after a sealed result is rejected. Prelaunch cancellation and
-wider expiry/fencing interleavings still need release gates.
+Cancellation before launch and during finalization now has live release gates.
+They verify stop acknowledgement before a container exists, before completion
+is sealed, and after a sealed result is rejected. Wider expiry/fencing
+interleavings still need release gates.
 
 ## Source references
 

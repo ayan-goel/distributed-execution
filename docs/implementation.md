@@ -1818,3 +1818,21 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   PostgreSQL cancellation fixture passed.
 - Prelaunch cancellation, expiry/fencing races, and broader v0.1 fault gates
   remain open.
+
+### D14g: Acknowledge cancellation before container launch
+
+- The agent now claims an assignment durably before preparing its workspace.
+  The journal verifies the current acknowledged session and accepts that same
+  normalized preclaim exactly once when STARTING is prepared. An unrelated or
+  already-started record remains a conflict.
+- A stop before workspace creation seals a `USER_CANCELLED` completion with
+  `NotCreated` evidence. If a blocking workspace task was in flight, the agent
+  waits for its filesystem writes to finish and removes the workspace before
+  delivery; dropping the await alone would leave a late directory behind.
+- The Docker/PostgreSQL fixture cancels after server assignment but before the
+  reply reaches the worker. It verifies one cancelled attempt, released
+  reservation, no container, and no workspace. Journal/launch unit tests cover
+  preclaim session fencing, no-container cancellation, and one STARTING advance.
+- Native `make test lint smoke`, the pinned Linux worker profile, and the full
+  isolated PostgreSQL/object-storage suite passed.
+- Wider cancellation/expiry/fencing fault interleavings remain open.

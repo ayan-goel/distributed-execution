@@ -50,13 +50,29 @@ func (b *lockedBuffer) String() string {
 
 type cancelOnCompletionService struct {
 	pb.WorkerServiceServer
-	pool         *pgxpool.Pool
-	projectID    string
-	target       atomic.Value
-	fired        atomic.Bool
-	stopSeen     atomic.Bool
-	uploadTarget atomic.Value
-	uploadFired  atomic.Bool
+	pool              *pgxpool.Pool
+	projectID         string
+	target            atomic.Value
+	fired             atomic.Bool
+	stopSeen          atomic.Bool
+	uploadTarget      atomic.Value
+	uploadFired       atomic.Bool
+	cancelNextAcquire atomic.Bool
+	acquireFired      atomic.Bool
+}
+
+func (s *cancelOnCompletionService) AcquireWork(ctx context.Context, r *pb.AcquireWorkRequest) (*pb.AcquireWorkResponse, error) {
+	reply, err := s.WorkerServiceServer.AcquireWork(ctx, r)
+	if err != nil || reply.GetAssignment() == nil || !s.cancelNextAcquire.CompareAndSwap(true, false) {
+		return reply, err
+	}
+	// Assignment has committed but the worker has not seen the grant. This
+	// forces a stop before STARTING and before any container can be created.
+	if _, err := store.RequestCancellation(ctx, s.pool, s.projectID, reply.GetAssignment().GetAuthority().GetJobId()); err != nil {
+		return nil, err
+	}
+	s.acquireFired.Store(true)
+	return reply, nil
 }
 
 func (s *cancelOnCompletionService) CreateUpload(ctx context.Context, r *pb.CreateUploadRequest) (*pb.CreateUploadResponse, error) {
@@ -90,7 +106,7 @@ func (s *cancelOnCompletionService) CompleteAttempt(ctx context.Context, r *pb.C
 func TestWorkerAcknowledgesLiveCancellation(t *testing.T) {
 	configureServerTestDatabase(t)
 	pki := testWorkerPKI(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 55*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 	docker := func(args ...string) string {
 		t.Helper()
@@ -354,5 +370,31 @@ func TestWorkerAcknowledgesLiveCancellation(t *testing.T) {
 	var resumed string
 	if err := pool.QueryRow(ctx, "SELECT state FROM jobs WHERE id=$1", fourthJob.ID).Scan(&resumed); err != nil || resumed != "SUCCEEDED" {
 		t.Fatal("worker did not resume admission after finalization cancellation", resumed, err)
+	}
+	service.cancelNextAcquire.Store(true)
+	fifthJob, err := store.SubmitJob(ctx, pool, uuid.NewString(), fourthHash, job)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for {
+		var event struct {
+			Event string `json:"event"`
+		}
+		if err := decoder.Decode(&event); err != nil {
+			t.Fatal("worker stopped before prelaunch cancellation", err, diagnostic.String())
+		}
+		if event.Event == "attempt_terminal" {
+			break
+		}
+	}
+	var fifthState, fifthReason, fifthReservation, fifthAttempt string
+	if err := pool.QueryRow(ctx, `SELECT j.state,a.reason,r.state,a.id::text FROM jobs j JOIN attempts a ON a.job_id=j.id JOIN reservations r ON r.attempt_id=a.id WHERE j.id=$1`, fifthJob.ID).Scan(&fifthState, &fifthReason, &fifthReservation, &fifthAttempt); err != nil || fifthState != "CANCELLED" || fifthReason != "USER_CANCELLED" || fifthReservation != "released" || !service.acquireFired.Load() {
+		t.Fatal("prelaunch cancellation was not acknowledged", fifthState, fifthReason, fifthReservation, service.acquireFired.Load(), err, diagnostic.String())
+	}
+	if containers := docker("ps", "-aq", "--filter", "label=dev.dispatch.worker="+worker.WorkerID); containers != "" {
+		t.Fatal("prelaunch cancellation created a container", containers)
+	}
+	if _, err := os.Stat(filepath.Join(root, "work", fifthAttempt)); !os.IsNotExist(err) {
+		t.Fatal("prelaunch cancellation left a workspace", err)
 	}
 }

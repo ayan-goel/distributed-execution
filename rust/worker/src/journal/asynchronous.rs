@@ -58,25 +58,42 @@ impl AsyncJournal {
     ) -> Result<ReportPhaseRequest, JournalError> {
         self.apply(move |journal| {
             let identity = assignment.authority.as_ref().ok_or(JournalError::Invalid)?;
-            let saved = journal.load_session()?.ok_or(JournalError::Identity)?;
-            // Only the acknowledged incarnation begun by this open owner may
-            // launch. Reopening historical session metadata restores no authority.
-            if journal.incarnation.as_deref() != Some(session.session_id.as_str())
-                || journal.worker_id != session.worker_id
-                || saved.generation().is_none()
-                || saved.registration().requested_session_id != session.session_id
-                || identity.worker_id != session.worker_id
-                || identity.session_id != session.session_id
-            {
-                return Err(JournalError::Identity);
+            current_session(journal, &assignment, &session)?;
+            // An unstarted preclaim may advance once. Any durable launch or
+            // completion evidence requires reconciliation instead of replay.
+            if let Some(saved) = journal.load_attempt(&identity.attempt_id)? {
+                // This comparison normalizes transport timing exactly as the
+                // first durable claim did; timing cannot change identity.
+                journal.persist_assignment(&assignment)?;
+                if !saved.phase_reports().is_empty()
+                    || saved.container_id().is_some()
+                    || saved.exit().is_some()
+                    || saved.completion().is_some()
+                    || !saved.outputs().is_empty()
+                {
+                    return Err(JournalError::Conflict);
+                }
+            } else {
+                journal.persist_assignment(&assignment)?;
             }
-            // Claim the attempt while serialized with all journal mutations.
-            // Even an incomplete earlier launch requires reconciliation, not replay.
+            journal.prepare_phase(&identity.attempt_id, AttemptState::Starting)
+        })
+        .await
+    }
+    pub(crate) async fn claim_assignment(
+        &self,
+        assignment: Assignment,
+        session: WorkerSession,
+    ) -> Result<(), JournalError> {
+        self.apply(move |journal| {
+            current_session(journal, &assignment, &session)?;
+            let identity = assignment.authority.as_ref().ok_or(JournalError::Invalid)?;
             if journal.load_attempt(&identity.attempt_id)?.is_some() {
                 return Err(JournalError::Conflict);
             }
-            journal.persist_assignment(&assignment)?;
-            journal.prepare_phase(&identity.attempt_id, AttemptState::Starting)
+            // Durable identity must precede cancellable workspace preparation.
+            // A stop before STARTING can then be acknowledged as not created.
+            journal.persist_assignment(&assignment)
         })
         .await
     }
@@ -132,6 +149,27 @@ impl AsyncJournal {
         self.apply(move |journal| journal.prepare_phase(&id, phase))
             .await
     }
+}
+
+fn current_session(
+    journal: &Journal,
+    assignment: &Assignment,
+    session: &WorkerSession,
+) -> Result<(), JournalError> {
+    let identity = assignment.authority.as_ref().ok_or(JournalError::Invalid)?;
+    let saved = journal.load_session()?.ok_or(JournalError::Identity)?;
+    // Only the acknowledged incarnation begun by this open owner may claim
+    // execution. Reopened historical metadata restores no authority.
+    if journal.incarnation.as_deref() != Some(session.session_id.as_str())
+        || journal.worker_id != session.worker_id
+        || saved.generation().is_none()
+        || saved.registration().requested_session_id != session.session_id
+        || identity.worker_id != session.worker_id
+        || identity.session_id != session.session_id
+    {
+        return Err(JournalError::Identity);
+    }
+    Ok(())
 }
 
 #[cfg(test)]
