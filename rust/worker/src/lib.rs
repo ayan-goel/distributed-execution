@@ -11,6 +11,7 @@ pub mod journal;
 #[cfg(unix)]
 pub mod launch;
 pub mod lease;
+pub mod log_format;
 #[cfg(unix)]
 pub mod outputs;
 pub mod runtime;
