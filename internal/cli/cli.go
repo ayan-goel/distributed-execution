@@ -20,6 +20,7 @@ const usage = `usage:
   dispatch submit FILE [--idempotency-key KEY] [--json]
   dispatch jobs get JOB_ID [--json]
   dispatch cancel JOB_ID [--json]
+  dispatch logs JOB_ID [--follow] [--stream stdout|stderr]
   dispatch artifacts download JOB_ID NAME --output FILE [--json]
 
 Configure DISPATCH_URL and DISPATCH_TOKEN for server commands.
@@ -50,6 +51,9 @@ func run(ctx context.Context, args []string, getenv func(string) string, out, er
 	}
 	if args[0] == "artifacts" {
 		return downloadArtifact(ctx, args, getenv, out)
+	}
+	if args[0] == "logs" {
+		return showLogs(ctx, args, getenv, out)
 	}
 	command, operand, flags := args[0], args[1], args[2:]
 	if command == "jobs" {

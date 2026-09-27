@@ -2009,3 +2009,16 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   mismatched gap claims. Native test/lint/smoke passed. See
   [log-client.md](log-client.md).
 - CLI rendering and reconnectable follow are still pending.
+
+### D16d: Render verified logs safely and poll attempt cursors
+
+- `dispatch logs JOB_ID` now resolves the newest attempt, fetches both streams
+  through validated cursors, and prints escaped one-line binary records.
+  `--follow` polls, switches attempts after retries, reports frozen incomplete
+  ranges once, and exits after a terminal job/attempt. `--stream` selects one
+  stream.
+- Local HTTP/object tests cover exact-version download, absence of project
+  credentials at storage, control-byte escaping, and terminal follow. Native
+  test/lint/smoke passed. See [log-cli.md](log-cli.md).
+- Worker capture/delivery is still disconnected; this command cannot yet show
+  logs from ordinary runs until the runner publishes segments.
