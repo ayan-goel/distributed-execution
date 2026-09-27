@@ -1712,3 +1712,16 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   to isolate transition semantics; it does not prove the natural 30-second
   detector or the two-independent-Linux-host release gate. Automatic old-host
   cleanup and broader failure classification remain open.
+
+### D13d: Verify retry after the unmodified lease deadline
+
+- Reused the real-process retry fixture without advancing database time. The
+  first worker is killed during execution; the server waits for the original
+  30-second lease to expire, records the loss, and the second identity executes
+  and publishes a verified retry. The test checks the recorded loss is after
+  expiry and within six seconds of it, then checks the same fencing and
+  publication invariants as the accelerated case.
+- Both race-enabled retry variants passed with isolated PostgreSQL and
+  SeaweedFS. This verifies the natural detector path in the local fixture. It
+  does not measure the spec's two-second interval excluding processing delay
+  or prove worker migration between independent Linux hosts.

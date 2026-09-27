@@ -23,6 +23,14 @@ import (
 )
 
 func TestLostAgentJobRetriesOnAnotherWorker(t *testing.T) {
+	testLostAgentJobRetriesOnAnotherWorker(t, true)
+}
+
+func TestLostAgentJobRetriesAfterNaturalLeaseExpiry(t *testing.T) {
+	testLostAgentJobRetriesOnAnotherWorker(t, false)
+}
+
+func testLostAgentJobRetriesOnAnotherWorker(t *testing.T, forceExpiry bool) {
 	configureServerTestDatabase(t)
 	objects := publicationStorage(t, "agent-retry", &publicationEvidence{})
 	serverPKI, otherPKI := testWorkerPKI(t), testWorkerPKI(t)
@@ -223,8 +231,11 @@ func TestLostAgentJobRetriesOnAnotherWorker(t *testing.T) {
 		t.Fatal("first worker never entered a real running attempt")
 	}
 	stopFirst()
-	if _, err := pool.Exec(ctx, "UPDATE attempts SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE id=$1", oldAttempt); err != nil {
-		t.Fatal(err)
+	if forceExpiry {
+		// Advance only the transition test; the natural detector test must retain the issued lease.
+		if _, err := pool.Exec(ctx, "UPDATE attempts SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE id=$1", oldAttempt); err != nil {
+			t.Fatal(err)
+		}
 	}
 	second, stopSecond := start(secondWorker, otherPKI)
 	defer stopSecond()
@@ -257,5 +268,11 @@ func TestLostAgentJobRetriesOnAnotherWorker(t *testing.T) {
 	}
 	if err := objects.Verify(ctx, object); err != nil {
 		t.Fatal("retry artifact did not match its immutable stored version", err)
+	}
+	if !forceExpiry {
+		var expiry, lostAt time.Time
+		if err := pool.QueryRow(ctx, "SELECT lease_expires_at,finished_at FROM attempts WHERE id=$1", oldAttempt).Scan(&expiry, &lostAt); err != nil || lostAt.Before(expiry) || lostAt.Sub(expiry) > 6*time.Second {
+			t.Fatal("natural lease loss was not detected promptly after expiry", expiry, lostAt, err)
+		}
 	}
 }
