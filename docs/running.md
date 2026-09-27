@@ -199,7 +199,9 @@ no signed URL or storage credential is printed. See
 `make integration` verifies command entry points and a real HTTP listener with
 PostgreSQL and a local registry: migrate, create project, issue token, submit, stop,
 restart, replay while the registry is offline, and revoke the token. This verifies
-durable queued-job recovery; active worker recovery remains a separate release gate.
+durable queued-job recovery; the active-worker fault matrix has additional release gates.
+One active-job recovery gate now kills an agent-owned Docker job, approves a named
+replacement session, and verifies fencing and physical cleanup before readiness.
 The actual worker daemon also acquires an input-free job through the real gRPC
 service, runs Docker, publishes an exact-version output to local SeaweedFS, and
 cleans up after completion. CLI submission and verified download cover both ends

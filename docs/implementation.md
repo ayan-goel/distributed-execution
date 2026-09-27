@@ -26,7 +26,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D07 acquisition | D03,D06 | Atomic assignment/reservations; concurrent quota/capacity races; acquisition replay | store, RPC, Rust client, sequential agent loop, and local operator policy switch passed; broader scheduler pending |
 | D08 Docker adapter | D04 | Real bounded create/start/inspect/stop; ambiguous create reconciles one identity | cached launch, RUNNING/FINALIZING coordination, phase store/RPC/client, and actual daemon execution passed; staging and strict workspaces pending |
 | D09 leases | D06,D07 | Fresh DB-time expiry checks; delayed grants; local monotonic deadline enforcement | deadline, store/RPC/client, watchdog, periodic renewal, and daemon execution passed; reaper pending |
-| D10 worker recovery | D08,D09 | Durable journal; agent kill/restart stops old containers before new capacity | journal, discovery/cleanup, and actual startup process with abandoned workspace gate passed; agent-owned job kill/restart pending |
+| D10 worker recovery | D08,D09 | Durable journal; agent kill/restart stops old containers before new capacity | agent-owned job kill/restart, fencing, container/workspace cleanup, and reservation release passed; broader recovery matrix pending |
 | D11 artifacts | D03,D04 | Scoped grants; verified exact versions; stale publication rejection | grants, verification, completion, public metadata, and verified CLI download gates passed; Rust transfers and multipart support pending |
 | D12 first real job | D05–D11 | CLI submit → gRPC → Docker → verified output → CLI download | full component chain passed with cached digest and fixed fixture resolver; external registry and image pull pending |
 | D13 loss/retry | D09,D12 | Reaper/reconciliation; recorded retry; backoff/deadlines; nonretryable failure | pending |
@@ -1655,3 +1655,17 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 - The targeted real Docker/PostgreSQL startup and CLI execution regressions,
   workspace unit test, native `make test lint smoke`, and pinned Linux worker suite
   passed. An agent-owned job kill/restart remains the next stronger recovery gate.
+
+### D10d: Restart during an agent-owned Docker job
+
+- Added a real-process fixture that lets the actual worker acquire and start a
+  long-running Docker job, then kills that worker. The container and per-attempt
+  workspace are observed still present before a replacement agent starts.
+- The replacement emits a new session ID; the fixture explicitly approves only
+  that takeover. Registration fences the old live attempt, startup removes its
+  container and abandoned workspace, and only then announces readiness. The test
+  verifies `LOST`/`WORKER_LOST`, a released reservation, cleared cleanup flag,
+  failed one-attempt job, and no stale completion or duplicate attempt.
+- The targeted PostgreSQL/mTLS/Docker test passed under Go's race detector.
+  Automatic inactive-session takeover, retry scheduling after worker loss, and
+  other fault-matrix scenarios still need independent evidence.

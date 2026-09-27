@@ -185,8 +185,10 @@ submission and verified download surround the worker lifecycle. The fixture pins
 an already cached image through a fixed test resolver, so this gate does not cover
 external registry access or image pulling.
 
-The old container in the startup test is fixture-created. The stronger release gate
-still requires the agent itself to acquire/start a job, be killed while it runs,
-restart, and recover through this startup path. Strict scratch, input staging,
+The old container in the startup test is fixture-created. A separate
+`TestWorkerRestartFencesAndRemovesItsOwnRunningJob` starts a job through the actual
+agent, kills it, explicitly approves the replacement incarnation, and verifies
+fencing, physical cleanup, reservation release, and no stale completion before
+readiness. Automatic inactive-session takeover, strict scratch, input staging,
 logs/metrics, cancellation, signal shutdown, multi-host verification, and the rest
 of v0.1 remain required.
