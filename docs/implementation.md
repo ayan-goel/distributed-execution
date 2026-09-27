@@ -31,7 +31,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D12 first real job | D05–D11 | CLI submit → gRPC → Docker → verified output → CLI download | full component chain passed with cached digest and fixed fixture resolver; external registry and image pull pending |
 | D13 loss/retry | D09,D12 | Reaper/reconciliation; recorded retry; backoff/deadlines; nonretryable failure | reaper, server loop, and real two-identity retry on one Docker daemon passed; natural timer and independent-host gates pending |
 | D14 cancellation | D12,D13 | Both completion/cancellation race orders, repeat requests, uncertain cleanup | pending |
-| D15 logs | D08,D11 | Bounded queues/spool, noisy-job truncation, stream cursors, reconnect | catalog, HTTP cursor/tail gaps, binary format, private spool, Rust registration client passed; Docker capture/transfer and CLI follow pending |
+| D15 logs | D08,D11 | Bounded queues/spool, noisy-job truncation, stream cursors, reconnect | catalog, HTTP cursor/tail gaps, binary format, private spool, Rust registration client and durable transfer journal passed; Docker capture/transfer and CLI follow pending |
 | D16 datasets | D11 | Immutable registration/cache; corruption rejection; pin-aware eviction | pending |
 | D17 sweeps/metrics | D05,D13,D16 | Atomic 27-child sweep; 1000 cap; concurrency; fail-fast; finite scalar export | pending |
 | D18 placement | D07,D17 | Project fairness/aging, blockers, two real independent hosts without oversubscription | pending |
@@ -1921,3 +1921,16 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   passed. Durable worker-side upload identity and replay journaling, live
   capture, and actual registration delivery
   remain required before logs appear in the CLI.
+
+### D15g: Journal exact log transfer and registration evidence
+
+- Added per-segment journal records keyed by stream and first sequence. They
+  retain fixed declaration, scoped upload identity, observed object version,
+  verified artifact, registration request, and accepted acknowledgement.
+  Expiring signed URLs remain out of the journal. New same-stream ranges require
+  a registered predecessor; exact retries survive worker journal reopen.
+- Targeted tests first failed on missing methods, then passed for reopening,
+  changed content/version, ordering, registration replies, and secret-free
+  persistence. Worker lint passed. See [log-journal.md](log-journal.md).
+- The record is ready for the delivery loop, but the worker does not yet stream
+  Docker logs or upload/register them; CLI follow remains pending.

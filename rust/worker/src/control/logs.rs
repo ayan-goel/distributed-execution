@@ -32,7 +32,7 @@ impl ControlClient {
     }
 }
 
-fn validate_request(r: &RegisterLogSegmentRequest) -> Result<(), ClientError> {
+pub(crate) fn validate_request(r: &RegisterLogSegmentRequest) -> Result<(), ClientError> {
     if !r.authority.as_ref().is_some_and(valid_authority)
         || !canonical_uuid(&r.request_id)
         || !canonical_uuid(&r.artifact_id)
@@ -69,7 +69,7 @@ fn validate_request(r: &RegisterLogSegmentRequest) -> Result<(), ClientError> {
     Ok(())
 }
 
-fn validate_response(
+pub(crate) fn validate_response(
     _: &RegisterLogSegmentRequest,
     response: MutationResponse,
 ) -> Result<LogStatus, ClientError> {

@@ -23,6 +23,8 @@ use std::{
 const WORKER: &str = "00000000-0000-0000-0000-000000000001";
 const ATTEMPT: &str = "00000000-0000-0000-0000-000000000004";
 
+#[path = "journal/log_cases.rs"]
+mod log_cases;
 #[path = "journal/upload_cases.rs"]
 mod upload_cases;
 

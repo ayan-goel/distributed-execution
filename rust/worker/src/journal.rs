@@ -21,6 +21,8 @@ mod session;
 pub use session::StoredSession;
 mod uploads;
 pub use uploads::OutputUpload;
+mod logs;
+pub use logs::LogUpload;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum JournalError {
@@ -90,6 +92,8 @@ struct Record {
     rejected_completion: Option<CompleteAttemptRequest>,
     #[prost(message, optional, tag = "9")]
     rejected_response: Option<CompleteAttemptResponse>,
+    #[prost(message, repeated, tag = "10")]
+    logs: Vec<LogUpload>,
 }
 
 pub struct RecoveredAttempt(Record);
@@ -131,6 +135,9 @@ impl RecoveredAttempt {
     }
     pub fn outputs(&self) -> &[OutputUpload] {
         &self.0.outputs
+    }
+    pub fn logs(&self) -> &[LogUpload] {
+        &self.0.logs
     }
 }
 
@@ -220,6 +227,7 @@ impl Journal {
             outputs: Vec::new(),
             rejected_completion: None,
             rejected_response: None,
+            logs: Vec::new(),
         };
         record.validate(&self.worker_id, &a.attempt_id)?;
         if let Some(saved) = self.load_attempt(&a.attempt_id)? {
@@ -499,6 +507,7 @@ impl Record {
         }
         self.validate_completion()?;
         self.validate_outputs()?;
+        self.validate_logs()?;
         Ok(())
     }
 

@@ -70,6 +70,7 @@ impl AsyncJournal {
                     || saved.exit().is_some()
                     || saved.completion().is_some()
                     || !saved.outputs().is_empty()
+                    || !saved.logs().is_empty()
                 {
                     return Err(JournalError::Conflict);
                 }
