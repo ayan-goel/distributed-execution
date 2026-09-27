@@ -29,7 +29,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D10 worker recovery | D08,D09 | Durable journal; agent kill/restart stops old containers before new capacity | agent-owned job kill/restart, fencing, container/workspace cleanup, and reservation release passed; broader recovery matrix pending |
 | D11 artifacts | D03,D04 | Scoped grants; verified exact versions; stale publication rejection | grants, verification, completion, public metadata, and verified CLI download gates passed; Rust transfers and multipart support pending |
 | D12 first real job | D05–D11 | CLI submit → gRPC → Docker → verified output → CLI download | full component chain passed with cached digest and fixed fixture resolver; external registry and image pull pending |
-| D13 loss/retry | D09,D12 | Reaper/reconciliation; recorded retry; backoff/deadlines; nonretryable failure | pending |
+| D13 loss/retry | D09,D12 | Reaper/reconciliation; recorded retry; backoff/deadlines; nonretryable failure | transactional expired-attempt store transition passed; server loop and runtime gates pending |
 | D14 cancellation | D12,D13 | Both completion/cancellation race orders, repeat requests, uncertain cleanup | pending |
 | D15 logs | D08,D11 | Bounded queues/spool, noisy-job truncation, stream cursors, reconnect | pending |
 | D16 datasets | D11 | Immutable registration/cache; corruption rejection; pin-aware eviction | pending |
@@ -1669,3 +1669,18 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 - The targeted PostgreSQL/mTLS/Docker test passed under Go's race detector.
   Automatic inactive-session takeover, retry scheduling after worker loss, and
   other fault-matrix scenarios still need independent evidence.
+
+### D13a: Transactionally reap expired attempt authority
+
+- Added a bounded store reaper that selects expired current attempts and rereads
+  lease expiry from fresh database time after locking the job and attempt. It
+  reuses the loss transition for retry/backoff or terminal failure, quarantines
+  uncertain physical capacity, and removes the worker from admission.
+- PostgreSQL integration tests first failed because the reaper was missing. They
+  now pass for retryable loss, exhausted and non-opt-in policies, cancellation,
+  exact-once replay, event-failure rollback, worker ineligibility, and a lease
+  update committed while the reaper waits for the job lock.
+- Native `make test lint smoke` and the full isolated PostgreSQL integration suite
+  passed, including existing acquisition, lease, heartbeat, and recovery tests.
+- This commits only the transaction. A periodic executable-server loop, real
+  process loss/retry, and stale-result race gates remain to be implemented.

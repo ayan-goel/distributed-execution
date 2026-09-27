@@ -270,6 +270,26 @@ renewal, and the probe must reject the barrier before the watchdog confirms the
 actual Docker container stopped. This is negative post-phase integration evidence;
 successful finalization and production acquisition remain separate work.
 
+## Expired-attempt transition (D13a)
+
+`store.ReapExpiredAttempts` processes at most 64 candidates per call, with one
+transaction per attempt. It takes the reservation transition lock, then locks the
+job before its attempt. Only fresh database time after those locks decides expiry;
+a scan that saw an old lease cannot fence an attempt renewed while the reaper
+waited. Renewal, completion, cancellation, and session takeover follow the same
+job-first ownership order.
+
+An expired current attempt becomes `LOST` with `WORKER_LOST`, or `CANCELLED` if
+the job already requested cancellation. The transaction clears current ownership,
+quarantines the reservation, records one event, and applies the job's opt-in retry
+policy and deterministic backoff. It marks the worker unreconciled and ineligible
+until a new incarnation proves physical cleanup. Repeating the scan does not create
+another event or retry. Event-write failure rolls back the entire transition.
+
+Real PostgreSQL tests cover retry, exhaustion, non-opt-in, cancellation, replay,
+event failure, and a lock race with a lease update. This is the store transition;
+the periodic server loop and full loss/retry runtime gate remain pending.
+
 ## Source references
 
 - [Linux clock_gettime and CLOCK_BOOTTIME](https://man7.org/linux/man-pages/man2/clock_gettime.2.html)
