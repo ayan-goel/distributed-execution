@@ -106,3 +106,25 @@ func TestJobInspectionJSONIncludesAcceptedResult(t *testing.T) {
 		t.Fatal("CLI dropped or rounded accepted result", err)
 	}
 }
+
+func TestCancelCommandPrintsCurrentState(t *testing.T) {
+	const id = "00000000-0000-0000-0000-000000000001"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/jobs/"+id+"/cancel" || r.Header.Get("Authorization") != "Bearer private" {
+			t.Error("cancel command sent the wrong request")
+		}
+		_, _ = io.WriteString(w, `{"id":"`+id+`","state":"CANCELLING"}`)
+	}))
+	defer server.Close()
+	env := func(key string) string {
+		return map[string]string{"DISPATCH_URL": server.URL, "DISPATCH_TOKEN": "private", "DISPATCH_DEV_INSECURE": "1"}[key]
+	}
+	var out, errs bytes.Buffer
+	if code := Run(context.Background(), []string{"cancel", id, "--json"}, env, &out, &errs); code != 0 || errs.Len() != 0 {
+		t.Fatal(code, errs.String())
+	}
+	var job struct{ ID, State string }
+	if err := json.Unmarshal(out.Bytes(), &job); err != nil || job.ID != id || job.State != "CANCELLING" {
+		t.Fatal(job, err)
+	}
+}

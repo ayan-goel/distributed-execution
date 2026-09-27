@@ -19,6 +19,7 @@ const usage = `usage:
   dispatch validate FILE [--json]
   dispatch submit FILE [--idempotency-key KEY] [--json]
   dispatch jobs get JOB_ID [--json]
+  dispatch cancel JOB_ID [--json]
   dispatch artifacts download JOB_ID NAME --output FILE [--json]
 
 Configure DISPATCH_URL and DISPATCH_TOKEN for server commands.
@@ -56,7 +57,7 @@ func run(ctx context.Context, args []string, getenv func(string) string, out, er
 			return errors.New(usage)
 		}
 		command, operand, flags = "get", args[2], args[3:]
-	} else if command != "validate" && command != "submit" {
+	} else if command != "validate" && command != "submit" && command != "cancel" {
 		return errors.New(usage)
 	}
 	fs := flag.NewFlagSet(command, flag.ContinueOnError)
@@ -114,6 +115,8 @@ func run(ctx context.Context, args []string, getenv func(string) string, out, er
 			return errors.New("cannot record submission recovery key")
 		}
 		job, err = c.Submit(ctx, body, key)
+	} else if command == "cancel" {
+		job, err = c.CancelJob(ctx, operand)
 	} else {
 		job, err = c.GetJob(ctx, operand)
 	}

@@ -171,14 +171,15 @@ export DISPATCH_DEV_INSECURE=1
 export DISPATCH_TOKEN="$(python3 -c 'import json; print(json.load(open(".local/token.json"))["token"])')"
 bin/dispatch submit examples/cpu/job.yaml --idempotency-key cpu-demo-1 --json
 bin/dispatch jobs get JOB_UUID --json
+bin/dispatch cancel JOB_UUID --json
 ```
 
-A submit-role token can request cancellation through
+A submit-role token can request cancellation through the CLI or
 `POST /v1/jobs/JOB_UUID/cancel`. Queued jobs become `CANCELLED` immediately;
 active jobs become `CANCELLING` and retain their reservation until stop is
 confirmed or authority expires. Repeating the request returns the current job
-without adding another event. The CLI cancel command and live worker stop
-acknowledgement are still in progress.
+without adding another event. Live worker stop acknowledgement is still in
+progress.
 
 Use an HTTPS origin and omit `DISPATCH_DEV_INSECURE` for remote servers. The client
 uses the system certificate trust store and refuses redirects. Environment tokens
@@ -198,9 +199,9 @@ A successful submission means durable admission, not completed execution.
 
 Options follow the file or job ID. Successful commands exit 0; validation, API,
 configuration, transport, and output errors exit 2. `--json` writes one job object
-to stdout for submit/get, or `{valid,specHash}` for validation; diagnostics stay on
-stderr. Human submit/get output includes the job UUID and quoted state. Wait,
-list, cancel, logs, and datasets will be added in their slices.
+to stdout for submit/get/cancel, or `{valid,specHash}` for validation; diagnostics stay on
+stderr. Human submit/get/cancel output includes the job UUID and quoted state. Wait,
+list, logs, and datasets will be added in their slices.
 
 For a successfully completed job with an accepted output named `result`:
 

@@ -1740,3 +1740,12 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   after event insertion failure, HTTP role checks, and project isolation.
 - The worker's graceful stop acknowledgement, CLI command, physical-cancellation
   integration, and wider D14 fault matrix remain open.
+
+### D14b: Expose idempotent cancellation in the CLI
+
+- `dispatch cancel JOB_ID [--json]` validates the identifier locally, sends a
+  project-scoped POST through the existing bounded authenticated client, checks
+  the returned job identity, and displays the current durable state. The server
+  performs the idempotency; the CLI does not invent a cancellation key.
+- Client and command tests verify method/path/authority, invalid identifiers,
+  and one JSON job on stdout. Physical stop acknowledgement remains open.

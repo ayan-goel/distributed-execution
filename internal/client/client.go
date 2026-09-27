@@ -90,6 +90,18 @@ func (c *Client) GetJob(ctx context.Context, id string) (Job, error) {
 	return j, err
 }
 
+func (c *Client) CancelJob(ctx context.Context, id string) (Job, error) {
+	parsed, err := uuid.Parse(id)
+	if err != nil {
+		return Job{}, errors.New("job ID must be a UUID")
+	}
+	j, err := c.request(ctx, http.MethodPost, "/v1/jobs/"+parsed.String()+"/cancel", nil, "")
+	if err == nil && j.ID != parsed.String() {
+		return Job{}, errors.New("server returned a different job ID")
+	}
+	return j, err
+}
+
 func (c *Client) request(ctx context.Context, method, path string, body []byte, key string) (Job, error) {
 	b, err := c.requestBody(ctx, method, path, body, key)
 	if err != nil {

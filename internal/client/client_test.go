@@ -118,3 +118,23 @@ func TestClientPreservesAcceptedManifestPrecision(t *testing.T) {
 		t.Fatal("result identity/number text lost", err)
 	}
 }
+
+func TestClientCancellationUsesBoundedScopedRequest(t *testing.T) {
+	const id = "00000000-0000-0000-0000-000000000001"
+	c, err := New("https://dispatch.example.org", "private", false, transportFunc(func(r *http.Request) (*http.Response, error) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/jobs/"+id+"/cancel" || r.Header.Get("Authorization") != "Bearer private" || r.Header.Get("Idempotency-Key") != "" {
+			t.Fatal("cancellation request changed method, scope, or authority")
+		}
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"id":"` + id + `","state":"CANCELLING"}`)), Header: http.Header{}}, nil
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, err := c.CancelJob(context.Background(), id)
+	if err != nil || job.ID != id || job.State != "CANCELLING" {
+		t.Fatal(job, err)
+	}
+	if _, err := c.CancelJob(context.Background(), "../healthz"); err == nil {
+		t.Fatal("unsafe job ID reached cancellation transport")
+	}
+}
