@@ -1,5 +1,5 @@
 //! Docker operations bound to an immutable attempt; the supervisor owns journaling and leases.
-use crate::{execution::ExecutionSpec, lease::AuthorityWindow};
+use crate::{execution::ExecutionSpec, lease::AuthorityWindow, log_capture::LogQueue};
 use bollard::{
     container::LogOutput, errors::Error as DockerError, models::*, query_parameters::*, Docker,
     API_DEFAULT_VERSION,
@@ -172,6 +172,13 @@ pub trait Runtime {
         handle: &Self::Handle,
         max_bytes: usize,
     ) -> impl Future<Output = Result<ContainerLogs, RuntimeError>> + Send;
+    fn follow_logs(
+        &self,
+        _handle: &Self::Handle,
+        _queue: LogQueue,
+    ) -> impl Future<Output = Result<(), RuntimeError>> + Send {
+        async { Err(RuntimeError::Unsupported) }
+    }
     fn remove(
         &self,
         handle: &Self::Handle,
@@ -498,6 +505,38 @@ impl Runtime for DockerRuntime {
         })
         .await
         .map_err(|_| RuntimeError::Deadline)?
+    }
+
+    async fn follow_logs(
+        &self,
+        handle: &ContainerHandle,
+        queue: LogQueue,
+    ) -> Result<(), RuntimeError> {
+        self.checked(handle, false).await?;
+        let options = LogsOptionsBuilder::default()
+            .follow(true)
+            .stdout(true)
+            .stderr(true)
+            .tail("all")
+            .build();
+        let mut stream = self.docker.logs(&handle.id, Some(options));
+        while let Some(frame) = stream.next().await {
+            let (stream, bytes) = match frame.map_err(RuntimeError::from)? {
+                LogOutput::StdOut { message } => {
+                    (dispatch_protocol::v1::LogStream::Stdout, message)
+                }
+                LogOutput::StdErr { message } => {
+                    (dispatch_protocol::v1::LogStream::Stderr, message)
+                }
+                _ => return Err(RuntimeError::Transport),
+            };
+            // Docker's log stream is always drained, including when the bounded
+            // handoff queue is saturated; sequence gaps expose dropped chunks.
+            queue
+                .push_frame(stream, &bytes)
+                .map_err(|_| RuntimeError::Transport)?;
+        }
+        Ok(())
     }
 
     async fn remove(&self, handle: &ContainerHandle) -> Result<(), RuntimeError> {

@@ -11,6 +11,7 @@ pub mod journal;
 #[cfg(unix)]
 pub mod launch;
 pub mod lease;
+pub mod log_capture;
 #[cfg(unix)]
 pub mod log_delivery;
 pub mod log_format;
