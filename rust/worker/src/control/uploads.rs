@@ -74,7 +74,7 @@ pub(crate) fn validate_artifact(
     Ok(())
 }
 
-fn valid_authority(a: &AttemptAuthority) -> bool {
+pub(crate) fn valid_authority(a: &AttemptAuthority) -> bool {
     [&a.job_id, &a.attempt_id, &a.worker_id, &a.session_id]
         .iter()
         .all(|s| canonical_uuid(s))

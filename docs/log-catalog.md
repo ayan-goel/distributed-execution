@@ -22,6 +22,12 @@ after terminalization in the same session; changed content conflicts. Reusing
 one verified artifact or skipping a sequence range also conflicts. Expired,
 cancelled, and fenced attempts cannot add new segments.
 
+The Rust control client validates the complete authority, artifact/request
+UUIDs, stream, bounded ordered gaps, and nonempty captured range before sending.
+It uses a five-second RPC bound and checks the returned decision/state pair.
+The caller must persist and replay the same request UUID, range, and artifact
+after an uncertain reply; the client does not invent a retry identity.
+
 Completion includes only registered log artifacts in its frozen manifest. It
 rejects `logsComplete=true` while any LOG upload is unverified or unregistered,
 or any registered segment reports a gap. Known registered gaps must appear in
