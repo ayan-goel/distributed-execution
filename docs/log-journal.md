@@ -19,8 +19,14 @@ declared segment is at most 1 MiB. This is a journal/catalog bound, separate
 from the 256 MiB private spool cap. A capture loop that reaches either limit
 must continue draining the container stream and report known loss as gaps.
 
-This slice stores retry evidence only. Docker streaming, transfer scheduling,
-spool cleanup, and CLI rendering are still pending. Tests reopen the journal
+`deliver_log` now drives the journaled declaration, exact-version finalization,
+and registration calls. It skips transfer when finalization evidence is already
+saved and skips all network calls after an accepted registration. Its caller
+must supply a safe open spool file for any new PUT, keep renewing authority,
+bound retries, and remove the segment from the spool only after success.
+
+Docker streaming, transfer scheduling, spool cleanup, and CLI rendering are
+still pending. Tests reopen the journal
 between upload verification and registration, check exact retry IDs, reject
 changed object versions and out-of-order ranges, and ensure signed URLs do not
 appear on disk.
