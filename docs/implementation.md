@@ -1990,3 +1990,12 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   isolation. Native test/lint/smoke and the full isolated PostgreSQL/object-
   storage suite passed. See [attempt-history.md](attempt-history.md).
 - CLI attempt selection and safe log follow remain open.
+
+### D16b: Validate attempt history in the Go client
+
+- The client now requests project-scoped attempt history and rejects mismatched
+  jobs, noncanonical identities, unknown states, nonsequential numbering, and
+  malformed timestamps before a CLI command can choose an attempt.
+- Client tests cover authorized scope and invalid responses. A parallel test
+  exposed a new assembler fixture name collision; its process-local counter
+  fixes that race. Native test/lint/smoke passed after the fix.

@@ -4,18 +4,25 @@ use dispatch_protocol::v1::LogStream;
 use dispatch_worker::{
     log_assembler::LogAssembler, log_capture::CapturedChunk, runtime::PreparedWorkspace,
 };
-use std::{fs, os::unix::fs::DirBuilderExt, path::PathBuf};
+use std::{
+    fs,
+    os::unix::fs::DirBuilderExt,
+    path::PathBuf,
+    sync::atomic::{AtomicU64, Ordering},
+};
 
 const ATTEMPT: &str = "123e4567-e89b-12d3-a456-426614174000";
 
 fn workspace() -> (PathBuf, PreparedWorkspace) {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
     let base = std::env::temp_dir().join(format!(
-        "dispatch-assemble-{}-{}",
+        "dispatch-assemble-{}-{}-{}",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
-            .as_nanos()
+            .as_nanos(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
     ));
     fs::DirBuilder::new().mode(0o700).create(&base).unwrap();
     let root = base.join(ATTEMPT);

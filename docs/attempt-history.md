@@ -9,3 +9,6 @@ The endpoint requires project read permission. The job spec caps retries at
 ten attempts, so v0.1 returns the full history without a cursor. This read
 path lets the CLI resolve an active attempt before requesting its log cursor;
 that CLI command is still pending.
+
+The Go client now validates the response's job identity, bounded ordered
+attempt numbers, UUIDs, states, and timestamps before selecting an attempt.
