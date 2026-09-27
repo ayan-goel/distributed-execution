@@ -39,7 +39,7 @@ impl From<std::io::Error> for SpoolError {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct StoredSegment {
     path: PathBuf,
     name: String,
