@@ -7,7 +7,9 @@
 | `GET /healthz` | none | Database readiness, no tenant data |
 | `POST /v1/jobs` | submit | Validate, resolve image, atomically queue a job |
 | `GET /v1/jobs/{id}` | read | Return project-scoped job state and accepted result metadata |
+| `POST /v1/jobs/{id}/cancel` | submit | Idempotently record project-scoped cancellation intent |
 | `GET /v1/jobs/{id}/artifacts` | read | Accepted outputs with exact-version, 60-second download grants |
+| `GET /v1/attempts/{id}/logs` | read | Registered log ranges and internal gaps with a stream cursor and exact-version, 60-second download grants |
 
 Send `Authorization: Bearer <project-token>`. Submission requires `Idempotency-Key`
 (1–128 characters) and one bounded JSON/YAML Job document. New submissions return
@@ -54,7 +56,7 @@ submission replay, missing results before completion, and 404 for another projec
 token. Client and CLI tests verify the accepted identity and exact metric text.
 
 Dataset admission currently returns an explicit 501 rather than queuing unresolved
-inputs. Job listing, cancellation, full attempt history, logs, events, sweeps,
+inputs. Job listing, full attempt history, log byte rendering/follow, events, sweeps,
 datasets, and worker administration remain required endpoints in later slices.
 
 ## Evidence

@@ -31,7 +31,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D12 first real job | D05–D11 | CLI submit → gRPC → Docker → verified output → CLI download | full component chain passed with cached digest and fixed fixture resolver; external registry and image pull pending |
 | D13 loss/retry | D09,D12 | Reaper/reconciliation; recorded retry; backoff/deadlines; nonretryable failure | reaper, server loop, and real two-identity retry on one Docker daemon passed; natural timer and independent-host gates pending |
 | D14 cancellation | D12,D13 | Both completion/cancellation race orders, repeat requests, uncertain cleanup | pending |
-| D15 logs | D08,D11 | Bounded queues/spool, noisy-job truncation, stream cursors, reconnect | verified segment catalog passed; worker spool, HTTP/CLI retrieval pending |
+| D15 logs | D08,D11 | Bounded queues/spool, noisy-job truncation, stream cursors, reconnect | verified catalog and registered-segment HTTP cursor passed; completion-only gaps, worker spool, CLI follow pending |
 | D16 datasets | D11 | Immutable registration/cache; corruption rejection; pin-aware eviction | pending |
 | D17 sweeps/metrics | D05,D13,D16 | Atomic 27-child sweep; 1000 cap; concurrency; fail-fast; finite scalar export | pending |
 | D18 placement | D07,D17 | Project fairness/aging, blockers, two real independent hosts without oversubscription | pending |
@@ -1855,3 +1855,19 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   count assertion was updated.
 - The worker spool, binary-safe record format, bounded saturation behavior,
   HTTP cursor, and reconnectable CLI follow remain required D15 work.
+
+### D15b: Read registered segments through an authorized cursor
+
+- `GET /v1/attempts/{id}/logs` now lists one stdout/stderr stream with a
+  filter-bound cursor, 1–100 item limit, internal gap metadata, and exact-version
+  60-second download grants. Empty polls retain the cursor for reconnect.
+- The store checks project ownership before reading immutable ranges. The HTTP
+  handler rejects malformed/foreign cursors, signs only catalog objects, and
+  rechecks token revocation after grant creation. Cross-project attempts return
+  404 without issuing a grant.
+- Cursor unit tests and real PostgreSQL HTTP/store integration tests passed,
+  including project isolation, pagination, reconnect, exact-version signing,
+  and revoked-token rejection. Native test/lint/smoke and the full isolated
+  PostgreSQL/object-storage gate passed.
+- Completion-only gaps beyond the last registered segment, worker capture and
+  bounded spool, binary-safe CLI rendering, and follow polling remain open.

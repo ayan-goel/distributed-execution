@@ -1,9 +1,8 @@
-# Log segment catalog (D15a)
+# Log segment catalog and read cursor (D15a–b)
 
 `RegisterLogSegment` records a verified, immutable LOG object for one attempt and
-one stream. This is the durable metadata boundary for future log retrieval; the
-worker spool, record encoding, HTTP cursor, and CLI follow command are not yet
-implemented.
+one stream. The catalog supports an authorized HTTP cursor. The worker spool,
+record encoding, and CLI follow command are not yet implemented.
 
 The worker declares a `stdout` or `stderr` LOG upload of 1 byte to 1 MiB,
 transfers it to versioned object storage, and calls `FinalizeUpload` to verify the
@@ -28,5 +27,18 @@ or any registered segment reports a gap. Known registered gaps must appear in
 the completion's gap claims, including when logs are marked incomplete.
 The completeness flag remains the worker's claim about its full captured stream;
 the catalog cannot infer bytes that never reached an upload declaration. Worker
-backpressure, bounded loss reporting, public access control, and reconnectable
-stream cursors remain D15 work.
+backpressure, bounded loss reporting, and reconnectable CLI follow remain D15
+work.
+
+`GET /v1/attempts/{id}/logs?stream=stdout` (or `stderr`) requires project read
+permission. It returns registered ranges, their internal gaps, server
+registration time, exact object metadata, and 60-second download grants. The
+optional `limit` is 1–100
+(default 50). `nextCursor` encodes the attempt, stream, and last delivered
+sequence; clients pass it back as `cursor` when polling, including after an
+empty page. `hasMore` signals another immediately available page. Cross-project
+attempts return 404, and a cursor for another attempt or stream is rejected.
+The server checks token revocation again after signing and before returning
+bearer grants. Object bytes remain binary; a future CLI must render them safely.
+Completion-only gaps beyond the last registered object are not exposed by this
+cursor yet.
