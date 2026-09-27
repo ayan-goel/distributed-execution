@@ -31,7 +31,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D12 first real job | D05–D11 | CLI submit → gRPC → Docker → verified output → CLI download | full component chain passed with cached digest and fixed fixture resolver; external registry and image pull pending |
 | D13 loss/retry | D09,D12 | Reaper/reconciliation; recorded retry; backoff/deadlines; nonretryable failure | reaper, server loop, and real two-identity retry on one Docker daemon passed; natural timer and independent-host gates pending |
 | D14 cancellation | D12,D13 | Both completion/cancellation race orders, repeat requests, uncertain cleanup | pending |
-| D15 logs | D08,D11 | Bounded queues/spool, noisy-job truncation, stream cursors, reconnect | catalog, HTTP cursor/tail gaps, binary format, private spool, Rust registration client, journaled delivery, bounded Docker follower and segment assembler passed; capture orchestration and CLI follow pending |
+| D15 logs | D08,D11 | Bounded queues/spool, noisy-job truncation, stream cursors, reconnect | catalog, HTTP cursor/tail gaps, binary format, private spool, Rust registration client, journaled delivery, bounded Docker follower, assembler and completion summary passed; runner wiring and CLI follow pending |
 | D16 datasets | D11 | Immutable registration/cache; corruption rejection; pin-aware eviction | pending |
 | D17 sweeps/metrics | D05,D13,D16 | Atomic 27-child sweep; 1000 cap; concurrency; fail-fast; finite scalar export | pending |
 | D18 placement | D07,D17 | Project fairness/aging, blockers, two real independent hosts without oversubscription | pending |
@@ -1968,3 +1968,14 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   [log-assembler.md](log-assembler.md).
 - The runner still needs to supervise capture, schedule deliveries, and seal
   aggregate gap evidence before this reaches users.
+
+### D15k: Summarize registered and missing log ranges for completion
+
+- The summary builder combines registered internal gaps with an unregistered
+  captured tail per stream. It marks logs complete only after clean capture,
+  full registration, and zero known gaps. Adjacent gaps merge; more than 1024
+  disjoint gaps fail explicitly rather than disappearing from the manifest.
+- Tests cover registered and unregistered ranges, interrupted capture, stream
+  independence, invalid ordering, and the limit. Native test/lint/smoke gates
+  passed. See [log-summary.md](log-summary.md).
+- The runner has not yet wired final capture counters into completion sealing.
