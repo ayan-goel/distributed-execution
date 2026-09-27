@@ -4,18 +4,27 @@ use crate::{
     execution::ExecutionSpec,
     journal::{new_uuid, AsyncJournal, JournalError},
     launch::{CleanupEvidence, FinalizingAttempt},
+    log_assembler::LogAssembler,
+    log_capture::CapturedChunk,
+    log_delivery::{deliver_log, LogDeliveryError},
+    log_spool::MAX_SPOOL_BYTES,
+    log_summary::{self, LogSummary},
     outputs::{collect_outputs, CollectionError, CollectionLimits},
-    runtime::PreparedWorkspace,
+    runtime::{ContainerHandle, DockerRuntime, PreparedWorkspace, Runtime},
     supervisor::StopReason,
     transfer::{TransferClient, TransferError},
     upload::{deliver_output, UploadError},
 };
 use dispatch_protocol::v1::{
-    AttemptAuthority, CompleteAttemptRequest, Decision, FailureReason, OutputReference,
+    AttemptAuthority, CompleteAttemptRequest, Decision, FailureReason, LogStream, OutputReference,
 };
-use std::{fmt, time::Duration};
+use std::{
+    fmt,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 
 const MAX_DELIVERY_ATTEMPTS: usize = 3;
+const MAX_FINAL_LOG_BYTES: usize = 1 << 20;
 
 #[derive(Debug)]
 pub enum FinalizationError {
@@ -26,6 +35,7 @@ pub enum FinalizationError {
     Collection(CollectionError),
     Upload(UploadError),
     Payload(ClientError),
+    Log,
 }
 impl fmt::Display for FinalizationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -38,9 +48,123 @@ impl fmt::Display for FinalizationError {
             Self::Collection(_) => "collection",
             Self::Upload(_) => "upload",
             Self::Payload(_) => "payload",
+            Self::Log => "log",
         };
         write!(f, "worker finalization failed: {category}")
     }
+}
+
+/// Publish a bounded Docker snapshot after exit. Truncation remains explicit
+/// because this path cannot claim that bytes beyond its capture cap survived.
+pub async fn publish_finished_logs(
+    attempt: &mut FinalizingAttempt<ContainerHandle>,
+    runtime: &DockerRuntime,
+    journal: &AsyncJournal,
+    client: &mut ControlClient,
+    transfers: &TransferClient,
+    workspace: &PreparedWorkspace,
+) -> Result<LogSummary, FinalizationError> {
+    if !attempt.owns_workspace(workspace) {
+        return Err(FinalizationError::Identity);
+    }
+    let handle = attempt.handle().clone();
+    let id = attempt.identity().attempt_id.clone();
+    attempt
+        .while_finalizing(async {
+            let logs = match runtime.logs(&handle, MAX_FINAL_LOG_BYTES).await {
+                Ok(logs) => logs,
+                Err(_) => {
+                    return Ok(LogSummary {
+                        complete: false,
+                        gaps: Vec::new(),
+                    })
+                }
+            };
+            let mut assembler = LogAssembler::new(workspace, MAX_SPOOL_BYTES)
+                .map_err(|_| FinalizationError::Log)?;
+            let mut captured = [0u64; 2];
+            for (index, (stream, bytes)) in [
+                (LogStream::Stdout, logs.stdout),
+                (LogStream::Stderr, logs.stderr),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                for payload in bytes.chunks(crate::log_capture::MAX_CHUNK_BYTES) {
+                    captured[index] += 1;
+                    let nanos = SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .map_err(|_| FinalizationError::Log)?
+                        .as_nanos();
+                    let capture_unix_nanos =
+                        i64::try_from(nanos).map_err(|_| FinalizationError::Log)?;
+                    assembler
+                        .ingest(CapturedChunk {
+                            stream,
+                            sequence: captured[index],
+                            capture_unix_nanos,
+                            payload: payload.to_vec(),
+                        })
+                        .map_err(|_| FinalizationError::Log)?;
+                }
+            }
+            assembler.flush_all().map_err(|_| FinalizationError::Log)?;
+            let mut delivered = true;
+            while let Some(pending) = assembler.front() {
+                let stream = pending.stream();
+                let first = pending.first_sequence();
+                let last = pending.last_sequence();
+                let gaps = pending.gaps().to_vec();
+                let size = pending.size();
+                let sha256 = pending.sha256().to_owned();
+                journal
+                    .prepare_log(id.clone(), stream, first, last, gaps, size, sha256)
+                    .await?;
+                let mut accepted = false;
+                for round in 0..MAX_DELIVERY_ATTEMPTS {
+                    let source = assembler.read_front().map_err(|_| FinalizationError::Log)?;
+                    match deliver_log(journal, client, transfers, &id, stream, first, source).await
+                    {
+                        Ok(()) => {
+                            accepted = true;
+                            break;
+                        }
+                        Err(LogDeliveryError::Control(error)) if error.upload_stop_requested() => {
+                            return Err(FinalizationError::Authority(StopReason::Rejected(
+                                Decision::StopRequested,
+                            )));
+                        }
+                        Err(LogDeliveryError::Rejected(decision)) => {
+                            return Err(FinalizationError::Authority(StopReason::Rejected(
+                                decision,
+                            )));
+                        }
+                        Err(LogDeliveryError::Journal(error)) => {
+                            return Err(FinalizationError::Journal(error))
+                        }
+                        Err(_) if round + 1 < MAX_DELIVERY_ATTEMPTS => {
+                            tokio::time::sleep(Duration::from_secs(1)).await
+                        }
+                        Err(_) => break,
+                    }
+                }
+                if !accepted {
+                    delivered = false;
+                    break;
+                }
+                assembler
+                    .acknowledge_front()
+                    .map_err(|_| FinalizationError::Log)?;
+            }
+            let saved = journal
+                .load_attempt(id)
+                .await?
+                .ok_or(JournalError::Invalid)?;
+            log_summary::summarize(saved.logs(), captured, !logs.truncated && delivered)
+                .map_err(|_| FinalizationError::Log)
+        })
+        .await
+        .map_err(FinalizationError::Authority)?
 }
 impl std::error::Error for FinalizationError {}
 impl From<JournalError> for FinalizationError {
@@ -116,6 +240,7 @@ pub async fn prepare_completion<H>(
     client: &mut ControlClient,
     transfers: &TransferClient,
     workspace: PreparedWorkspace,
+    logs: LogSummary,
 ) -> Result<CompleteAttemptRequest, FinalizationError> {
     if !attempt.owns_workspace(&workspace) {
         return Err(FinalizationError::Identity);
@@ -234,9 +359,8 @@ pub async fn prepare_completion<H>(
                 } as i32,
                 stopped: true,
                 outputs: references,
-                // Log delivery is not connected yet. Never claim complete logs
-                // from a stopped process or successful output upload alone.
-                logs_complete: false,
+                logs_complete: logs.complete,
+                gaps: logs.gaps,
                 ..Default::default()
             };
             request.payload_sha256 =

@@ -2,7 +2,9 @@
 use super::{workspace::prepare_attempt_workspace, *};
 use crate::{
     control::{GrantedAssignment, WorkOutcome},
-    finalization::{prepare_cancelled_completion, prepare_completion, FinalizationError},
+    finalization::{
+        prepare_cancelled_completion, prepare_completion, publish_finished_logs, FinalizationError,
+    },
     launch::{execute, CleanupEvidence, ExecutionError, LaunchCause},
     runtime::Runtime,
     supervisor::{authority_channel, StopReason, SupervisedAuthority},
@@ -170,14 +172,29 @@ async fn run_assignment(
             return Ok(());
         }
     };
-    let prepared = prepare_completion(
+    let prepared = match publish_finished_logs(
         &mut finalizing,
+        context.runtime,
         context.journal,
         client,
         transfers,
-        workspace,
+        &workspace,
     )
-    .await;
+    .await
+    {
+        Ok(logs) => {
+            prepare_completion(
+                &mut finalizing,
+                context.journal,
+                client,
+                transfers,
+                workspace,
+                logs,
+            )
+            .await
+        }
+        Err(error) => Err(error),
+    };
     if let Err(error) = prepared {
         if !matches!(
             error,

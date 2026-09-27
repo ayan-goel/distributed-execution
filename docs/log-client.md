@@ -1,4 +1,4 @@
-# Verified log client (D16c)
+# Verified log client (D15n)
 
 The Go client reads one attempt/stream cursor page at a time. It checks the
 response identity, ordered ranges, gap bounds, completion gaps, and each

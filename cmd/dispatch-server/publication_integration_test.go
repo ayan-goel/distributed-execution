@@ -38,17 +38,29 @@ func TestRustExecutionCompletesOutputAndTransferFailures(t *testing.T) {
 }
 
 type publicationEvidence struct {
-	puts                            atomic.Int32
-	create                          *pb.CreateUploadRequest
-	finalize                        *pb.FinalizeUploadRequest
-	complete                        *pb.CompleteAttemptRequest
-	creates, finalizes, completions int
+	puts                                       atomic.Int32
+	create                                     *pb.CreateUploadRequest
+	finalize                                   *pb.FinalizeUploadRequest
+	complete                                   *pb.CompleteAttemptRequest
+	creates, finalizes, completions            int
+	logCreates, logFinalizes, logRegistrations int
+	logUploadIDs                               map[string]bool
 }
 
 func (s *launchService) CreateUpload(ctx context.Context, r *pb.CreateUploadRequest) (*pb.CreateUploadResponse, error) {
 	reply, err := s.WorkerServiceServer.CreateUpload(ctx, r)
 	if err != nil {
 		return nil, err
+	}
+	if r.Kind == pb.ArtifactKind_LOG {
+		s.mu.Lock()
+		s.publication.logCreates++
+		if s.publication.logUploadIDs == nil {
+			s.publication.logUploadIDs = make(map[string]bool)
+		}
+		s.publication.logUploadIDs[reply.UploadId] = true
+		s.mu.Unlock()
+		return reply, nil
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -68,6 +80,11 @@ func (s *launchService) FinalizeUpload(ctx context.Context, r *pb.FinalizeUpload
 		return nil, err
 	}
 	s.mu.Lock()
+	if s.publication.logUploadIDs[r.UploadId] {
+		s.publication.logFinalizes++
+		s.mu.Unlock()
+		return reply, nil
+	}
 	defer s.mu.Unlock()
 	s.publication.finalizes++
 	if s.publication.finalize == nil {
@@ -78,6 +95,15 @@ func (s *launchService) FinalizeUpload(ctx context.Context, r *pb.FinalizeUpload
 		s.t.Error("artifact finalization changed on retry")
 	}
 	return reply, nil
+}
+func (s *launchService) RegisterLogSegment(ctx context.Context, r *pb.RegisterLogSegmentRequest) (*pb.MutationResponse, error) {
+	reply, err := s.WorkerServiceServer.RegisterLogSegment(ctx, r)
+	if err == nil {
+		s.mu.Lock()
+		s.publication.logRegistrations++
+		s.mu.Unlock()
+	}
+	return reply, err
 }
 func (s *launchService) CompleteAttempt(ctx context.Context, r *pb.CompleteAttemptRequest) (*pb.CompleteAttemptResponse, error) {
 	reply, err := s.WorkerServiceServer.CompleteAttempt(ctx, r)
@@ -150,7 +176,7 @@ func verifyPublication(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ob
 	if evidence.creates != 2 || evidence.finalizes != 2 || evidence.completions != 2 || artifact == "" {
 		t.Fatal("missing exact publication retries", evidence.creates, evidence.finalizes, evidence.completions)
 	}
-	if evidence.complete.LogsComplete || !evidence.complete.Stopped || len(evidence.complete.Outputs) != 1 || evidence.complete.Outputs[0].ArtifactId != artifact {
+	if !evidence.complete.LogsComplete || !evidence.complete.Stopped || len(evidence.complete.Outputs) != 1 || evidence.complete.Outputs[0].ArtifactId != artifact {
 		t.Fatal("completion did not bind observed output and stopped evidence")
 	}
 	wantReason := pb.FailureReason_FAILURE_REASON_UNSPECIFIED
@@ -163,16 +189,18 @@ func verifyPublication(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ob
 	var jobState, reservation string
 	var accepted *string
 	var manifest []byte
-	var completions, artifacts, uploads, events int
+	var completions, artifacts, uploads, segments, events int
+	wantObjects := 1 + evidence.logRegistrations
 	err := pool.QueryRow(ctx, `SELECT j.state,r.state,j.accepted_attempt_id::text,j.accepted_manifest,
         (SELECT count(*) FROM attempt_completions WHERE attempt_id=a.id),
         (SELECT count(*) FROM artifacts WHERE attempt_id=a.id),
         (SELECT count(*) FROM artifact_uploads WHERE attempt_id=a.id),
+        (SELECT count(*) FROM log_segments WHERE attempt_id=a.id),
         (SELECT count(*) FROM job_events WHERE job_id=j.id AND type='ATTEMPT_COMPLETED')
         FROM attempts a JOIN jobs j ON j.id=a.job_id JOIN reservations r ON r.attempt_id=a.id WHERE a.id=$1`, attempt).
-		Scan(&jobState, &reservation, &accepted, &manifest, &completions, &artifacts, &uploads, &events)
-	if err != nil || jobState != wantState || reservation != "released" || completions != 1 || artifacts != 1 || uploads != 1 || events != 1 {
-		t.Fatal("publication was not atomic and singular", jobState, reservation, completions, artifacts, uploads, events, err)
+		Scan(&jobState, &reservation, &accepted, &manifest, &completions, &artifacts, &uploads, &segments, &events)
+	if err != nil || jobState != wantState || reservation != "released" || completions != 1 || artifacts != wantObjects || uploads != wantObjects || segments != evidence.logRegistrations || events != 1 {
+		t.Fatal("publication was not atomic and singular", jobState, reservation, completions, artifacts, uploads, segments, events, err)
 	}
 	object := evidence.finalize.Object
 	exact := objectstore.Object{Key: object.Key, Version: object.VersionId, Size: int64(object.SizeBytes), SHA256: object.Sha256}
@@ -195,7 +223,7 @@ func verifyPublication(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ob
 		} `json:"outputs"`
 		LogsComplete bool `json:"logsComplete"`
 	}
-	if err := json.Unmarshal(manifest, &result); err != nil || accepted == nil || *accepted != attempt || len(result.Outputs) != 1 || result.LogsComplete {
+	if err := json.Unmarshal(manifest, &result); err != nil || accepted == nil || *accepted != attempt || len(result.Outputs) != 1 || !result.LogsComplete {
 		t.Fatal("invalid accepted result", err)
 	}
 	if result.Outputs[0].ArtifactID != artifact || result.Outputs[0].Object.Key != exact.Key || result.Outputs[0].Object.Version != exact.Version {
@@ -219,7 +247,7 @@ func verifyFailedPublication(t *testing.T, ctx context.Context, pool *pgxpool.Po
 		t.Fatal("unexpected failed-publication retries", evidence.creates, evidence.finalizes, evidence.completions, evidence.puts.Load())
 	}
 	request := evidence.complete
-	if request == nil || request.Reason != wantReason || !request.Stopped || request.LogsComplete || len(request.Outputs) != 0 {
+	if request == nil || request.Reason != wantReason || !request.Stopped || !request.LogsComplete || len(request.Outputs) != 0 {
 		t.Fatal("incorrect durable failed completion")
 	}
 	var state, reservation, reason string

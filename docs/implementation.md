@@ -31,7 +31,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D12 first real job | D05–D11 | CLI submit → gRPC → Docker → verified output → CLI download | full component chain passed with cached digest and fixed fixture resolver; external registry and image pull pending |
 | D13 loss/retry | D09,D12 | Reaper/reconciliation; recorded retry; backoff/deadlines; nonretryable failure | reaper, server loop, and real two-identity retry on one Docker daemon passed; natural timer and independent-host gates pending |
 | D14 cancellation | D12,D13 | Both completion/cancellation race orders, repeat requests, uncertain cleanup | pending |
-| D15 logs | D08,D11 | Bounded queues/spool, noisy-job truncation, stream cursors, reconnect | catalog, HTTP cursor/tail gaps, binary format, private spool, Rust registration client, journaled delivery, bounded Docker follower, assembler and completion summary passed; runner wiring and CLI follow pending |
+| D15 logs | D08,D11 | Bounded queues/spool, noisy-job truncation, stream cursors, reconnect | catalog, HTTP cursor/tail gaps, binary format, private spool, Rust registration client, journaled delivery, bounded Docker follower, assembler, completion summary, CLI follow, and post-exit delivery passed; live runner wiring pending |
 | D16 datasets | D11 | Immutable registration/cache; corruption rejection; pin-aware eviction | pending |
 | D17 sweeps/metrics | D05,D13,D16 | Atomic 27-child sweep; 1000 cap; concurrency; fail-fast; finite scalar export | pending |
 | D18 placement | D07,D17 | Project fairness/aging, blockers, two real independent hosts without oversubscription | pending |
@@ -1980,7 +1980,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   passed. See [log-summary.md](log-summary.md).
 - The runner has not yet wired final capture counters into completion sealing.
 
-### D16a: Expose project-scoped attempt history
+### D15l: Expose project-scoped attempt history
 
 - Added `GET /v1/jobs/{id}/attempts` with ordered state, failure, exit, worker,
   cleanup, and timing evidence. Unknown and foreign jobs return the same 404;
@@ -1991,7 +1991,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   storage suite passed. See [attempt-history.md](attempt-history.md).
 - CLI attempt selection and safe log follow remain open.
 
-### D16b: Validate attempt history in the Go client
+### D15m: Validate attempt history in the Go client
 
 - The client now requests project-scoped attempt history and rejects mismatched
   jobs, noncanonical identities, unknown states, nonsequential numbering, and
@@ -2000,7 +2000,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   exposed a new assembler fixture name collision; its process-local counter
   fixes that race. Native test/lint/smoke passed after the fix.
 
-### D16c: Verify catalog log grants and binary objects in the Go client
+### D15n: Verify catalog log grants and binary objects in the Go client
 
 - The client validates attempt/stream pages and grants, fetches exact object
   versions without project credentials, checks size and SHA-256, decodes the
@@ -2010,7 +2010,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   [log-client.md](log-client.md).
 - CLI rendering and reconnectable follow are still pending.
 
-### D16d: Render verified logs safely and poll attempt cursors
+### D15o: Render verified logs safely and poll attempt cursors
 
 - `dispatch logs JOB_ID` now resolves the newest attempt, fetches both streams
   through validated cursors, and prints escaped one-line binary records.
@@ -2022,3 +2022,18 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   test/lint/smoke passed. See [log-cli.md](log-cli.md).
 - Worker capture/delivery is still disconnected; this command cannot yet show
   logs from ordinary runs until the runner publishes segments.
+
+### D15p: Publish bounded logs from completed Docker attempts
+
+- The worker now reads a bounded Docker stdout/stderr snapshot after exit,
+  journals immutable segments, uploads exact object versions, registers each
+  segment, and binds registered evidence to the completion claim. A rejected
+  registration stops finalization; transfer failure leaves logs incomplete.
+- The real daemon integration test emits both streams and verifies catalog
+  registration, accepted completion, and safe CLI rendering through the
+  isolated PostgreSQL/object-storage fixture. Native test/lint/smoke and the
+  full integration suite passed.
+- This is an interim 1 MiB combined snapshot after exit. It cannot provide
+  live visibility or preserve arbitrary noisy output. The bounded follower,
+  queue, assembler, and spool still need runner lifecycle wiring for the full
+  D15 gate; truncation is reported as incomplete.

@@ -1,4 +1,4 @@
-# Project-scoped attempt history (D16a)
+# Project-scoped attempt history (D15l)
 
 `GET /v1/jobs/{id}/attempts` returns a job's attempts in attempt-number order,
 including current state, failure reason, exit code, worker ID, cleanup status,

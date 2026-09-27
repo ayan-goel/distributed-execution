@@ -32,7 +32,7 @@ verifies worker-loss retry across two worker identities. Running-job cancellatio
 is also verified through worker stop, durable acknowledgement, cleanup, and
 subsequent admission. Cancellations before launch and during finalization are
 also covered. Strict scratch limits,
-input staging, worker log publishing, full retry policy coverage, and other
+input staging, live worker log publishing, full retry policy coverage, and other
 v0.1 gates remain. See the
 [implementation ledger](docs/implementation.md) for verified progress and remaining work.
 

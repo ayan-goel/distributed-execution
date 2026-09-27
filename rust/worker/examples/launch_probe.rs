@@ -7,7 +7,7 @@ use dispatch_worker::{
     completion::{deliver_pending, DeliveryError},
     control::{ControlClient, WorkOutcome},
     execution::ExecutionSpec,
-    finalization::prepare_completion,
+    finalization::{prepare_completion, publish_finished_logs},
     journal::{AsyncJournal, Journal, JournalLimits},
     launch::{execute, launch},
     outputs::{collect_outputs, CollectionLimits},
@@ -138,12 +138,23 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             return Err("finalization did not preserve durable runtime evidence".into());
         }
         let completion = if mode == "publish" {
+            let transfers = TransferClient::new(true)?;
+            let logs = publish_finished_logs(
+                &mut finalizing,
+                &runtime,
+                &journal,
+                &mut client,
+                &transfers,
+                &workspace,
+            )
+            .await?;
             prepare_completion(
                 &mut finalizing,
                 &journal,
                 &mut client,
-                &TransferClient::new(true)?,
+                &transfers,
                 workspace,
+                logs,
             )
             .await?;
             // Terminal delivery replays durable evidence even if lease renewal has

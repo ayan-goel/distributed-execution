@@ -89,7 +89,7 @@ func TestWorkerDaemonAcquiresExecutesAndPublishes(t *testing.T) {
 	}
 	job.Spec.Inputs = nil
 	job.Spec.Image = image
-	job.Spec.Command = []string{"sh", "-c", "printf abc > /outputs/result; sleep 2; exit 0"}
+	job.Spec.Command = []string{"sh", "-c", "printf abc > /outputs/result; printf 'run out'; printf 'run err' >&2; sleep 2; exit 0"}
 	job.Spec.Retry.MaxAttempts = 1
 	job.Spec.Outputs = []spec.Output{{Name: "result", Path: "/outputs/result", Required: true, MaxBytes: 3}}
 	job.Spec.Args = nil
@@ -197,6 +197,13 @@ func TestWorkerDaemonAcquiresExecutesAndPublishes(t *testing.T) {
 	artifact := publication.complete.Outputs[0].ArtifactId
 	service.mu.Unlock()
 	verifyPublication(t, ctx, pool, objects, publication, attempt, artifact, "SUCCEEDED")
+	if publication.logCreates != 2 || publication.logFinalizes != 2 || publication.logRegistrations != 2 {
+		t.Fatal("worker did not publish both verified log streams", publication.logCreates, publication.logFinalizes, publication.logRegistrations)
+	}
+	logs := string(cliRun("logs", submitted.ID))
+	if !strings.Contains(logs, "[stdout #1] run out") || !strings.Contains(logs, "[stderr #1] run err") || strings.Contains(logs, "[logs incomplete") {
+		t.Fatal("CLI did not render the verified log objects", logs)
+	}
 	var completed store.JobRecord
 	if err := json.Unmarshal(cliRun("jobs", "get", submitted.ID, "--json"), &completed); err != nil || completed.State != "SUCCEEDED" {
 		t.Fatal("CLI did not observe the accepted result", err, completed.State)

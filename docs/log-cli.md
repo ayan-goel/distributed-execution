@@ -1,4 +1,4 @@
-# CLI log inspection (D16d)
+# CLI log inspection (D15o)
 
 `dispatch logs JOB_ID` selects the latest attempt and reads both stdout and
 stderr catalog cursors. `--stream stdout|stderr` narrows the read. `--follow`
