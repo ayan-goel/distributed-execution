@@ -101,7 +101,7 @@ func TestHTTPLogCursorScopesExactVersionGrants(t *testing.T) {
 	}
 	w := call(h, http.MethodGet, path, reader, "", nil)
 	var page LogList
-	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &page) != nil || signed != 1 || page.HasMore || len(page.Segments) != 1 || page.Segments[0].Stream != "stdout" || page.Segments[0].ArtifactID != segment.ArtifactID || page.Segments[0].Object.Version != "log-version" || page.Segments[0].DownloadURL == "" || page.NextCursor == "" {
+	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &page) != nil || signed != 1 || page.HasMore || page.Completion != nil || len(page.Segments) != 1 || page.Segments[0].Stream != "stdout" || page.Segments[0].ArtifactID != segment.ArtifactID || page.Segments[0].Object.Version != "log-version" || page.Segments[0].DownloadURL == "" || page.NextCursor == "" {
 		t.Fatal("authorized log page", w.Code, w.Body.String(), signed)
 	}
 	w = call(h, http.MethodGet, path+"&cursor="+page.NextCursor, reader, "", nil)

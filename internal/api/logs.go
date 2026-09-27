@@ -37,6 +37,7 @@ type LogList struct {
 	Segments   []LogSegmentDownload `json:"segments"`
 	NextCursor string               `json:"nextCursor"`
 	HasMore    bool                 `json:"hasMore"`
+	Completion *store.LogCompletion `json:"completion"`
 }
 
 func parseLogQuery(raw, attemptID string) (string, uint64, int, string, error) {
@@ -108,7 +109,7 @@ func (s *Server) logs(w http.ResponseWriter, r *http.Request, p store.Principal)
 		s.storeError(w, err)
 		return
 	}
-	response := LogList{AttemptID: parsed.String(), Stream: strings.ToLower(stream), Segments: []LogSegmentDownload{}, NextCursor: cursor, HasMore: page.More}
+	response := LogList{AttemptID: parsed.String(), Stream: strings.ToLower(stream), Segments: []LogSegmentDownload{}, NextCursor: cursor, HasMore: page.More, Completion: page.Completion}
 	if len(page.Segments) > 0 && s.objects == nil {
 		fail(w, 503, "OBJECT_STORAGE_NOT_CONFIGURED", "log downloads are not configured", false)
 		return

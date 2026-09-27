@@ -9,7 +9,7 @@
 | `GET /v1/jobs/{id}` | read | Return project-scoped job state and accepted result metadata |
 | `POST /v1/jobs/{id}/cancel` | submit | Idempotently record project-scoped cancellation intent |
 | `GET /v1/jobs/{id}/artifacts` | read | Accepted outputs with exact-version, 60-second download grants |
-| `GET /v1/attempts/{id}/logs` | read | Registered log ranges and internal gaps with a stream cursor and exact-version, 60-second download grants |
+| `GET /v1/attempts/{id}/logs` | read | Registered log ranges, frozen completion gaps, a stream cursor, and exact-version, 60-second download grants |
 
 Send `Authorization: Bearer <project-token>`. Submission requires `Idempotency-Key`
 (1–128 characters) and one bounded JSON/YAML Job document. New submissions return

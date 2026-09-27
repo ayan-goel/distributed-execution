@@ -40,5 +40,8 @@ empty page. `hasMore` signals another immediately available page. Cross-project
 attempts return 404, and a cursor for another attempt or stream is rejected.
 The server checks token revocation again after signing and before returning
 bearer grants. Object bytes remain binary; a future CLI must render them safely.
-Completion-only gaps beyond the last registered object are not exposed by this
-cursor yet.
+The nullable `completion` field repeats the frozen `logsComplete` claim and all
+known gaps on every page, including empty follow polls. It exposes tail loss
+beyond the last registered object. Completion is read before segments so a
+page never pairs a newly visible completion with an earlier segment snapshot;
+if completion commits during the read, the next poll sees it.

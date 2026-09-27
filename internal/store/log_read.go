@@ -3,10 +3,12 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"math"
 	"slices"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -23,8 +25,14 @@ type LogSegment struct {
 }
 
 type LogSegmentPage struct {
-	Segments []LogSegment
-	More     bool
+	Segments   []LogSegment
+	More       bool
+	Completion *LogCompletion
+}
+
+type LogCompletion struct {
+	LogsComplete bool               `json:"logsComplete"`
+	Gaps         []CompletionLogGap `json:"gaps"`
 }
 
 // ListLogSegments reads only verified objects bound to an attempt in the
@@ -40,6 +48,23 @@ func ListLogSegments(ctx context.Context, pool *pgxpool.Pool, projectID, attempt
 	if !exists {
 		return LogSegmentPage{}, ErrNotFound
 	}
+	page := LogSegmentPage{Segments: []LogSegment{}}
+	// Read completion first. If it is visible, all accepted registrations
+	// preceded it; if it commits later, the next follow poll observes it.
+	var manifest []byte
+	err := pool.QueryRow(ctx, `SELECT c.manifest_json FROM attempt_completions c JOIN attempts a ON a.id=c.attempt_id JOIN jobs j ON j.id=a.job_id WHERE c.attempt_id=$1 AND j.project_id=$2`, attemptID, projectID).Scan(&manifest)
+	if err == nil {
+		var completion LogCompletion
+		if err := json.Unmarshal(manifest, &completion); err != nil {
+			return LogSegmentPage{}, err
+		}
+		if completion.Gaps == nil {
+			completion.Gaps = []CompletionLogGap{}
+		}
+		page.Completion = &completion
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return LogSegmentPage{}, err
+	}
 	rows, err := pool.Query(ctx, `SELECT s.artifact_id::text,s.first_sequence,s.last_sequence,s.gaps,s.created_at,u.object_key,a.object_version,u.size_bytes,u.sha256
 		FROM log_segments s JOIN artifacts a ON a.id=s.artifact_id JOIN artifact_uploads u ON u.upload_id=s.upload_id
 		JOIN attempts at ON at.id=s.attempt_id JOIN jobs j ON j.id=at.job_id
@@ -49,7 +74,6 @@ func ListLogSegments(ctx context.Context, pool *pgxpool.Pool, projectID, attempt
 		return LogSegmentPage{}, err
 	}
 	defer rows.Close()
-	page := LogSegmentPage{Segments: []LogSegment{}}
 	for rows.Next() {
 		var segment LogSegment
 		var first, last int64
@@ -66,6 +90,7 @@ func ListLogSegments(ctx context.Context, pool *pgxpool.Pool, projectID, attempt
 	if err := rows.Err(); err != nil {
 		return LogSegmentPage{}, err
 	}
+	rows.Close()
 	if len(page.Segments) > limit {
 		page.More = true
 		page.Segments = page.Segments[:limit]
