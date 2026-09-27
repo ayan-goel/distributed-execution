@@ -22,10 +22,10 @@ fn binary_records_preserve_identity_time_bytes_and_sequence_gaps() {
         .unwrap();
     writer.append(3, 1_700_000_000_000_000_042, b"\n").unwrap();
     let segment = writer.finish().unwrap();
-    assert_eq!(segment.bytes, from_hex(VECTOR));
-    assert_eq!(segment.first_sequence, 1);
-    assert_eq!(segment.last_sequence, 3);
-    assert_eq!(segment.gaps, vec![SequenceGap { first: 2, last: 2 }]);
+    assert_eq!(segment.bytes(), from_hex(VECTOR));
+    assert_eq!(segment.first_sequence(), 1);
+    assert_eq!(segment.last_sequence(), 3);
+    assert_eq!(segment.gaps(), [SequenceGap { first: 2, last: 2 }]);
 }
 
 #[test]
@@ -42,8 +42,8 @@ fn invalid_records_and_full_segments_never_advance_the_sequence() {
     writer.append(1, 1, b"x").unwrap();
     assert_eq!(writer.append(1, 2, b"x"), Err(LogFormatError::Sequence));
     let segment = writer.finish().unwrap();
-    assert_eq!(segment.last_sequence, 1);
-    assert_eq!(segment.bytes[44], 2);
+    assert_eq!(segment.last_sequence(), 1);
+    assert_eq!(segment.bytes()[44], 2);
 }
 
 #[test]
@@ -53,7 +53,7 @@ fn a_segment_has_an_exact_one_mebibyte_ceiling() {
         .append(1, 1, &vec![b'x'; MAX_SEGMENT_BYTES - 48 - 20])
         .unwrap();
     assert_eq!(writer.append(2, 2, b"x"), Err(LogFormatError::Full));
-    assert_eq!(writer.finish().unwrap().bytes.len(), MAX_SEGMENT_BYTES);
+    assert_eq!(writer.finish().unwrap().bytes().len(), MAX_SEGMENT_BYTES);
 }
 
 #[test]
@@ -64,5 +64,5 @@ fn gap_count_is_bounded_without_consuming_a_rejected_record() {
     }
     assert_eq!(writer.append(2051, 1, b"x"), Err(LogFormatError::GapLimit));
     writer.append(2050, 1, b"x").unwrap();
-    assert_eq!(writer.finish().unwrap().gaps.len(), 1024);
+    assert_eq!(writer.finish().unwrap().gaps().len(), 1024);
 }

@@ -31,14 +31,38 @@ pub struct SequenceGap {
 
 #[derive(Debug)]
 pub struct LogSegment {
-    pub bytes: Vec<u8>,
-    pub first_sequence: u64,
-    pub last_sequence: u64,
-    pub gaps: Vec<SequenceGap>,
+    bytes: Vec<u8>,
+    attempt_id: String,
+    stream: LogStream,
+    first_sequence: u64,
+    last_sequence: u64,
+    gaps: Vec<SequenceGap>,
+}
+impl LogSegment {
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+    pub fn attempt_id(&self) -> &str {
+        &self.attempt_id
+    }
+    pub fn stream(&self) -> LogStream {
+        self.stream
+    }
+    pub fn first_sequence(&self) -> u64 {
+        self.first_sequence
+    }
+    pub fn last_sequence(&self) -> u64 {
+        self.last_sequence
+    }
+    pub fn gaps(&self) -> &[SequenceGap] {
+        &self.gaps
+    }
 }
 
 pub struct LogSegmentWriter {
     bytes: Vec<u8>,
+    attempt_id: String,
+    stream: LogStream,
     first_sequence: u64,
     last_sequence: Option<u64>,
     gaps: Vec<SequenceGap>,
@@ -65,6 +89,8 @@ impl LogSegmentWriter {
         debug_assert_eq!(bytes.len(), HEADER_BYTES);
         Ok(Self {
             bytes,
+            attempt_id: attempt_id.to_owned(),
+            stream,
             first_sequence,
             last_sequence: None,
             gaps: Vec::new(),
@@ -119,6 +145,8 @@ impl LogSegmentWriter {
         let last_sequence = self.last_sequence.ok_or(LogFormatError::Invalid)?;
         Ok(LogSegment {
             bytes: self.bytes,
+            attempt_id: self.attempt_id,
+            stream: self.stream,
             first_sequence: self.first_sequence,
             last_sequence,
             gaps: self.gaps,

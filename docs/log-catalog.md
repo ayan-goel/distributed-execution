@@ -1,8 +1,8 @@
 # Log segment catalog and read cursor (D15a–b)
 
 `RegisterLogSegment` records a verified, immutable LOG object for one attempt and
-one stream. The catalog supports an authorized HTTP cursor. Worker capture,
-bounded spooling, and CLI follow are not yet implemented. The
+one stream. The catalog supports an authorized HTTP cursor. Docker capture,
+spool/upload integration, and CLI follow are not yet implemented. The
 [binary segment format](log-format.md) is defined separately.
 
 The worker declares a `stdout` or `stderr` LOG upload of 1 byte to 1 MiB,

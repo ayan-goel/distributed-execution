@@ -13,6 +13,8 @@ pub mod launch;
 pub mod lease;
 pub mod log_format;
 #[cfg(unix)]
+pub mod log_spool;
+#[cfg(unix)]
 pub mod outputs;
 pub mod runtime;
 pub mod supervisor;

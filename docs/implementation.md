@@ -31,7 +31,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D12 first real job | D05–D11 | CLI submit → gRPC → Docker → verified output → CLI download | full component chain passed with cached digest and fixed fixture resolver; external registry and image pull pending |
 | D13 loss/retry | D09,D12 | Reaper/reconciliation; recorded retry; backoff/deadlines; nonretryable failure | reaper, server loop, and real two-identity retry on one Docker daemon passed; natural timer and independent-host gates pending |
 | D14 cancellation | D12,D13 | Both completion/cancellation race orders, repeat requests, uncertain cleanup | pending |
-| D15 logs | D08,D11 | Bounded queues/spool, noisy-job truncation, stream cursors, reconnect | verified catalog, HTTP cursor/tail gaps, binary format passed; worker spool and CLI follow pending |
+| D15 logs | D08,D11 | Bounded queues/spool, noisy-job truncation, stream cursors, reconnect | catalog, HTTP cursor/tail gaps, binary format, private spool primitive passed; Docker capture/transfer and CLI follow pending |
 | D16 datasets | D11 | Immutable registration/cache; corruption rejection; pin-aware eviction | pending |
 | D17 sweeps/metrics | D05,D13,D16 | Atomic 27-child sweep; 1000 cap; concurrency; fail-fast; finite scalar export | pending |
 | D18 placement | D07,D17 | Project fairness/aging, blockers, two real independent hosts without oversubscription | pending |
@@ -1896,3 +1896,16 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   Both targeted codec suites and native `make test lint smoke` passed.
 - Docker streaming, disk spool, transfer/registration, and safe CLI display
   remain separate work; this format does not imply logs are being captured.
+
+### D15e: Bound and isolate on-disk log segments
+
+- `LogSpool` creates a private attempt-local directory outside the workload's
+  bind mounts. It caps retained bytes at 256 MiB and segment files at 1024,
+  publishes synced files without replacing an existing range, and frees space
+  only when a tracked file is removed after delivery.
+- Filesystem tests cover permissions, symlink/foreign-attempt rejection,
+  immutable range collisions, exact-byte reads, cap reclamation, tiny-segment
+  inode pressure, and collision cleanup that preserves existing files. Native
+  `make test lint smoke` and the pinned Linux worker profile passed.
+- Docker capture, upload and registration, retention-gap accounting, and CLI
+  follow remain open. The spool alone does not make logs available to users.
