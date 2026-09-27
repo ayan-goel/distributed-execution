@@ -112,6 +112,13 @@ both ports bind before startup events are logged. Header/body/write/idle timeout
 are bounded. Worker registration, heartbeat, acquisition, and completion RPCs are
 available; the remaining job execution features are in progress.
 
+Before opening listeners, the server terminalizes expired attempt leases in
+PostgreSQL. It repeats this check every two seconds while running. An expired
+attempt is recorded as lost, its physical reservation is quarantined, and its job
+retries only when policy allows. Startup failure stops both listeners; periodic
+database errors are logged and retried. Worker cleanup must still be proven by a
+new incarnation before quarantined capacity is released.
+
 ## Configure artifact storage
 
 For worker upload grants, add all three options to `dispatch-server serve`:

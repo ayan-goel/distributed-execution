@@ -131,6 +131,11 @@ func serve(ctx context.Context, pool *pgxpool.Pool, c serveConfig, out io.Writer
 	if err != nil {
 		return err
 	}
+	// Reconcile expired authority before either listener can accept new work.
+	// Database state, not process memory, also makes this safe after server restart.
+	if _, err := reapExpiredUntilCaughtUp(ctx, pool); err != nil {
+		return err
+	}
 	images := admission.RegistryResolver{Allowed: c.registries, AuthHosts: c.authHosts, AllowLoopbackHTTP: c.dev}
 	var downloads api.DownloadSigner
 	if objects != nil {
@@ -199,6 +204,12 @@ func serve(ctx context.Context, pool *pgxpool.Pool, c serveConfig, out io.Writer
 	if worker != nil {
 		logger.Info("worker_listening", "address", workerListener.Addr().String(), "mtls", true)
 	}
+	reaperCtx, stopReaper := context.WithCancel(ctx)
+	reaperDone := make(chan struct{})
+	go func() {
+		defer close(reaperDone)
+		runLeaseReaper(reaperCtx, pool, logger)
+	}()
 	var servingError error
 	select {
 	case err := <-finished:
@@ -207,6 +218,8 @@ func serve(ctx context.Context, pool *pgxpool.Pool, c serveConfig, out io.Writer
 		}
 	case <-ctx.Done():
 	}
+	stopReaper()
+	<-reaperDone
 	return errors.Join(servingError, shutdownServers(server, worker, 10*time.Second))
 }
 

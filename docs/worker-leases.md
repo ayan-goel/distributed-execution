@@ -288,7 +288,11 @@ another event or retry. Event-write failure rolls back the entire transition.
 
 Real PostgreSQL tests cover retry, exhaustion, non-opt-in, cancellation, replay,
 event failure, and a lock race with a lease update. This is the store transition;
-the periodic server loop and full loss/retry runtime gate remain pending.
+the executable server now runs it before opening listeners and every two seconds
+while serving. Each pass drains bounded transactions until caught up. Transient
+periodic errors are logged and retried on the next tick; startup errors prevent
+the listeners from opening. Server integration verifies both timing points and
+restart idempotency. The full loss/retry runtime gate remains pending.
 
 ## Source references
 
