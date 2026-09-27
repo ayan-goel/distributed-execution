@@ -1979,3 +1979,14 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   independence, invalid ordering, and the limit. Native test/lint/smoke gates
   passed. See [log-summary.md](log-summary.md).
 - The runner has not yet wired final capture counters into completion sealing.
+
+### D16a: Expose project-scoped attempt history
+
+- Added `GET /v1/jobs/{id}/attempts` with ordered state, failure, exit, worker,
+  cleanup, and timing evidence. Unknown and foreign jobs return the same 404;
+  empty histories return `[]`. The ten-attempt job cap keeps the full response
+  bounded without pagination.
+- Store and HTTP integration tests verify an active attempt and cross-project
+  isolation. Native test/lint/smoke and the full isolated PostgreSQL/object-
+  storage suite passed. See [attempt-history.md](attempt-history.md).
+- CLI attempt selection and safe log follow remain open.

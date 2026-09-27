@@ -126,6 +126,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, job)
 	case strings.HasPrefix(r.URL.Path, "/v1/jobs/") && strings.HasSuffix(r.URL.Path, "/artifacts") && r.Method == http.MethodGet:
 		s.artifacts(w, r, p)
+	case strings.HasPrefix(r.URL.Path, "/v1/jobs/") && strings.HasSuffix(r.URL.Path, "/attempts") && r.Method == http.MethodGet:
+		s.attempts(w, r, p)
 	case strings.HasPrefix(r.URL.Path, "/v1/attempts/") && strings.HasSuffix(r.URL.Path, "/logs") && r.Method == http.MethodGet:
 		s.logs(w, r, p)
 	case strings.HasPrefix(r.URL.Path, "/v1/jobs/") && r.Method == http.MethodGet:

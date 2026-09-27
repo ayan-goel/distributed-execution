@@ -93,6 +93,14 @@ func TestHTTPLogCursorScopesExactVersionGrants(t *testing.T) {
 		return objectstore.Grant{URL: "https://storage.example.test/log", Method: http.MethodGet, ExpiresAt: time.Now().Add(ttl)}, nil
 	}))
 	path := "/v1/attempts/" + a.AttemptID + "/logs?stream=stdout&limit=1"
+	historyPath := "/v1/jobs/" + a.JobID + "/attempts"
+	if w := call(h, http.MethodGet, historyPath, foreign, "", nil); w.Code != 404 {
+		t.Fatal("foreign attempt history was visible", w.Code)
+	}
+	var history store.AttemptHistory
+	if w := call(h, http.MethodGet, historyPath, reader, "", nil); w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &history) != nil || history.JobID != a.JobID || len(history.Attempts) != 1 || history.Attempts[0].ID != a.AttemptID || history.Attempts[0].State != "STARTING" {
+		t.Fatal("authorized attempt history", w.Code, w.Body.String())
+	}
 	if w := call(h, http.MethodGet, path, foreign, "", nil); w.Code != 404 || signed != 0 {
 		t.Fatal("foreign project received log grant", w.Code, signed)
 	}
