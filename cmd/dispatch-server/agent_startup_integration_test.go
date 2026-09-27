@@ -220,8 +220,8 @@ func TestWorkerProcessReconcilesDockerBeforeAdvertisingReady(t *testing.T) {
 	if err := run(ctx, []string{"worker", "revoke", "--id", id.WorkerID, "--credential", id.CredentialID}, &bytes.Buffer{}); err != nil {
 		t.Fatal(err)
 	}
-	// No jobs have been acquired in this slice, so terminal authentication failure
-	// must end the process rather than retrying forever or reporting readiness.
+	// Terminal authentication failure must end an idle process rather than
+	// retrying forever or reporting readiness.
 	waited := make(chan error, 1)
 	go func() { waited <- command.Wait() }()
 	select {

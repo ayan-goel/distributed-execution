@@ -1,9 +1,11 @@
 # Running the current control plane
 
-The control plane can now admit and inspect queued jobs. Worker execution and
-artifact retrieval are not implemented yet; queued jobs will remain queued.
-The [worker startup command](worker-agent.md) now registers, cleans old Docker
-containers, and reports health, but its acquisition/execution loop is still pending.
+The control plane can admit and inspect queued jobs, and the CLI can retrieve
+verified outputs. The [worker agent](worker-agent.md) now acquires and executes
+input-free jobs with cached images under the explicit soft-scratch development
+policy. The server command still defaults to strict scratch, so its development
+policy switch is pending; end-to-end execution is currently verified through the
+same service in the integration fixture.
 
 ## Prerequisites
 
@@ -100,8 +102,8 @@ and TLS mode but no credentials. SIGINT/SIGTERM drain HTTP requests for up to 10
 seconds before closing the database pool. HTTP and worker RPCs share this shutdown
 budget; either listener failing stops the other. Both TLS configurations load and
 both ports bind before startup events are logged. Header/body/write/idle timeouts
-are bounded. Worker registration and heartbeat RPCs are available; the Rust agent
-and job execution pipeline remain in progress.
+are bounded. Worker registration, heartbeat, acquisition, and completion RPCs are
+available; the remaining job execution features are in progress.
 
 ## Configure artifact storage
 
@@ -127,8 +129,8 @@ not required: the integration fixture uses isolated local SeaweedFS. See
 [upload capabilities](artifact-uploads.md) for limits and replay behavior, and
 [verified artifacts](verified-artifacts.md) for `FinalizeUpload`. The server can
 verify uploaded versions and accept terminal results through `CompleteAttempt`;
-see [completion publication](completion.md). Worker startup now recovers journaled
-completions; Rust transfers and live job execution/delivery remain in progress.
+see [completion publication](completion.md). The agent recovers journaled
+completions and delivers verified outputs for live jobs in the development path.
 `GET /v1/jobs/{id}/artifacts` uses the same storage adapter for
 project-authorized output download grants; see [artifact downloads](artifact-downloads.md).
 
@@ -156,9 +158,9 @@ uses the system certificate trust store and refuses redirects. Environment token
 are never included in normal output. Do not enable shell tracing while loading them.
 
 Submission resolves the image tag to a verified digest. The example needs no
-dataset and will eventually produce the deterministic sum 4,999,950,000, but at
-this implementation stage it only queues because the worker acquisition/transfer
-loop remains to integrate. The server must permit Docker Hub via
+dataset and computes the deterministic sum 4,999,950,000. Running it through the
+operator command awaits the explicit soft-scratch policy switch, image pulling, and
+other development-path setup. The server must permit Docker Hub via
 `--allow-registry index.docker.io`.
 
 The CLI prints `Idempotency-Key` to stderr **before** sending a submission. If you
@@ -191,6 +193,9 @@ no signed URL or storage credential is printed. See
 PostgreSQL and a local registry: migrate, create project, issue token, submit, stop,
 restart, replay while the registry is offline, and revoke the token. This verifies
 durable queued-job recovery; active worker recovery remains a separate release gate.
+The actual worker daemon also acquires an input-free job through the real gRPC
+service, runs Docker, publishes an exact-version output to local SeaweedFS, and
+cleans up after completion. This test uses explicit soft-scratch acquisition policy.
 The same test now exercises CLI submission and inspection, checks the stored image
 digest/spec hash, and retries with the original key after restart during the registry
 outage. CLI unit tests cover offline commands, invalid usage, terminal-safe errors,

@@ -1,11 +1,13 @@
-# Worker startup and health loop
+# Worker agent
 
 The actual `dispatch-worker` executable now opens its journal, registers a fresh
 incarnation over mTLS, reconciles previous-session Docker containers, and reports
-health/readiness periodically. Startup also delivers journaled completion requests
-and persists their authoritative outcomes. Job acquisition and per-attempt execution are not
-connected yet. A READY worker currently remains idle; this is not the completed
-CLI-to-result execution path.
+health/readiness periodically. It then acquires one job at a time, renews its lease,
+runs its cached image in Docker, verifies and publishes declared outputs, records
+completion, and removes the container and private attempt workspace. Startup also
+delivers journaled completion requests and persists their authoritative outcomes.
+This is the soft-scratch development path; the strict Linux release profile and
+other v0.1 features remain unfinished.
 
 ## Development setup
 
@@ -61,7 +63,9 @@ ceilings. Docker's actual architecture, CPU count, and total memory also bound t
 claims; configure allocatable memory below total memory to leave host overhead.
 The daemon must support the existing hard CPU/memory/PID/seccomp checks. Scratch is
 advertised as `scratch.soft`, never `scratch.quota`. The server's default acquisition
-policy continues to reject soft-scratch execution.
+policy continues to reject soft-scratch execution. The current server command does
+not yet expose a development override, so this execution path is verified against
+the same service with an explicit test policy. Operator wiring is the next slice.
 
 ## Startup and retry ordering
 
@@ -76,9 +80,13 @@ policy continues to reject soft-scratch execution.
 5. Inspect this worker's Docker inventory and send a sequenced health report.
    Remove at most one previous-session container per iteration, with identity
    revalidation. Keep health reports interleaved during cleanup.
-6. After fresh inventory proves no containers remain, send a new healthy,
+6. After fresh inventory proves no unknown containers remain, send a new healthy,
    reconciled report. Announce `ready` only when the server also confirms no
-   reconciliation/stop instructions and no drain request.
+   reconciliation/stop instructions and no drain request. An owned live container
+   remains reconciled through its exact authority identity.
+7. Acquire one assignment with a replayable request ID, create an exclusive private
+   attempt workspace, and run under lease renewal. A terminal, replay-safe completion
+   precedes container and workspace removal; only then can the next job be admitted.
 
 The preceding saved session ID can be an unaccepted request. For manual takeover,
 use the server's actual current session as `--from-session` and this process's
@@ -89,7 +97,8 @@ approves itself or bypasses the inactivity window.
 Each pending heartbeat retains its UUID, sequence, and full payload until a reply
 arrives. Cleanup continues after transient heartbeat errors because registration
 already fenced the predecessor. A stale pending snapshot cannot announce readiness:
-the current local observation must also be healthy, empty, and free of disk pressure.
+the current local observation must also be healthy, free of unknown containers, and
+free of disk pressure.
 After accepting an old report, the next report gets a higher sequence and new UUID.
 Runtime inventory errors produce an unhealthy report, never successful empty-state
 reconciliation. Unknown current-session containers remain unreconciled; this startup
@@ -100,16 +109,17 @@ plus 64 MiB of headroom. A failed space check reports disk pressure. This conser
 check is not a filesystem quota. File sync and space checks run in blocking tasks;
 steady-state health reports normally occur every five seconds, while uncertain
 requests retry after one second. RPC/runtime deadlines remain in their adapters.
-There is no active-job lease maintenance in this loop yet.
+Lease renewal runs independently of execution and upload work.
 
 JSON state-change events are `session_pending`, `registered`, `reconciling`, `ready`,
-`draining`, and `control_unavailable`. `completion_recovered` reports a durably
-resolved attempt with its attempt ID and numeric protocol decision/state; it never
-includes manifest, spec, metrics, or credentials. Terminal fencing/authentication/conflict
-errors exit nonzero. The exclusive journal lock remains held throughout the process,
+`draining`, and `control_unavailable`. `attempt_terminal` includes the attempt ID
+after cleanup. `completion_recovered` reports a durably resolved attempt with its
+attempt ID and numeric protocol decision/state; it never includes manifest, spec,
+metrics, or credentials. Terminal fencing/authentication/conflict errors exit
+nonzero. The exclusive journal lock remains held throughout the process,
 so a second process using the same state directory exits with `Busy`. Signal-driven
-job drain/termination is not implemented; this slice has no acquired jobs, and normal
-OS process termination releases the journal lock.
+job drain/termination is not implemented; normal OS process termination releases
+the journal lock, and the next incarnation reconciles any surviving container.
 
 ## Completion recovery (D11q)
 
@@ -134,9 +144,9 @@ completion that never committed is rejected after the old attempt is fenced; it
 must not become a newly accepted result. A recovered rejection is an outcome, not
 a reason to re-execute that attempt. The server's retry policy owns replacement work.
 
-This scans startup evidence only. Live acquisition/execution must still call the
-delivery component after output verification. Cancellation supersession, local
-capacity/workspace cleanup, and retention of resolved records remain required.
+This scans startup evidence only. Live execution calls the same delivery component
+after output verification. Cancellation supersession and retention of resolved
+records remain required.
 
 ## Verification and limits
 
@@ -163,8 +173,13 @@ inventory access; the fixture does not run the workload itself.
 checks, migrations, and existing Go/Rust mTLS workflows. `make test lint smoke`
 covers config rejection, binary argument handling, protocol regression, and lint.
 
-The old container in this test is fixture-created. The stronger release gate still
-requires the agent itself to acquire/start a job, be killed while it runs, restart,
-and recover through this startup path. Acquisition/supervision, strict scratch,
-transfers/live completion, signal shutdown, multi-host verification, and the rest of
-v0.1 remain required.
+`TestWorkerDaemonAcquiresExecutesAndPublishes` runs the actual binary against real
+PostgreSQL, mTLS, Docker, and versioned SeaweedFS. It loses committed phase,
+upload, artifact, and completion replies, then verifies exact replay, one accepted
+result, the stored object version, released reservation, and local cleanup.
+
+The old container in the startup test is fixture-created. The stronger release gate
+still requires the agent itself to acquire/start a job, be killed while it runs,
+restart, and recover through this startup path. Strict scratch, input staging,
+logs/metrics, cancellation, signal shutdown, multi-host verification, and the rest
+of v0.1 remain required.

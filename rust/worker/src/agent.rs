@@ -1,9 +1,12 @@
-//! Worker registration, startup cleanup, and health reporting. Acquisition follows separately.
+//! Worker registration, recovery, health reporting, and single-attempt execution.
 use crate::{
     completion::{deliver_pending, DeliveryError},
     control::{canonical_uuid, ClientError, ControlClient},
+    finalization::FinalizationError,
     journal::{new_uuid, AsyncJournal, Journal, JournalError, JournalLimits},
+    launch::ExecutionError,
     runtime::{DockerRuntime, RecoveryRuntime, RuntimeError},
+    supervisor::{AuthorityController, StopReason},
 };
 use dispatch_protocol::{
     v1::{Decision, ExecutionInventory, HeartbeatRequest, RegisterWorkerRequest, Resources},
@@ -18,6 +21,10 @@ use std::{
     path::{Path, PathBuf},
     time::Duration,
 };
+use tokio::sync::watch;
+
+mod acquisition;
+mod workspace;
 
 #[derive(Debug)]
 pub enum AgentError {
@@ -27,6 +34,8 @@ pub enum AgentError {
     Journal(JournalError),
     Control(ClientError),
     Runtime(RuntimeError),
+    Execution(ExecutionError),
+    Finalization(FinalizationError),
 }
 impl fmt::Display for AgentError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -37,6 +46,8 @@ impl fmt::Display for AgentError {
             Self::Journal(e) => e.fmt(f),
             Self::Control(e) => e.fmt(f),
             Self::Runtime(e) => e.fmt(f),
+            Self::Execution(e) => e.fmt(f),
+            Self::Finalization(e) => e.fmt(f),
         }
     }
 }
@@ -54,6 +65,16 @@ impl From<ClientError> for AgentError {
 impl From<RuntimeError> for AgentError {
     fn from(e: RuntimeError) -> Self {
         Self::Runtime(e)
+    }
+}
+impl From<ExecutionError> for AgentError {
+    fn from(e: ExecutionError) -> Self {
+        Self::Execution(e)
+    }
+}
+impl From<FinalizationError> for AgentError {
+    fn from(e: FinalizationError) -> Self {
+        Self::Finalization(e)
     }
 }
 impl From<DeliveryError> for AgentError {
@@ -257,15 +278,38 @@ pub async fn run(config: AgentConfig) -> Result<(), AgentError> {
     journal.record_registration(registration).await?;
     event("registered", &config.worker_id, &session_id);
     let mut completion_client = client.clone();
+    let mut acquisition_client = client.clone();
+    let (ready_tx, ready_rx) = watch::channel(false);
+    let (active_tx, active_rx) = watch::channel(None::<AuthorityController>);
     // Recovery starts only after registration fences the predecessor. A separate
     // RPC handle lets old completion delivery wait without delaying physical cleanup.
     tokio::try_join!(
-        health_loop(&config, &root, &session_id, &runtime, &mut client),
+        health_loop(
+            &config,
+            &root,
+            &session_id,
+            &runtime,
+            &mut client,
+            ready_tx,
+            active_rx
+        ),
         recover_completions(
             &journal,
             &mut completion_client,
             &config.worker_id,
             &session_id
+        ),
+        acquisition::acquire_and_run(
+            acquisition::ExecutionContext {
+                config: &config,
+                root: &root,
+                session_id: &session_id,
+                runtime: &runtime,
+                journal: &journal,
+            },
+            &mut acquisition_client,
+            ready_rx,
+            active_tx
         ),
     )?;
     Ok(())
@@ -314,6 +358,8 @@ async fn health_loop(
     session: &str,
     runtime: &DockerRuntime,
     client: &mut ControlClient,
+    readiness: watch::Sender<bool>,
+    active: watch::Receiver<Option<AuthorityController>>,
 ) -> Result<(), AgentError> {
     let mut sequence = 0u64;
     let mut pending: Option<HeartbeatRequest> = None;
@@ -322,6 +368,12 @@ async fn health_loop(
         let inventory = runtime.inventory(&config.worker_id).await;
         let healthy = inventory.is_ok();
         let inventory = inventory.unwrap_or_default();
+        let owner = active.borrow().clone();
+        let known = inventory.iter().all(|container| {
+            owner
+                .as_ref()
+                .is_some_and(|controller| controller.identity() == container.authority())
+        });
         let disk_root = root.to_owned();
         let reserved = config.scratch_mib << 20;
         let pressure = tokio::task::spawn_blocking(move || disk_pressure(&disk_root, reserved))
@@ -341,7 +393,10 @@ async fn health_loop(
                 report_sequence: sequence,
                 runtime_healthy: healthy,
                 disk_pressure: pressure,
-                reconciliation_complete: healthy && inventory.is_empty(),
+                // A live container is reconciled only when this process still
+                // owns its exact authority. Unknown current-session inventory
+                // must block new admission, just like predecessor inventory.
+                reconciliation_complete: healthy && known,
                 inventory: inventory
                     .iter()
                     .map(|c| ExecutionInventory {
@@ -360,9 +415,15 @@ async fn health_loop(
                     && !request.disk_pressure
                     && healthy
                     && !pressure
-                    && inventory.is_empty()
+                    && known
                     && !reply.reconcile
                     && reply.stop.is_empty();
+                if let Some(controller) = owner.as_ref() {
+                    if reply.stop.iter().any(|item| item == controller.identity()) {
+                        controller.stop(StopReason::Rejected(Decision::StopRequested));
+                    }
+                }
+                readiness.send_replace(ready && !reply.drain);
                 pending = None;
                 if ready {
                     if reply.drain {
@@ -374,7 +435,10 @@ async fn health_loop(
                     "reconciling"
                 }
             }
-            Err(e) if e.retryable() => "control_unavailable",
+            Err(e) if e.retryable() => {
+                readiness.send_replace(false);
+                "control_unavailable"
+            }
             Err(e) => return Err(e.into()),
         };
         if state != announced {

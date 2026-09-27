@@ -26,10 +26,10 @@ into 27 jobs distributed across your machines.
 ## Project status
 
 **v0.1 is in development and targets CPU workloads.** GPU support is planned for v0.2.
-Integration tests cover submission, inspection, Docker execution, verified output
-publication, and completion recovery; the worker's full acquisition and execution
-loop is still being connected. See the [implementation ledger](docs/implementation.md)
-for verified progress and remaining work.
+Integration tests cover submission, inspection, and a real worker daemon acquiring,
+executing, and publishing a verified output. Strict scratch limits, input staging,
+logs, retries, and other v0.1 release gates remain. See the
+[implementation ledger](docs/implementation.md) for verified progress and remaining work.
 
 ## Development
 
