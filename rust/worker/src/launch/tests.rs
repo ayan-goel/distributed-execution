@@ -13,7 +13,7 @@ use std::{
     fs,
     os::unix::fs::DirBuilderExt,
     path::PathBuf,
-    sync::atomic::{AtomicBool, AtomicUsize, Ordering},
+    sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering},
 };
 
 const WORKER: &str = "00000000-0000-0000-0000-000000000001";
@@ -141,6 +141,7 @@ impl Fixture {
             creates: AtomicUsize::new(0),
             killed: AtomicUsize::new(0),
             stops: AtomicUsize::new(0),
+            stop_grace: AtomicU32::new(0),
             exited: AtomicBool::new(false),
             oom: false,
         }
@@ -218,6 +219,7 @@ struct FakeRuntime {
     starts: AtomicUsize,
     killed: AtomicUsize,
     stops: AtomicUsize,
+    stop_grace: AtomicU32,
     exited: AtomicBool,
     oom: bool,
 }
@@ -295,8 +297,9 @@ impl Runtime for FakeRuntime {
     async fn wait(&self, _: &String) -> Result<ContainerStatus, RuntimeError> {
         panic!("launch must not wait for completion")
     }
-    async fn stop(&self, _: &String, _: u32) -> Result<(), RuntimeError> {
+    async fn stop(&self, _: &String, grace_seconds: u32) -> Result<(), RuntimeError> {
         self.stops.fetch_add(1, Ordering::SeqCst);
+        self.stop_grace.store(grace_seconds, Ordering::SeqCst);
         Ok(())
     }
     async fn logs(&self, _: &String, _: usize) -> Result<ContainerLogs, RuntimeError> {

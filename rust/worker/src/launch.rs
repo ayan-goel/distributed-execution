@@ -78,12 +78,20 @@ async fn terminate_for_cause<R: Runtime>(
     runtime: &R,
     handle: &R::Handle,
     cause: &LaunchCause,
+    authority: &SupervisedAuthority,
+    grace_seconds: u64,
 ) -> bool {
     if matches!(
         cause,
         LaunchCause::Authority(StopReason::Rejected(Decision::StopRequested))
     ) {
-        terminate_requested(runtime, handle).await
+        terminate_requested(
+            runtime,
+            handle,
+            grace_seconds as u32,
+            authority.remaining_for_cleanup(),
+        )
+        .await
     } else {
         terminate(runtime, handle).await
     }
@@ -230,7 +238,16 @@ async fn launch_inner<R: Runtime>(
         Ok(()) => Ok(handle.unwrap()),
         Err(cause) => {
             let cleanup = match &handle {
-                Some(container) if terminate_for_cause(runtime, container, &cause).await => {
+                Some(container)
+                    if terminate_for_cause(
+                        runtime,
+                        container,
+                        &cause,
+                        authority,
+                        input.execution.job().spec.termination_grace_seconds,
+                    )
+                    .await =>
+                {
                     CleanupEvidence::Stopped
                 }
                 Some(_) => CleanupEvidence::Uncertain,

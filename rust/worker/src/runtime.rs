@@ -159,6 +159,8 @@ pub trait Runtime {
         &self,
         handle: &Self::Handle,
     ) -> impl Future<Output = Result<ContainerStatus, RuntimeError>> + Send;
+    // INVARIANT: Ok confirms the container is no longer running; cancellation
+    // completion can release its reservation only after that evidence.
     fn stop(
         &self,
         handle: &Self::Handle,

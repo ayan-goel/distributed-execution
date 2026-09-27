@@ -305,8 +305,10 @@ independent two-host release gate.
 ## User-requested container stop
 
 When live authority reports `STOP_REQUESTED`, the worker first asks Docker for
-a bounded SIGTERM stop with a five-second grace period. It confirms the container
-is no longer running; if the stop fails or remains uncertain, it tries the
+a bounded SIGTERM stop. The grace period comes from the job specification and
+is capped by the last conservatively observed local authority window, with
+time reserved for a failed stop and forced cleanup. A zero grace or nearly
+expired authority uses immediate kill. If graceful stop fails, the worker tries the
 immediate kill path. Lease expiry and fencing still use immediate kill. Confirmed
 physical stop alone does not terminalize the job. Once the executor confirms
 stop, the agent seals one `USER_CANCELLED` completion in its journal, removes

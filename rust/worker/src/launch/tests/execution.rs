@@ -77,7 +77,11 @@ impl Fixture {
     fn timeout(&mut self, phase: &str, seconds: u64) {
         let mut raw: serde_json::Value =
             serde_json::from_slice(&self.assignment.canonical_job_spec_json).unwrap();
-        raw["spec"]["timeouts"][phase] = seconds.into();
+        if phase == "terminationGraceSeconds" {
+            raw["spec"][phase] = seconds.into();
+        } else {
+            raw["spec"]["timeouts"][phase] = seconds.into();
+        }
         let bytes = serde_json::to_vec(&raw).unwrap();
         self.assignment.spec_sha256 = digest(&SHA256, &bytes)
             .as_ref()
@@ -341,11 +345,12 @@ async fn finalization_work_stops_on_fencing_before_polling_more_io() {
 
 #[tokio::test]
 async fn running_cancellation_uses_graceful_stop_and_reports_confirmed_cleanup() {
-    let f = Fixture::new(true);
+    let mut f = Fixture::new(true);
+    f.timeout("terminationGraceSeconds", 2);
     let runtime = f.runtime(Mode::Normal);
     let phase = AtomicUsize::new(0);
     let mut reporter = f.reporter(&runtime, &phase);
-    let (controller, authority) = f.authority(5000);
+    let (controller, authority) = f.authority(30000);
     let execution = async {
         tokio::select! {
             result = execute_inner(&runtime, &mut reporter, &f.journal, f.input(), &f.session, &f.workspace, authority) => result.unwrap_err(),
@@ -371,6 +376,7 @@ async fn running_cancellation_uses_graceful_stop_and_reports_confirmed_cleanup()
         }
     ));
     assert_eq!(runtime.stops.load(Ordering::SeqCst), 1);
+    assert_eq!(runtime.stop_grace.load(Ordering::SeqCst), 2);
     assert_eq!(runtime.killed.load(Ordering::SeqCst), 0);
 }
 

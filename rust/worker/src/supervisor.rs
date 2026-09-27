@@ -57,6 +57,7 @@ pub struct SupervisedAuthority {
     identity: AttemptAuthority,
     state: watch::Receiver<AuthorityState>,
     refresh: Arc<RefreshState>,
+    last_window: AuthorityWindow,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -104,6 +105,7 @@ pub fn authority_channel(
             identity,
             state: receiver,
             refresh,
+            last_window: window,
         },
     ))
 }
@@ -207,7 +209,14 @@ impl SupervisedAuthority {
             identity: self.identity.clone(),
             state: self.state.clone(),
             refresh: self.refresh.clone(),
+            last_window: self.last_window,
         }
+    }
+
+    pub(crate) fn remaining_for_cleanup(&self) -> Duration {
+        // Stop state carries no new grant. The last window observed by this
+        // supervisor is conservative if a renewal raced with cancellation.
+        self.last_window.remaining().unwrap_or_default()
     }
 
     /// Wait for a grant from a renewal batch constructed after this request.
@@ -252,6 +261,9 @@ impl SupervisedAuthority {
 
     fn check(&mut self) -> Result<Duration, StopReason> {
         let current = *self.state.borrow_and_update();
+        if let AuthorityState::Live(window) = current {
+            self.last_window = window;
+        }
         if let AuthorityState::Stop(reason) = current {
             return Err(reason);
         }
@@ -305,27 +317,29 @@ pub async fn supervise_running<R: Runtime>(
         }
     };
     let confirmed = if reason == StopReason::Rejected(Decision::StopRequested) {
-        terminate_requested(runtime, handle).await
+        terminate_requested(runtime, handle, 10, authority.remaining_for_cleanup()).await
     } else {
         terminate(runtime, handle).await
     };
     SupervisionOutcome::Stopped { reason, confirmed }
 }
 
-pub(crate) async fn terminate_requested<R: Runtime>(runtime: &R, handle: &R::Handle) -> bool {
-    // User cancellation has a bounded SIGTERM grace period. If Docker cannot
-    // confirm the stop, fall back to the immediate authority-loss kill path.
-    if let Ok(Ok(())) = tokio::time::timeout(Duration::from_secs(10), runtime.stop(handle, 5)).await
-    {
-        match tokio::time::timeout(CLEANUP_BUDGET, runtime.inspect(handle)).await {
-            Ok(Ok(status))
-                if !status.running
-                    && matches!(status.state, ContainerState::Exited | ContainerState::Dead) =>
-            {
-                return true
-            }
-            Ok(Err(crate::runtime::RuntimeError::Daemon(404))) => return true,
-            _ => {}
+pub(crate) async fn terminate_requested<R: Runtime>(
+    runtime: &R,
+    handle: &R::Handle,
+    requested_grace: u32,
+    remaining: Duration,
+) -> bool {
+    // Reserve one Docker RPC budget and the immediate kill/inspection budgets.
+    // User grace must never consume the conservative local authority deadline.
+    let available = remaining.saturating_sub(CLEANUP_BUDGET * 3);
+    let grace = requested_grace.min(available.as_secs().min(300) as u32);
+    if grace > 0 {
+        let timeout = Duration::from_secs(u64::from(grace)) + CLEANUP_BUDGET;
+        if let Ok(Ok(())) = tokio::time::timeout(timeout, runtime.stop(handle, grace)).await {
+            // Runtime::stop confirms non-running state; an uncertain reply falls
+            // through to the force path rather than releasing capacity.
+            return true;
         }
     }
     terminate(runtime, handle).await
@@ -479,7 +493,7 @@ mod tests {
     #[tokio::test]
     async fn requested_cancellation_uses_graceful_stop_before_kill() {
         let runtime = Fake::default();
-        let (controller, authority) = authority_channel(identity(), window(5000)).unwrap();
+        let (controller, authority) = authority_channel(identity(), window(30000)).unwrap();
         let stop = async {
             tokio::time::sleep(Duration::from_millis(20)).await;
             controller.stop(StopReason::Rejected(Decision::StopRequested));
@@ -502,8 +516,36 @@ mod tests {
             stop_fails: true,
             ..Default::default()
         };
-        assert!(terminate_requested(&runtime, &()).await);
+        assert!(terminate_requested(&runtime, &(), 5, Duration::from_secs(25)).await);
         assert_eq!(runtime.stops.load(Ordering::SeqCst), 1);
+        assert_eq!(runtime.kills.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn requested_cancellation_near_deadline_skips_grace() {
+        let runtime = Fake::default();
+        let (controller, authority) = authority_channel(identity(), window(1000)).unwrap();
+        let stop = async {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            controller.stop(StopReason::Rejected(Decision::StopRequested));
+        };
+        let (result, ()) = tokio::join!(supervise_running(&runtime, &(), authority), stop);
+        assert!(matches!(
+            result,
+            SupervisionOutcome::Stopped {
+                reason: StopReason::Rejected(Decision::StopRequested),
+                confirmed: true
+            }
+        ));
+        assert_eq!(runtime.stops.load(Ordering::SeqCst), 0);
+        assert_eq!(runtime.kills.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn zero_requested_grace_uses_immediate_kill() {
+        let runtime = Fake::default();
+        assert!(terminate_requested(&runtime, &(), 0, Duration::from_secs(25)).await);
+        assert_eq!(runtime.stops.load(Ordering::SeqCst), 0);
         assert_eq!(runtime.kills.load(Ordering::SeqCst), 1);
     }
 

@@ -1779,6 +1779,20 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 - Native `make test lint smoke`, the full isolated PostgreSQL/object-storage
   suite, and the pinned Linux worker test profile passed. The live fixture
   requests cancellation through `dispatch cancel` and the real HTTP API.
-- Prelaunch cancellation, finalization cancellation, and the broader concurrent
-  fault matrix remain open. The current stop grace is fixed at five seconds;
-  the spec's per-job bound remains to be implemented.
+- Prelaunch cancellation, finalization cancellation, the configurable grace
+  bound, and the broader concurrent fault matrix remained open after this slice.
+
+### D14e: Bound graceful cancellation by the job and local authority
+
+- Live launch/execution cleanup now passes the job's `terminationGraceSeconds`
+  instead of a fixed five seconds. The supervisor retains its last observed
+  conservative authority window after stop intent, caps grace to that remaining
+  time with budgets for Docker RPC and forced cleanup, and kills immediately
+  when the configured grace is zero or authority is nearly spent.
+- A Rust execution test first failed with a five-second Docker stop instead of
+  the job's two seconds. Supervisor tests first failed when a near-expiry stop
+  used grace. Both now pass, along with zero-grace and fallback cases. The live
+  Docker/PostgreSQL cancellation fixture passed with the example job's setting.
+- Native tests, lint, and smoke checks passed; the pinned Linux worker profile
+  also passed with the new authority-bound stop path.
+- Full release fault-matrix and stress measurements remain open.

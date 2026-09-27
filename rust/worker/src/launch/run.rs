@@ -106,6 +106,7 @@ pub(super) async fn execute_inner<R: Runtime>(
 ) -> Result<FinalizingAttempt<R::Handle>, ExecutionError> {
     let identity = authority.identity().clone();
     let timeouts = &input.execution.job().spec.timeouts;
+    let grace_seconds = input.execution.job().spec.termination_grace_seconds;
     let execution_seconds = timeouts.execution_seconds;
     let finalization_seconds = timeouts.finalization_seconds;
     // The handle comes only from this successful launch. Callers cannot pair an
@@ -193,11 +194,12 @@ pub(super) async fn execute_inner<R: Runtime>(
         Err(cause) => {
             // Retain evidence even after uncertain phase commits. Cleanup confirms
             // physical stop only; capacity release and terminal publication are separate.
-            let cleanup = if terminate_for_cause(runtime, &handle, &cause).await {
-                CleanupEvidence::Stopped
-            } else {
-                CleanupEvidence::Uncertain
-            };
+            let cleanup =
+                if terminate_for_cause(runtime, &handle, &cause, &authority, grace_seconds).await {
+                    CleanupEvidence::Stopped
+                } else {
+                    CleanupEvidence::Uncertain
+                };
             Err(ExecutionError::AfterLaunch { cause, cleanup })
         }
     }
