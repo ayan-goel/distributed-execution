@@ -1999,3 +1999,13 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 - Client tests cover authorized scope and invalid responses. A parallel test
   exposed a new assembler fixture name collision; its process-local counter
   fixes that race. Native test/lint/smoke passed after the fix.
+
+### D16c: Verify catalog log grants and binary objects in the Go client
+
+- The client validates attempt/stream pages and grants, fetches exact object
+  versions without project credentials, checks size and SHA-256, decodes the
+  binary records, and verifies every catalog sequence gap against their bytes.
+- Tests cover binary content, unsafe headers, changed versions, tampering, and
+  mismatched gap claims. Native test/lint/smoke passed. See
+  [log-client.md](log-client.md).
+- CLI rendering and reconnectable follow are still pending.
