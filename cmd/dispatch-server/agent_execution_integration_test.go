@@ -8,7 +8,9 @@ import (
 	"crypto/sha256"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"net"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,11 +18,23 @@ import (
 	"testing"
 	"time"
 
+	"dispatch.local/dispatch/internal/api"
+	"dispatch.local/dispatch/internal/cli"
 	"dispatch.local/dispatch/internal/spec"
 	"dispatch.local/dispatch/internal/store"
 	"dispatch.local/dispatch/internal/workerapi"
-	"github.com/google/uuid"
 )
+
+type fixtureImageResolver string
+
+func (r fixtureImageResolver) Resolve(_ context.Context, reference string) (string, error) {
+	// Keep this end-to-end gate deterministic with a digest already cached in
+	// Docker. Registry resolution is verified separately from workload execution.
+	if reference != string(r) {
+		return "", errors.New("unexpected test image")
+	}
+	return reference, nil
+}
 
 func TestWorkerDaemonAcquiresExecutesAndPublishes(t *testing.T) {
 	configureServerTestDatabase(t)
@@ -81,12 +95,34 @@ func TestWorkerDaemonAcquiresExecutesAndPublishes(t *testing.T) {
 	job.Spec.Args = nil
 	job.Spec.Resources = resources
 	job.Spec.Placement.Labels["architecture"] = architecture
-	_, hash, err := job.Canonical()
+	canonical, _, err := job.Canonical()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.SubmitJob(ctx, pool, uuid.NewString(), hash, job); err != nil {
+	jobFile := filepath.Join(t.TempDir(), "job.json")
+	if err := os.WriteFile(jobFile, canonical, 0600); err != nil {
 		t.Fatal(err)
+	}
+	token, _, err := store.IssueToken(ctx, pool, "research", store.RoleSubmit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	httpServer := httptest.NewServer(api.New(pool, fixtureImageResolver(image), objects))
+	t.Cleanup(httpServer.Close)
+	cliEnv := func(key string) string {
+		return map[string]string{"DISPATCH_URL": httpServer.URL, "DISPATCH_TOKEN": token, "DISPATCH_DEV_INSECURE": "1"}[key]
+	}
+	cliRun := func(args ...string) []byte {
+		t.Helper()
+		var output, diagnostic bytes.Buffer
+		if code := cli.Run(ctx, args, cliEnv, &output, &diagnostic); code != 0 {
+			t.Fatalf("CLI failed with code %d: %s", code, diagnostic.String())
+		}
+		return output.Bytes()
+	}
+	var submitted store.JobRecord
+	if err := json.Unmarshal(cliRun("submit", jobFile, "--idempotency-key", "agent-execution", "--json"), &submitted); err != nil || submitted.State != "QUEUED" {
+		t.Fatal("CLI submission did not queue the job", err, submitted.State)
 	}
 	certificate, err := tls.LoadX509KeyPair(pki.serverCert, pki.serverKey)
 	if err != nil {
@@ -161,6 +197,15 @@ func TestWorkerDaemonAcquiresExecutesAndPublishes(t *testing.T) {
 	artifact := publication.complete.Outputs[0].ArtifactId
 	service.mu.Unlock()
 	verifyPublication(t, ctx, pool, objects, publication, attempt, artifact, "SUCCEEDED")
+	var completed store.JobRecord
+	if err := json.Unmarshal(cliRun("jobs", "get", submitted.ID, "--json"), &completed); err != nil || completed.State != "SUCCEEDED" {
+		t.Fatal("CLI did not observe the accepted result", err, completed.State)
+	}
+	download := filepath.Join(root, "downloaded-result")
+	cliRun("artifacts", "download", submitted.ID, "result", "--output", download, "--json")
+	if body, err := os.ReadFile(download); err != nil || string(body) != "abc" {
+		t.Fatal("CLI download did not verify the real workload bytes", err, string(body))
+	}
 	var attempts int
 	if err := pool.QueryRow(ctx, "SELECT count(*) FROM attempts WHERE worker_id=$1", worker.WorkerID).Scan(&attempts); err != nil || attempts != 1 {
 		t.Fatal("one job produced an unexpected number of attempts", attempts, err)

@@ -202,7 +202,10 @@ restart, replay while the registry is offline, and revoke the token. This verifi
 durable queued-job recovery; active worker recovery remains a separate release gate.
 The actual worker daemon also acquires an input-free job through the real gRPC
 service, runs Docker, publishes an exact-version output to local SeaweedFS, and
-cleans up after completion. This test uses explicit soft-scratch acquisition policy.
+cleans up after completion. CLI submission and verified download cover both ends
+of the path. The fixture uses explicit soft-scratch acquisition policy and a fixed
+resolver for an already cached digest; external registry access and image pulling
+are separate work.
 The same test now exercises CLI submission and inspection, checks the stored image
 digest/spec hash, and retries with the original key after restart during the registry
 outage. CLI unit tests cover offline commands, invalid usage, terminal-safe errors,

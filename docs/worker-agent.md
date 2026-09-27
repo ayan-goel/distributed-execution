@@ -177,7 +177,10 @@ covers config rejection, binary argument handling, protocol regression, and lint
 `TestWorkerDaemonAcquiresExecutesAndPublishes` runs the actual binary against real
 PostgreSQL, mTLS, Docker, and versioned SeaweedFS. It loses committed phase,
 upload, artifact, and completion replies, then verifies exact replay, one accepted
-result, the stored object version, released reservation, and local cleanup.
+result, the stored object version, released reservation, and local cleanup. CLI
+submission and verified download surround the worker lifecycle. The fixture pins
+an already cached image through a fixed test resolver, so this gate does not cover
+external registry access or image pulling.
 
 The old container in the startup test is fixture-created. The stronger release gate
 still requires the agent itself to acquire/start a job, be killed while it runs,

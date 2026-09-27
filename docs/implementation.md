@@ -28,7 +28,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D09 leases | D06,D07 | Fresh DB-time expiry checks; delayed grants; local monotonic deadline enforcement | deadline, store/RPC/client, watchdog, periodic renewal, and daemon execution passed; reaper pending |
 | D10 worker recovery | D08,D09 | Durable journal; agent kill/restart stops old containers before new capacity | journal, discovery/cleanup, and actual startup process gates passed; agent-owned job kill/restart gate pending |
 | D11 artifacts | D03,D04 | Scoped grants; verified exact versions; stale publication rejection | grants, verification, completion, public metadata, and verified CLI download gates passed; Rust transfers and multipart support pending |
-| D12 first real job | D05–D11 | CLI submit → gRPC → Docker → verified output → CLI download | actual daemon execution and publication passed with fixture submission; full CLI path pending |
+| D12 first real job | D05–D11 | CLI submit → gRPC → Docker → verified output → CLI download | full component chain passed with cached digest and fixed fixture resolver; external registry and image pull pending |
 | D13 loss/retry | D09,D12 | Reaper/reconciliation; recorded retry; backoff/deadlines; nonretryable failure | pending |
 | D14 cancellation | D12,D13 | Both completion/cancellation race orders, repeat requests, uncertain cleanup | pending |
 | D15 logs | D08,D11 | Bounded queues/spool, noisy-job truncation, stream cursors, reconnect | pending |
@@ -1629,3 +1629,16 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 - This enables the local cached-image path; it does not enforce a scratch quota
   or prove full CLI submission-to-download. Image pulling and strict Linux
   scratch enforcement remain release work.
+
+### D12c: Verify CLI submission through accepted output download
+
+- Extended the actual daemon test to issue a project token, submit a canonical
+  input-free job with the CLI over the real HTTP API, run it through the mTLS
+  worker service and Docker, inspect its accepted result, then download the
+  verified bytes with the CLI. Real PostgreSQL and versioned SeaweedFS remain in
+  the chain. The test passed under the race detector and still injects lost
+  committed phase/upload/artifact/completion replies.
+- A fixed fixture resolver accepts only the digest already cached in Docker;
+  registry resolution is covered separately. The test does not exercise the
+  executable `serve` command or image pulling. Strict scratch, active-job restart,
+  logs, retries, and other release gates remain open.
