@@ -364,11 +364,21 @@ async fn health_loop(
     let mut sequence = 0u64;
     let mut pending: Option<HeartbeatRequest> = None;
     let mut announced = "registered";
+    let mut workspaces_reconciled = false;
     loop {
         let inventory = runtime.inventory(&config.worker_id).await;
         let healthy = inventory.is_ok();
         let inventory = inventory.unwrap_or_default();
         let owner = active.borrow().clone();
+        if !workspaces_reconciled && healthy && inventory.is_empty() && owner.is_none() {
+            let abandoned_root = root.to_owned();
+            tokio::task::spawn_blocking(move || {
+                workspace::clear_abandoned_attempts(&abandoned_root)
+            })
+            .await
+            .map_err(|_| AgentError::Task)??;
+            workspaces_reconciled = true;
+        }
         let known = inventory.iter().all(|container| {
             owner
                 .as_ref()
@@ -396,7 +406,7 @@ async fn health_loop(
                 // A live container is reconciled only when this process still
                 // owns its exact authority. Unknown current-session inventory
                 // must block new admission, just like predecessor inventory.
-                reconciliation_complete: healthy && known,
+                reconciliation_complete: healthy && known && workspaces_reconciled,
                 inventory: inventory
                     .iter()
                     .map(|c| ExecutionInventory {
@@ -416,6 +426,7 @@ async fn health_loop(
                     && healthy
                     && !pressure
                     && known
+                    && workspaces_reconciled
                     && !reply.reconcile
                     && reply.stop.is_empty();
                 if let Some(controller) = owner.as_ref() {

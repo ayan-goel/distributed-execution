@@ -81,11 +81,13 @@ mandatory. This explicit policy has no scratch quota guarantee.
 5. Inspect this worker's Docker inventory and send a sequenced health report.
    Remove at most one previous-session container per iteration, with identity
    revalidation. Keep health reports interleaved during cleanup.
-6. After fresh inventory proves no unknown containers remain, send a new healthy,
-   reconciled report. Announce `ready` only when the server also confirms no
-   reconciliation/stop instructions and no drain request. An owned live container
-   remains reconciled through its exact authority identity.
-7. Acquire one assignment with a replayable request ID, create an exclusive private
+6. After fresh inventory proves no containers remain, remove abandoned attempt
+   directories under the private workspace root. Unknown filenames or symlinks
+   stop startup rather than being followed or ignored.
+7. Send a new healthy, reconciled report. Announce `ready` only when the server
+   also confirms no reconciliation/stop instructions and no drain request. An
+   owned live container remains reconciled through its exact authority identity.
+8. Acquire one assignment with a replayable request ID, create an exclusive private
    attempt workspace, and run under lease renewal. A terminal, replay-safe completion
    precedes container and workspace removal; only then can the next job be admitted.
 
@@ -157,8 +159,9 @@ seeds an old registration/container, explicitly approves the named replacement,
 checks every complete health report against Docker, and verifies generation 2,
 READY state, and one durable registration request. It loses a heartbeat reply after
 the database commit and verifies an unchanged replay while cleanup proceeds. A
-second worker process cannot share the journal; credential revocation terminates
-the running process on its next report.
+fixture workspace with stale output is removed before readiness. A second worker
+process cannot share the journal; credential revocation terminates the running
+process on its next report.
 
 The completion recovery integration tests seed synthetic local execution evidence
 for a real PostgreSQL attempt with a verified artifact. One case commits completion

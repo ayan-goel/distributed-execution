@@ -126,6 +126,13 @@ func TestWorkerProcessReconcilesDockerBeforeAdvertisingReady(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	abandoned := filepath.Join(root, "work", attempt)
+	if err := os.Mkdir(abandoned, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(abandoned, "stale-output"), []byte("old"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	config, err := json.Marshal(map[string]any{
 		"worker_id": id.WorkerID, "server_url": "https://" + listener.Addr().String(),
 		"ca_cert": p.ca, "client_cert": p.clientCert, "client_key": p.clientKey,
@@ -205,6 +212,9 @@ func TestWorkerProcessReconcilesDockerBeforeAdvertisingReady(t *testing.T) {
 	}
 	if exec.CommandContext(ctx, "docker", "inspect", container).Run() == nil {
 		t.Fatal("old container survived readiness")
+	}
+	if _, err := os.Stat(abandoned); !os.IsNotExist(err) {
+		t.Fatal("old attempt workspace survived readiness", err)
 	}
 	service.mu.Lock()
 	replayed := service.replayed

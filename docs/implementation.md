@@ -26,7 +26,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D07 acquisition | D03,D06 | Atomic assignment/reservations; concurrent quota/capacity races; acquisition replay | store, RPC, Rust client, sequential agent loop, and local operator policy switch passed; broader scheduler pending |
 | D08 Docker adapter | D04 | Real bounded create/start/inspect/stop; ambiguous create reconciles one identity | cached launch, RUNNING/FINALIZING coordination, phase store/RPC/client, and actual daemon execution passed; staging and strict workspaces pending |
 | D09 leases | D06,D07 | Fresh DB-time expiry checks; delayed grants; local monotonic deadline enforcement | deadline, store/RPC/client, watchdog, periodic renewal, and daemon execution passed; reaper pending |
-| D10 worker recovery | D08,D09 | Durable journal; agent kill/restart stops old containers before new capacity | journal, discovery/cleanup, and actual startup process gates passed; agent-owned job kill/restart gate pending |
+| D10 worker recovery | D08,D09 | Durable journal; agent kill/restart stops old containers before new capacity | journal, discovery/cleanup, and actual startup process with abandoned workspace gate passed; agent-owned job kill/restart pending |
 | D11 artifacts | D03,D04 | Scoped grants; verified exact versions; stale publication rejection | grants, verification, completion, public metadata, and verified CLI download gates passed; Rust transfers and multipart support pending |
 | D12 first real job | D05–D11 | CLI submit → gRPC → Docker → verified output → CLI download | full component chain passed with cached digest and fixed fixture resolver; external registry and image pull pending |
 | D13 loss/retry | D09,D12 | Reaper/reconciliation; recorded retry; backoff/deadlines; nonretryable failure | pending |
@@ -1642,3 +1642,16 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   registry resolution is covered separately. The test does not exercise the
   executable `serve` command or image pulling. Strict scratch, active-job restart,
   logs, retries, and other release gates remain open.
+
+### D10c: Clear abandoned workspaces before startup readiness
+
+- Extended the real worker startup test with an old attempt directory and stale
+  output. It first failed: Docker cleanup completed, but the directory remained
+  when the new incarnation reported ready.
+- Startup now removes old UUID-named attempt directories only after Docker reports
+  no containers. The private root rejects unknown entries and symlinks; cleanup
+  errors stop startup rather than allowing another admission. The workspace unit
+  test covers the alias rejection and successful deletion paths.
+- The targeted real Docker/PostgreSQL startup and CLI execution regressions,
+  workspace unit test, native `make test lint smoke`, and pinned Linux worker suite
+  passed. An agent-owned job kill/restart remains the next stronger recovery gate.

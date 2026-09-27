@@ -33,6 +33,25 @@ pub(super) fn prepare_attempt_workspace(
     PreparedWorkspace::soft_development(path).map_err(AgentError::Runtime)
 }
 
+pub(super) fn clear_abandoned_attempts(root: &Path) -> Result<(), AgentError> {
+    if workspace(root)? != root {
+        return Err(AgentError::Configuration);
+    }
+    for entry in std::fs::read_dir(root).map_err(|_| AgentError::File)? {
+        let entry = entry.map_err(|_| AgentError::File)?;
+        let name = entry.file_name();
+        let name = name.to_str().ok_or(AgentError::File)?;
+        // INVARIANT: only attempt UUID directories live under this private root.
+        // Reject aliases and unknown files rather than following an unsafe path
+        // or announcing readiness with unaccounted prior workspace state.
+        if !canonical_uuid(name) || !entry.file_type().map_err(|_| AgentError::File)?.is_dir() {
+            return Err(AgentError::File);
+        }
+        std::fs::remove_dir_all(entry.path()).map_err(|_| AgentError::File)?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -75,6 +94,10 @@ mod tests {
         let alias = new_uuid().unwrap();
         std::os::unix::fs::symlink(prepared.root(), root.join(&alias)).unwrap();
         assert!(prepare_attempt_workspace(&root, &alias, 1 << 20).is_err());
+        assert!(clear_abandoned_attempts(&root).is_err());
+        std::fs::remove_file(root.join(&alias)).unwrap();
+        clear_abandoned_attempts(&root).unwrap();
+        assert!(!prepared.root().exists());
         std::fs::remove_dir_all(root).unwrap();
     }
 }
