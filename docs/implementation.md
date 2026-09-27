@@ -1749,3 +1749,17 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   performs the idempotency; the CLI does not invent a cancellation key.
 - Client and command tests verify method/path/authority, invalid identifiers,
   and one JSON job on stdout. Physical stop acknowledgement remains open.
+
+### D14c: Give user cancellation a bounded graceful stop
+
+- The worker uses Docker SIGTERM with a five-second grace period only for
+  `STOP_REQUESTED`, confirms observed exit, then falls back to its existing
+  immediate kill path if the graceful stop cannot be confirmed. Lease loss and
+  fencing keep the immediate path.
+- Rust supervisor tests first failed when cancellation killed immediately. They
+  now cover graceful success without SIGKILL and force-stop fallback. A running
+  execution regression checks the same confirmed cleanup in the launch path.
+- The complete Rust worker suite, Clippy, isolated Docker runtime tests, and
+  the pinned Linux worker test profile passed.
+- This proves stop selection in worker logic, not a live cancellation completion
+  or release of the server reservation. Those remain D14 work.

@@ -193,7 +193,7 @@ pub(super) async fn execute_inner<R: Runtime>(
         Err(cause) => {
             // Retain evidence even after uncertain phase commits. Cleanup confirms
             // physical stop only; capacity release and terminal publication are separate.
-            let cleanup = if terminate(runtime, &handle).await {
+            let cleanup = if terminate_for_cause(runtime, &handle, &cause).await {
                 CleanupEvidence::Stopped
             } else {
                 CleanupEvidence::Uncertain

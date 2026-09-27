@@ -140,6 +140,7 @@ impl Fixture {
             starts: AtomicUsize::new(0),
             creates: AtomicUsize::new(0),
             killed: AtomicUsize::new(0),
+            stops: AtomicUsize::new(0),
             exited: AtomicBool::new(false),
             oom: false,
         }
@@ -216,6 +217,7 @@ struct FakeRuntime {
     creates: AtomicUsize,
     starts: AtomicUsize,
     killed: AtomicUsize,
+    stops: AtomicUsize,
     exited: AtomicBool,
     oom: bool,
 }
@@ -271,7 +273,8 @@ impl Runtime for FakeRuntime {
         }
     }
     async fn inspect(&self, _: &String) -> Result<ContainerStatus, RuntimeError> {
-        let exited = self.killed.load(Ordering::SeqCst) > 0
+        let exited = self.stops.load(Ordering::SeqCst) > 0
+            || self.killed.load(Ordering::SeqCst) > 0
             || self.exited.load(Ordering::SeqCst)
             || matches!(self.mode, Mode::FastExit);
         Ok(ContainerStatus {
@@ -293,7 +296,8 @@ impl Runtime for FakeRuntime {
         panic!("launch must not wait for completion")
     }
     async fn stop(&self, _: &String, _: u32) -> Result<(), RuntimeError> {
-        panic!("launch cleanup must not extend authority")
+        self.stops.fetch_add(1, Ordering::SeqCst);
+        Ok(())
     }
     async fn logs(&self, _: &String, _: usize) -> Result<ContainerLogs, RuntimeError> {
         panic!("launch must preserve logs")

@@ -4,7 +4,7 @@ use crate::{
     execution::ExecutionSpec,
     journal::{AsyncJournal, JournalError},
     runtime::{ContainerState, PreparedWorkspace, Runtime, RuntimeError},
-    supervisor::{terminate, StopReason, SupervisedAuthority},
+    supervisor::{terminate, terminate_requested, StopReason, SupervisedAuthority},
 };
 use dispatch_protocol::v1::{
     Assignment, AttemptState, Decision, ReportPhaseRequest, WorkerSession,
@@ -71,6 +71,21 @@ impl From<RuntimeError> for LaunchCause {
 impl From<StopReason> for LaunchCause {
     fn from(e: StopReason) -> Self {
         Self::Authority(e)
+    }
+}
+
+async fn terminate_for_cause<R: Runtime>(
+    runtime: &R,
+    handle: &R::Handle,
+    cause: &LaunchCause,
+) -> bool {
+    if matches!(
+        cause,
+        LaunchCause::Authority(StopReason::Rejected(Decision::StopRequested))
+    ) {
+        terminate_requested(runtime, handle).await
+    } else {
+        terminate(runtime, handle).await
     }
 }
 
@@ -215,7 +230,9 @@ async fn launch_inner<R: Runtime>(
         Ok(()) => Ok(handle.unwrap()),
         Err(cause) => {
             let cleanup = match &handle {
-                Some(container) if terminate(runtime, container).await => CleanupEvidence::Stopped,
+                Some(container) if terminate_for_cause(runtime, container, &cause).await => {
+                    CleanupEvidence::Stopped
+                }
                 Some(_) => CleanupEvidence::Uncertain,
                 None if create_attempted => CleanupEvidence::Uncertain,
                 None => CleanupEvidence::NotCreated,

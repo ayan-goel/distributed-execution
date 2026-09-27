@@ -304,8 +304,31 @@ pub async fn supervise_running<R: Runtime>(
             break reason;
         }
     };
-    let confirmed = terminate(runtime, handle).await;
+    let confirmed = if reason == StopReason::Rejected(Decision::StopRequested) {
+        terminate_requested(runtime, handle).await
+    } else {
+        terminate(runtime, handle).await
+    };
     SupervisionOutcome::Stopped { reason, confirmed }
+}
+
+pub(crate) async fn terminate_requested<R: Runtime>(runtime: &R, handle: &R::Handle) -> bool {
+    // User cancellation has a bounded SIGTERM grace period. If Docker cannot
+    // confirm the stop, fall back to the immediate authority-loss kill path.
+    if let Ok(Ok(())) = tokio::time::timeout(Duration::from_secs(10), runtime.stop(handle, 5)).await
+    {
+        match tokio::time::timeout(CLEANUP_BUDGET, runtime.inspect(handle)).await {
+            Ok(Ok(status))
+                if !status.running
+                    && matches!(status.state, ContainerState::Exited | ContainerState::Dead) =>
+            {
+                return true
+            }
+            Ok(Err(crate::runtime::RuntimeError::Daemon(404))) => return true,
+            _ => {}
+        }
+    }
+    terminate(runtime, handle).await
 }
 
 pub(crate) async fn terminate<R: Runtime>(runtime: &R, handle: &R::Handle) -> bool {
@@ -337,8 +360,10 @@ mod tests {
         natural_exit: bool,
         stall: bool,
         kill_fails: bool,
+        stop_fails: bool,
         inspections: AtomicUsize,
         kills: AtomicUsize,
+        stops: AtomicUsize,
     }
     impl Runtime for Fake {
         type Handle = ();
@@ -360,13 +385,14 @@ mod tests {
         async fn inspect(&self, _: &()) -> Result<ContainerStatus, RuntimeError> {
             self.inspections.fetch_add(1, Ordering::SeqCst);
             let killed = self.kills.load(Ordering::SeqCst) > 0 && !self.kill_fails;
-            if self.stall && !killed {
+            let stopped = self.stops.load(Ordering::SeqCst) > 0 && !self.stop_fails;
+            if self.stall && !killed && !stopped {
                 std::future::pending::<()>().await;
             }
             if self.natural_exit {
                 tokio::time::sleep(Duration::from_millis(180)).await;
             }
-            let running = !killed && !self.natural_exit;
+            let running = !killed && !stopped && !self.natural_exit;
             Ok(ContainerStatus {
                 running,
                 state: if running {
@@ -390,7 +416,12 @@ mod tests {
             panic!("watchdog uses bounded observation")
         }
         async fn stop(&self, _: &(), _: u32) -> Result<(), RuntimeError> {
-            panic!("expired authority cannot wait for grace")
+            self.stops.fetch_add(1, Ordering::SeqCst);
+            if self.stop_fails {
+                Err(RuntimeError::Transport)
+            } else {
+                Ok(())
+            }
         }
         async fn logs(&self, _: &(), _: usize) -> Result<ContainerLogs, RuntimeError> {
             panic!("watchdog must not collect logs")
@@ -443,6 +474,37 @@ mod tests {
                 confirmed: false
             }
         ));
+    }
+
+    #[tokio::test]
+    async fn requested_cancellation_uses_graceful_stop_before_kill() {
+        let runtime = Fake::default();
+        let (controller, authority) = authority_channel(identity(), window(5000)).unwrap();
+        let stop = async {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            controller.stop(StopReason::Rejected(Decision::StopRequested));
+        };
+        let (result, ()) = tokio::join!(supervise_running(&runtime, &(), authority), stop);
+        assert!(matches!(
+            result,
+            SupervisionOutcome::Stopped {
+                reason: StopReason::Rejected(Decision::StopRequested),
+                confirmed: true
+            }
+        ));
+        assert_eq!(runtime.stops.load(Ordering::SeqCst), 1);
+        assert_eq!(runtime.kills.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn requested_cancellation_forces_stop_when_grace_fails() {
+        let runtime = Fake {
+            stop_fails: true,
+            ..Default::default()
+        };
+        assert!(terminate_requested(&runtime, &()).await);
+        assert_eq!(runtime.stops.load(Ordering::SeqCst), 1);
+        assert_eq!(runtime.kills.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]

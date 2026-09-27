@@ -340,6 +340,41 @@ async fn finalization_work_stops_on_fencing_before_polling_more_io() {
 }
 
 #[tokio::test]
+async fn running_cancellation_uses_graceful_stop_and_reports_confirmed_cleanup() {
+    let f = Fixture::new(true);
+    let runtime = f.runtime(Mode::Normal);
+    let phase = AtomicUsize::new(0);
+    let mut reporter = f.reporter(&runtime, &phase);
+    let (controller, authority) = f.authority(5000);
+    let execution = async {
+        tokio::select! {
+            result = execute_inner(&runtime, &mut reporter, &f.journal, f.input(), &f.session, &f.workspace, authority) => result.unwrap_err(),
+            _ = refreshes(&controller, &phase, &runtime, false) => unreachable!(),
+        }
+    };
+    let cancel = async {
+        while phase.load(Ordering::SeqCst) != AttemptState::Running as usize {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        controller.stop(StopReason::Rejected(Decision::StopRequested));
+    };
+    let (error, ()) = tokio::time::timeout(Duration::from_secs(2), async {
+        tokio::join!(execution, cancel)
+    })
+    .await
+    .unwrap();
+    assert!(matches!(
+        error,
+        ExecutionError::AfterLaunch {
+            cause: LaunchCause::Authority(StopReason::Rejected(Decision::StopRequested)),
+            cleanup: CleanupEvidence::Stopped
+        }
+    ));
+    assert_eq!(runtime.stops.load(Ordering::SeqCst), 1);
+    assert_eq!(runtime.killed.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
 async fn finalization_deadline_survives_continuous_fresh_lease_grants() {
     let mut f = Fixture::new(true);
     f.timeout("finalizationSeconds", 1);
