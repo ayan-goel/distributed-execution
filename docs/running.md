@@ -3,9 +3,9 @@
 The control plane can admit and inspect queued jobs, and the CLI can retrieve
 verified outputs. The [worker agent](worker-agent.md) now acquires and executes
 input-free jobs with cached images under the explicit soft-scratch development
-policy. The server command still defaults to strict scratch, so its development
-policy switch is pending; end-to-end execution is currently verified through the
-same service in the integration fixture.
+policy. The server command defaults to strict scratch; opt into the local development
+profile with `--worker-dev-soft-scratch` on loopback listeners. Hard scratch quotas
+and the independent Linux release profile remain pending.
 
 ## Prerequisites
 
@@ -91,6 +91,13 @@ to; workers verify it against their configured server CA. The worker listener al
 requires mTLS, including when HTTP uses `--dev-insecure` on loopback. Partial worker
 TLS options are rejected. Omitting all worker options runs HTTP only.
 
+To let the current agent acquire input-free jobs on one development machine, start
+both listeners on literal loopback IPs, use `--dev-insecure` for HTTP, and add
+`--worker-dev-soft-scratch` to the worker listener options above. The switch is
+rejected without this exact local setup; it permits soft scratch without a hard
+quota. The agent also needs `--dev-soft-scratch`, a cached pinned Docker image,
+and versioned object storage configured for output jobs.
+
 TLS requires version 1.3 or newer. Repeat `--allow-registry` for additional approved
 registries; use `--allow-registry-auth-host` for separate authentication hosts.
 Private registry credential provisioning remains pending. Plain HTTP registry access
@@ -158,9 +165,9 @@ uses the system certificate trust store and refuses redirects. Environment token
 are never included in normal output. Do not enable shell tracing while loading them.
 
 Submission resolves the image tag to a verified digest. The example needs no
-dataset and computes the deterministic sum 4,999,950,000. Running it through the
-operator command awaits the explicit soft-scratch policy switch, image pulling, and
-other development-path setup. The server must permit Docker Hub via
+dataset and computes the deterministic sum 4,999,950,000. Running it currently
+requires the explicit soft-scratch development switches and a cached pinned image;
+the agent does not pull images yet. The server must permit Docker Hub via
 `--allow-registry index.docker.io`.
 
 The CLI prints `Idempotency-Key` to stderr **before** sending a submission. If you

@@ -23,7 +23,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D04 worker protocol | D01 | Generated Go/Rust gRPC bindings; cross-language golden round-trip, drift check | wire and implemented mTLS service boundary gates passed; remaining handlers/client integration pending |
 | D05 durable submission | D02,D03 | HTTP/CLI submission; 100 identical requests yield one job; changed payload conflicts | input-free job admission, auth, image resolution, HTTP/CLI gates passed; datasets depend on D16 |
 | D06 worker identities | D03,D04 | Authenticated registration, session takeover/recovery; stale-session rejection | control-plane, Rust client, and worker startup/health loop gates passed; active-job supervision pending |
-| D07 acquisition | D03,D06 | Atomic assignment/reservations; concurrent quota/capacity races; acquisition replay | store, RPC, Rust client, and sequential agent loop passed; operator policy switch and broader scheduler pending |
+| D07 acquisition | D03,D06 | Atomic assignment/reservations; concurrent quota/capacity races; acquisition replay | store, RPC, Rust client, sequential agent loop, and local operator policy switch passed; broader scheduler pending |
 | D08 Docker adapter | D04 | Real bounded create/start/inspect/stop; ambiguous create reconciles one identity | cached launch, RUNNING/FINALIZING coordination, phase store/RPC/client, and actual daemon execution passed; staging and strict workspaces pending |
 | D09 leases | D06,D07 | Fresh DB-time expiry checks; delayed grants; local monotonic deadline enforcement | deadline, store/RPC/client, watchdog, periodic renewal, and daemon execution passed; reaper pending |
 | D10 worker recovery | D08,D09 | Durable journal; agent kill/restart stops old containers before new capacity | journal, discovery/cleanup, and actual startup process gates passed; agent-owned job kill/restart gate pending |
@@ -1614,3 +1614,18 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   implemented. The daemon currently handles one job at a time and requires a
   locally cached image. CLI-to-result, active-job crash/restart, input staging,
   logs/metrics, cancellation, retry reaping, and other release gates remain open.
+
+### D12b: Expose soft-scratch admission on local development listeners
+
+- Added `--worker-dev-soft-scratch` to the executable server. It maps to the
+  existing acquisition policy only when both HTTP and worker listeners use
+  literal loopback addresses, HTTP explicitly uses development mode, and the
+  worker listener still has full mTLS configuration. The default remains strict.
+- Configuration tests first failed because no policy mapping existed, then passed
+  for default, opted-in, missing worker listener, public worker listener, and
+  non-development HTTP cases. The real executable-server acquisition fixture
+  now registers a `scratch.soft` worker and acquires jobs through this flag over
+  mTLS with PostgreSQL backing.
+- This enables the local cached-image path; it does not enforce a scratch quota
+  or prove full CLI submission-to-download. Image pulling and strict Linux
+  scratch enforcement remain release work.

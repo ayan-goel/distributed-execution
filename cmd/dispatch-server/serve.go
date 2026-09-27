@@ -33,6 +33,7 @@ type serveConfig struct {
 	dev                                           bool
 	registries, authHosts                         stringsFlag
 	workerListen, workerCert, workerKey, workerCA string
+	workerSoftScratchDev                          bool
 	objectEndpoint, objectRegion, objectBucket    string
 	objectLoopback                                bool
 }
@@ -56,6 +57,7 @@ func parseServeConfig(args []string) (serveConfig, error) {
 	f.StringVar(&c.workerCert, "worker-tls-cert", "", "worker listener server certificate")
 	f.StringVar(&c.workerKey, "worker-tls-key", "", "worker listener server private key")
 	f.StringVar(&c.workerCA, "worker-client-ca", "", "trusted worker client CA bundle")
+	f.BoolVar(&c.workerSoftScratchDev, "worker-dev-soft-scratch", false, "allow soft scratch only for loopback development workers")
 	f.StringVar(&c.objectEndpoint, "object-endpoint", "", "explicit S3-compatible origin")
 	f.StringVar(&c.objectRegion, "object-region", "", "S3 signing region")
 	f.StringVar(&c.objectBucket, "object-bucket", "", "versioned object bucket")
@@ -99,6 +101,16 @@ func parseServeConfig(args []string) (serveConfig, error) {
 	} else if c.workerCert != "" || c.workerKey != "" || c.workerCA != "" {
 		return c, errors.New("worker TLS options require --worker-listen")
 	}
+	if c.workerSoftScratchDev {
+		workerHost, _, err := net.SplitHostPort(c.workerListen)
+		workerIP := net.ParseIP(workerHost)
+		// INVARIANT: soft scratch has no hard quota. Limit this incomplete profile
+		// to an explicitly local development listener so it cannot be enabled on
+		// a remote worker service by accident.
+		if !c.dev || err != nil || workerIP == nil || !workerIP.IsLoopback() {
+			return c, errors.New("--worker-dev-soft-scratch requires loopback development HTTP and worker listeners")
+		}
+	}
 	if len(c.registries) == 0 {
 		return c, errors.New("at least one --allow-registry is required")
 	}
@@ -108,6 +120,10 @@ func parseServeConfig(args []string) (serveConfig, error) {
 		}
 	}
 	return c, nil
+}
+
+func (c serveConfig) acquisitionPolicy() store.AcquisitionPolicy {
+	return store.AcquisitionPolicy{AllowSoftScratch: c.workerSoftScratchDev}
 }
 
 func serve(ctx context.Context, pool *pgxpool.Pool, c serveConfig, out io.Writer) error {
@@ -149,7 +165,7 @@ func serve(ctx context.Context, pool *pgxpool.Pool, c serveConfig, out io.Writer
 		if !roots.AppendCertsFromPEM(body) {
 			return errors.New("worker client CA bundle contains no valid certificates")
 		}
-		worker, err = workerapi.NewServer(pool, certificate, roots, workerapi.NewService(pool, store.AcquisitionPolicy{}, objects))
+		worker, err = workerapi.NewServer(pool, certificate, roots, workerapi.NewService(pool, c.acquisitionPolicy(), objects))
 		if err != nil {
 			return err
 		}

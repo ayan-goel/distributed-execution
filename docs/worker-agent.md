@@ -63,9 +63,10 @@ ceilings. Docker's actual architecture, CPU count, and total memory also bound t
 claims; configure allocatable memory below total memory to leave host overhead.
 The daemon must support the existing hard CPU/memory/PID/seccomp checks. Scratch is
 advertised as `scratch.soft`, never `scratch.quota`. The server's default acquisition
-policy continues to reject soft-scratch execution. The current server command does
-not yet expose a development override, so this execution path is verified against
-the same service with an explicit test policy. Operator wiring is the next slice.
+policy continues to reject soft-scratch execution. For local development only, add
+`--worker-dev-soft-scratch` to `dispatch-server serve` along with loopback
+`--dev-insecure` HTTP and a literal loopback worker listener. Worker mTLS remains
+mandatory. This explicit policy has no scratch quota guarantee.
 
 ## Startup and retry ordering
 

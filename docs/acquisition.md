@@ -11,7 +11,8 @@ New assignments require a READY, healthy, reconciled, non-draining host without 
 pressure and with a heartbeat less than 15 seconds old. Docker, hard CPU/memory/PID
 limits, and scratch quota capabilities are required. `AcquisitionPolicy{}` requires
 strict scratch quotas. `AllowSoftScratch` explicitly enables the development profile;
-it does not claim a hard disk limit. The executable policy flag is not wired yet.
+it does not claim a hard disk limit. The executable permits it only through an
+explicit `--worker-dev-soft-scratch` switch on loopback development listeners.
 
 Selection considers enabled authorized projects, QUEUED/RETRY_WAIT state, elapsed
 backoff, cancellation, placement labels (including architecture), free CPU/memory/
@@ -64,7 +65,7 @@ The executable worker service now implements `AcquireWork` behind the existing m
 listener. The handler requires verified transport identity even on direct invocation,
 binds the request to that worker, and passes the session/request UUIDs to the store.
 The service constructor receives an explicit acquisition policy; the executable uses
-the default strict scratch policy until its development-profile flag is added.
+the default strict scratch policy unless its local development flag is set.
 
 An assignment carries the same authority, canonical spec/hash, pinned image, argument
 vector, and byte-based resource limits. Remaining lease and phase durations are
@@ -144,7 +145,8 @@ replay rejection through the real Go executable and PostgreSQL. A separate mTLS
 fixture delays a grant beyond its usable local lifetime and confirms the client
 rejects execution authority despite receiving a successful RPC response.
 
-The store, RPCs, and Rust acquisition/recovery client are implemented.
-The production agent loop, integrated Docker execution, Rust renewal loop/reaper, sweep limits, and final
-fair scheduling remain required. Two registered database identities are not evidence
+The store, RPCs, Rust acquisition/recovery client, and sequential worker agent loop
+are implemented. Integrated cached-image Docker execution and periodic renewal
+have passed on one local daemon. Reaper, sweep limits, and final fair scheduling
+remain required. Two registered database identities are not evidence
 for the release gate requiring execution on two independent Linux hosts.

@@ -39,3 +39,26 @@ func TestWorkerListenerAlwaysRequiresCompleteMTLSConfiguration(t *testing.T) {
 		}
 	}
 }
+
+func TestSoftScratchPolicyRequiresExplicitLoopbackDevelopment(t *testing.T) {
+	base := []string{"--dev-insecure", "--listen", "127.0.0.1:0", "--allow-registry", "index.docker.io"}
+	worker := []string{"--worker-listen", "127.0.0.1:0", "--worker-tls-cert", "server.pem", "--worker-tls-key", "server.key", "--worker-client-ca", "ca.pem"}
+	for _, tc := range []struct {
+		args        []string
+		valid, soft bool
+	}{
+		{append(append([]string{}, base...), worker...), true, false},
+		{append(append(append([]string{}, base...), worker...), "--worker-dev-soft-scratch"), true, true},
+		{append(append([]string{}, base...), "--worker-dev-soft-scratch"), false, false},
+		{append(append([]string{}, base...), "--worker-listen", ":8444", "--worker-tls-cert", "server.pem", "--worker-tls-key", "server.key", "--worker-client-ca", "ca.pem", "--worker-dev-soft-scratch"), false, false},
+		{append(append([]string{"--listen", ":8443", "--tls-cert", "cert.pem", "--tls-key", "key.pem", "--allow-registry", "index.docker.io"}, worker...), "--worker-dev-soft-scratch"), false, false},
+	} {
+		config, err := parseServeConfig(tc.args)
+		if (err == nil) != tc.valid {
+			t.Fatalf("args %v: %v", tc.args, err)
+		}
+		if err == nil && config.acquisitionPolicy().AllowSoftScratch != tc.soft {
+			t.Fatalf("args %v: unexpected soft scratch policy", tc.args)
+		}
+	}
+}

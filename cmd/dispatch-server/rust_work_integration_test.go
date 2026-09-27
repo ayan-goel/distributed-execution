@@ -34,7 +34,7 @@ func TestRustAcquisitionAndRecoveryThroughControlPlane(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer pool.Close()
-	registration := store.Registration{RequestID: uuid.NewString(), SessionID: uuid.NewString(), ProtocolVersion: 1, Resources: spec.Resources{CPUMillis: 4000, MemoryMiB: 8192, ScratchMiB: 16384}, Slots: 4, Labels: map[string]string{"os": "linux", "architecture": "arm64"}, Capabilities: []string{"docker.v1", "cpu.hard", "memory.hard", "pids.hard", "scratch.quota"}}
+	registration := store.Registration{RequestID: uuid.NewString(), SessionID: uuid.NewString(), ProtocolVersion: 1, Resources: spec.Resources{CPUMillis: 4000, MemoryMiB: 8192, ScratchMiB: 16384}, Slots: 4, Labels: map[string]string{"os": "linux", "architecture": "arm64"}, Capabilities: []string{"docker.v1", "cpu.hard", "memory.hard", "pids.hard", "scratch.soft"}}
 	if _, err := store.RegisterSession(ctx, pool, id, registration); err != nil {
 		t.Fatal(err)
 	}
@@ -47,7 +47,7 @@ func TestRustAcquisitionAndRecoveryThroughControlPlane(t *testing.T) {
 	done := make(chan error, 1)
 	serverCtx, stop := context.WithCancel(ctx)
 	go func() {
-		err := run(serverCtx, []string{"serve", "--dev-insecure", "--listen", "127.0.0.1:0", "--allow-registry", "index.docker.io", "--worker-listen", "127.0.0.1:0", "--worker-tls-cert", p.serverCert, "--worker-tls-key", p.serverKey, "--worker-client-ca", p.ca}, writer)
+		err := run(serverCtx, []string{"serve", "--dev-insecure", "--listen", "127.0.0.1:0", "--allow-registry", "index.docker.io", "--worker-listen", "127.0.0.1:0", "--worker-tls-cert", p.serverCert, "--worker-tls-key", p.serverKey, "--worker-client-ca", p.ca, "--worker-dev-soft-scratch"}, writer)
 		_ = writer.CloseWithError(err)
 		done <- err
 	}()
