@@ -11,7 +11,7 @@ use crate::{
     upload::{deliver_output, UploadError},
 };
 use dispatch_protocol::v1::{
-    AttemptAuthority, CompleteAttemptRequest, FailureReason, OutputReference,
+    AttemptAuthority, CompleteAttemptRequest, Decision, FailureReason, OutputReference,
 };
 use std::{fmt, time::Duration};
 
@@ -71,6 +71,24 @@ pub async fn prepare_cancelled_completion(
     if let Some(request) = saved.completion() {
         return if request.reason == FailureReason::UserCancelled as i32 && request.stopped {
             Ok(request.clone())
+        } else if saved.completion_response().is_some_and(|response| {
+            response.decision == dispatch_protocol::v1::Decision::StopRequested as i32
+        }) {
+            let mut cancelled = CompleteAttemptRequest {
+                authority: Some(identity.clone()),
+                completion_id: new_uuid()?,
+                exit_code: saved.exit().map(|exit| exit.exit_code),
+                reason: FailureReason::UserCancelled as i32,
+                stopped: true,
+                logs_complete: false,
+                ..Default::default()
+            };
+            cancelled.payload_sha256 =
+                completion_digest(&cancelled).map_err(FinalizationError::Payload)?;
+            journal
+                .supersede_rejected_completion(cancelled.clone())
+                .await?;
+            Ok(cancelled)
         } else {
             Err(FinalizationError::Identity)
         };
@@ -172,6 +190,13 @@ pub async fn prepare_completion<H>(
                     {
                         Ok(reply) => break Some(reply),
                         Err(error) => {
+                            if matches!(&error, UploadError::Control(control) if control.upload_stop_requested()) {
+                                // The upload gate can observe cancellation before the
+                                // periodic lease renewal; it is equally authoritative.
+                                return Err(FinalizationError::Authority(
+                                    StopReason::Rejected(Decision::StopRequested),
+                                ));
+                            }
                             let Some((reason, retryable)) = upload_failure(&error) else {
                                 return Err(FinalizationError::Upload(error));
                             };

@@ -180,8 +180,9 @@ active jobs become `CANCELLING` and retain their reservation until stop is
 confirmed or authority expires. Repeating the request returns the current job
 without adding another event. For a running job, the worker now journals a
 confirmed-stop acknowledgement, removes the container, and remains able to
-accept another job. Cancellation before launch or during finalization still
-needs full fault-matrix verification.
+accept another job. Finalization cancellation is verified both before and after
+normal completion is journaled. Prelaunch cancellation and the wider fault
+matrix still need verification.
 
 Use an HTTPS origin and omit `DISPATCH_DEV_INSECURE` for remote servers. The client
 uses the system certificate trust store and refuses redirects. Environment tokens

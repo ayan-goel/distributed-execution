@@ -86,6 +86,10 @@ struct Record {
     completion_response: Option<CompleteAttemptResponse>,
     #[prost(message, repeated, tag = "7")]
     outputs: Vec<OutputUpload>,
+    #[prost(message, optional, tag = "8")]
+    rejected_completion: Option<CompleteAttemptRequest>,
+    #[prost(message, optional, tag = "9")]
+    rejected_response: Option<CompleteAttemptResponse>,
 }
 
 pub struct RecoveredAttempt(Record);
@@ -116,6 +120,14 @@ impl RecoveredAttempt {
     }
     pub fn completion_response(&self) -> Option<&CompleteAttemptResponse> {
         self.0.completion_response.as_ref()
+    }
+    pub fn rejected_completion(
+        &self,
+    ) -> Option<(&CompleteAttemptRequest, &CompleteAttemptResponse)> {
+        self.0
+            .rejected_completion
+            .as_ref()
+            .zip(self.0.rejected_response.as_ref())
     }
     pub fn outputs(&self) -> &[OutputUpload] {
         &self.0.outputs
@@ -206,6 +218,8 @@ impl Journal {
             completion: None,
             completion_response: None,
             outputs: Vec::new(),
+            rejected_completion: None,
+            rejected_response: None,
         };
         record.validate(&self.worker_id, &a.attempt_id)?;
         if let Some(saved) = self.load_attempt(&a.attempt_id)? {
@@ -348,6 +362,43 @@ impl Journal {
         self.save(&authority.attempt_id, &record)
     }
 
+    /// Replace only a server-rejected result with stopped cancellation evidence.
+    /// Keep the original request and STOP_REQUESTED reply for crash recovery and audit.
+    pub fn supersede_rejected_completion(
+        &mut self,
+        request: &CompleteAttemptRequest,
+    ) -> Result<(), JournalError> {
+        validate_completion_request(request).map_err(|_| JournalError::Invalid)?;
+        let authority = request.authority.as_ref().ok_or(JournalError::Invalid)?;
+        let mut record = self.required(&authority.attempt_id)?;
+        if record.assignment.authority.as_ref() != Some(authority)
+            || request.reason != FailureReason::UserCancelled as i32
+            || !request.stopped
+            || !request.outputs.is_empty()
+            || request.logs_complete
+            || request.exit_code != record.exit.as_ref().map(|e| e.exit_code)
+            || record.rejected_completion.is_some()
+        {
+            return Err(JournalError::Conflict);
+        }
+        let previous = record.completion.take().ok_or(JournalError::Conflict)?;
+        let response = record
+            .completion_response
+            .take()
+            .ok_or(JournalError::Conflict)?;
+        if response.decision != Decision::StopRequested as i32
+            || previous.reason == FailureReason::UserCancelled as i32
+            || previous.completion_id == request.completion_id
+            || previous == *request
+        {
+            return Err(JournalError::Conflict);
+        }
+        record.rejected_completion = Some(previous);
+        record.rejected_response = Some(response);
+        record.completion = Some(request.clone());
+        self.save(&authority.attempt_id, &record)
+    }
+
     fn required(&self, id: &str) -> Result<Record, JournalError> {
         self.load_attempt(id)?
             .map(|r| r.0)
@@ -452,6 +503,31 @@ impl Record {
     }
 
     fn validate_completion(&self) -> Result<(), JournalError> {
+        match (&self.rejected_completion, &self.rejected_response) {
+            (None, None) => {}
+            (Some(previous), Some(response)) => {
+                validate_completion_request(previous).map_err(|_| JournalError::Invalid)?;
+                validate_completion_response(previous, response.clone())
+                    .map_err(|_| JournalError::Invalid)?;
+                if previous.authority != self.assignment.authority
+                    || previous.exit_code != self.exit.as_ref().map(|e| e.exit_code)
+                    || previous.reason == FailureReason::UserCancelled as i32
+                    || response.decision != Decision::StopRequested as i32
+                    || self.completion.as_ref().is_none_or(|current| {
+                        current.authority != previous.authority
+                            || current.completion_id == previous.completion_id
+                            || current.reason != FailureReason::UserCancelled as i32
+                            || !current.stopped
+                            || !current.outputs.is_empty()
+                            || current.logs_complete
+                            || current.exit_code != self.exit.as_ref().map(|e| e.exit_code)
+                    })
+                {
+                    return Err(JournalError::Invalid);
+                }
+            }
+            _ => return Err(JournalError::Invalid),
+        }
         let Some(request) = &self.completion else {
             return if self.completion_response.is_none() {
                 Ok(())

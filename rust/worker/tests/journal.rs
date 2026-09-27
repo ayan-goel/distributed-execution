@@ -266,6 +266,68 @@ fn stop_observations_can_resolve_to_rejection_but_never_become_acceptance() {
 }
 
 #[test]
+fn only_durable_stop_rejection_can_be_superseded_by_cancellation() {
+    let fixture = Fixture::new();
+    let mut journal = fixture.open();
+    journal.persist_assignment(&assignment()).unwrap();
+    let original = completion();
+    journal.persist_completion(&original).unwrap();
+    let mut cancelled = original.clone();
+    cancelled.completion_id = "00000000-0000-0000-0000-000000000006".into();
+    cancelled.reason = FailureReason::UserCancelled as i32;
+    cancelled.logs_complete = false;
+    cancelled.metrics_json.clear();
+    cancelled.payload_sha256 = completion_digest(&cancelled).unwrap();
+    assert_eq!(
+        journal.supersede_rejected_completion(&cancelled),
+        Err(JournalError::Conflict)
+    );
+    let stop = completion_reply(Decision::StopRequested, AttemptState::Assigned);
+    journal
+        .record_completion_response(&original, &stop)
+        .unwrap();
+    journal.supersede_rejected_completion(&cancelled).unwrap();
+    assert_eq!(
+        journal.supersede_rejected_completion(&cancelled),
+        Err(JournalError::Conflict)
+    );
+    drop(journal);
+    let reopened = fixture.open();
+    let saved = reopened.load_attempt(ATTEMPT).unwrap().unwrap();
+    assert_eq!(saved.rejected_completion(), Some((&original, &stop)));
+    assert_eq!(saved.completion(), Some(&cancelled));
+    assert_eq!(saved.completion_response(), None);
+}
+
+#[test]
+fn accepted_completion_cannot_be_rewritten_as_cancellation() {
+    let fixture = Fixture::new();
+    let mut journal = fixture.open();
+    journal.persist_assignment(&assignment()).unwrap();
+    let original = completion();
+    journal.persist_completion(&original).unwrap();
+    journal
+        .record_completion_response(
+            &original,
+            &completion_reply(Decision::Accepted, AttemptState::Failed),
+        )
+        .unwrap();
+    let mut cancelled = original.clone();
+    cancelled.completion_id = "00000000-0000-0000-0000-000000000006".into();
+    cancelled.reason = FailureReason::UserCancelled as i32;
+    cancelled.logs_complete = false;
+    cancelled.metrics_json.clear();
+    cancelled.payload_sha256 = completion_digest(&cancelled).unwrap();
+    assert_eq!(
+        journal.supersede_rejected_completion(&cancelled),
+        Err(JournalError::Conflict)
+    );
+    let saved = journal.load_attempt(ATTEMPT).unwrap().unwrap();
+    assert_eq!(saved.completion(), Some(&original));
+    assert_eq!(saved.rejected_completion(), None);
+}
+
+#[test]
 fn successful_completion_reply_retains_original_manifest_bytes() {
     let fixture = Fixture::new();
     let mut journal = fixture.open();

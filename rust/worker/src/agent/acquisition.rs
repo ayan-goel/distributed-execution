@@ -2,7 +2,7 @@
 use super::{workspace::prepare_attempt_workspace, *};
 use crate::{
     control::{GrantedAssignment, WorkOutcome},
-    finalization::{prepare_cancelled_completion, prepare_completion},
+    finalization::{prepare_cancelled_completion, prepare_completion, FinalizationError},
     launch::{execute, CleanupEvidence, ExecutionError, LaunchCause},
     runtime::Runtime,
     supervisor::{authority_channel, StopReason, SupervisedAuthority},
@@ -154,15 +154,61 @@ async fn run_assignment(
             return Ok(());
         }
     };
-    prepare_completion(
+    let prepared = prepare_completion(
         &mut finalizing,
         context.journal,
         client,
         transfers,
         workspace,
     )
-    .await?;
+    .await;
+    if let Err(error) = prepared {
+        if !matches!(
+            error,
+            FinalizationError::Authority(StopReason::Rejected(Decision::StopRequested))
+        ) {
+            return Err(error.into());
+        }
+        let saved = context
+            .journal
+            .load_attempt(identity.attempt_id.clone())
+            .await?
+            .ok_or(AgentError::Task)?;
+        if saved.completion().is_some() {
+            // A result sealed just before cancellation may already have won the
+            // server transaction. Resolve it before sealing different evidence.
+            let reply = deliver_terminal(context.journal, client, &identity.attempt_id).await?;
+            if reply.decision != Decision::StopRequested as i32 {
+                if !terminal_decision(&reply) {
+                    return Err(AgentError::Task);
+                }
+                context.runtime.remove(finalizing.handle()).await?;
+                drop(finalizing);
+                return remove_workspace(path).await;
+            }
+        }
+        prepare_cancelled_completion(context.journal, identity, CleanupEvidence::Stopped).await?;
+        context.runtime.remove(finalizing.handle()).await?;
+        drop(finalizing);
+        let reply = deliver_terminal(context.journal, client, &identity.attempt_id).await?;
+        if !terminal_decision(&reply) {
+            return Err(AgentError::Task);
+        }
+        return remove_workspace(path).await;
+    }
     let reply = deliver_terminal(context.journal, client, &identity.attempt_id).await?;
+    if reply.decision == Decision::StopRequested as i32 {
+        // Completion lost the server transaction race to cancellation. Preserve
+        // that rejection, then acknowledge the already exited container.
+        prepare_cancelled_completion(context.journal, identity, CleanupEvidence::Stopped).await?;
+        context.runtime.remove(finalizing.handle()).await?;
+        drop(finalizing);
+        let cancelled = deliver_terminal(context.journal, client, &identity.attempt_id).await?;
+        if !terminal_decision(&cancelled) {
+            return Err(AgentError::Task);
+        }
+        return remove_workspace(path).await;
+    }
     if !terminal_decision(&reply) {
         return Err(AgentError::Task);
     }

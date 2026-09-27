@@ -97,6 +97,13 @@ impl AsyncJournal {
         self.apply(move |journal| journal.persist_completion(&request))
             .await
     }
+    pub async fn supersede_rejected_completion(
+        &self,
+        request: CompleteAttemptRequest,
+    ) -> Result<(), JournalError> {
+        self.apply(move |journal| journal.supersede_rejected_completion(&request))
+            .await
+    }
     pub async fn record_completion_response(
         &self,
         request: CompleteAttemptRequest,

@@ -22,7 +22,9 @@ workspace and journal, and independently running lease renewal.
 
 The coordinator currently sets `logs_complete=false` and supplies no metrics.
 Segmented log delivery and verified metrics-file extraction are still required.
-An existing durable completion is returned unchanged, never replaced by a new ID.
+An existing durable completion is replayed unchanged until the server responds.
+Only a durable `STOP_REQUESTED` rejection permits replacing it with stopped
+`USER_CANCELLED` evidence; the journal keeps the rejected request and reply.
 
 ## Authority and failures
 
@@ -63,9 +65,13 @@ arrives. Replaying the saved terminal evidence remains valid after authority end
 it grants no permission to launch, upload, or accept a stale result. The caller
 owns bounded completion retries and must interpret the returned decision.
 
-Cancellation supersession, phase-expiry recovery, metrics/log publication,
-multipart files above 64 MiB, and local cleanup remain separate work.
-No coordinator return value releases local capacity or deletes containers/files.
+The production agent acknowledges finalization cancellation after observed
+container exit. It handles stop intent during upload and after a sealed normal
+completion loses the server transaction race, removes the stopped container,
+delivers cancellation, and deletes the workspace before new admission. A normal
+completion accepted first retains its terminal result. Phase-expiry recovery,
+metrics/log publication, multipart files above 64 MiB, and broader local
+reconciliation remain separate work.
 
 ## Verified scope
 

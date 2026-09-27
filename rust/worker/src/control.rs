@@ -47,6 +47,9 @@ impl ClientError {
         matches!(self, Self::Connection | Self::Deadline)
             || matches!(self, Self::Rpc(status) if matches!(status.code(), Code::Unavailable | Code::DeadlineExceeded))
     }
+    pub fn upload_stop_requested(&self) -> bool {
+        matches!(self, Self::Rpc(status) if status.code() == Code::FailedPrecondition && status.message() == "UPLOAD_STOP_REQUESTED")
+    }
 }
 
 impl fmt::Display for ClientError {

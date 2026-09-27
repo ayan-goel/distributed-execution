@@ -1796,3 +1796,25 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 - Native tests, lint, and smoke checks passed; the pinned Linux worker profile
   also passed with the new authority-bound stop path.
 - Full release fault-matrix and stress measurements remain open.
+
+### D14f: Resolve cancellation during output finalization
+
+- The agent now acknowledges cancellation after observed exit whether upload
+  preparation was interrupted or a normal completion was already sealed. An
+  upload's `UPLOAD_STOP_REQUESTED` response is treated as stop intent even if
+  it arrives before the next lease renewal. Other upload errors remain errors.
+- If completion was sealed, the worker first delivers that exact request. An
+  accepted result keeps its terminal outcome; only a durable `STOP_REQUESTED`
+  reply allows an atomic journal transition to a new stopped `USER_CANCELLED`
+  request. The prior request and rejection remain in the record for replay and
+  audit. Container/workspace cleanup precedes new worker admission.
+- A real Docker/PostgreSQL/race-detector fixture forces cancellation at both
+  the completion transaction and the upload gate. It checks cancelled jobs,
+  physical cleanup and released reservations, then verifies the same worker
+  completes another job. Journal tests reject supersession without a recorded
+  stop response and reopen the complete evidence after replacement.
+- Native `make test lint smoke`, the pinned Linux worker profile, the full
+  isolated PostgreSQL/object-storage suite, and the targeted final Docker/
+  PostgreSQL cancellation fixture passed.
+- Prelaunch cancellation, expiry/fencing races, and broader v0.1 fault gates
+  remain open.

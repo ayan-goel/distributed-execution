@@ -14,16 +14,78 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	pb "dispatch.local/dispatch/gen/dispatch/worker/v1"
 	"dispatch.local/dispatch/internal/api"
 	"dispatch.local/dispatch/internal/cli"
 	"dispatch.local/dispatch/internal/spec"
 	"dispatch.local/dispatch/internal/store"
 	"dispatch.local/dispatch/internal/workerapi"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
+
+type lockedBuffer struct {
+	mu     sync.Mutex
+	buffer bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buffer.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buffer.String()
+}
+
+type cancelOnCompletionService struct {
+	pb.WorkerServiceServer
+	pool         *pgxpool.Pool
+	projectID    string
+	target       atomic.Value
+	fired        atomic.Bool
+	stopSeen     atomic.Bool
+	uploadTarget atomic.Value
+	uploadFired  atomic.Bool
+}
+
+func (s *cancelOnCompletionService) CreateUpload(ctx context.Context, r *pb.CreateUploadRequest) (*pb.CreateUploadResponse, error) {
+	if target, ok := s.uploadTarget.Load().(string); ok && r.GetAuthority().GetJobId() == target && s.uploadFired.CompareAndSwap(false, true) {
+		// Commit cancellation at the upload gate before any normal completion is
+		// journaled, then return the server's scoped stop rejection.
+		if _, err := store.RequestCancellation(ctx, s.pool, s.projectID, target); err != nil {
+			return nil, err
+		}
+		return nil, status.Error(codes.FailedPrecondition, "UPLOAD_STOP_REQUESTED")
+	}
+	return s.WorkerServiceServer.CreateUpload(ctx, r)
+}
+
+func (s *cancelOnCompletionService) CompleteAttempt(ctx context.Context, r *pb.CompleteAttemptRequest) (*pb.CompleteAttemptResponse, error) {
+	if target, ok := s.target.Load().(string); ok && r.GetAuthority().GetJobId() == target && s.fired.CompareAndSwap(false, true) {
+		// Force cancellation to commit after the worker sealed its normal result
+		// but before the server considers that result for acceptance.
+		if _, err := store.RequestCancellation(ctx, s.pool, s.projectID, target); err != nil {
+			return nil, err
+		}
+		reply, err := s.WorkerServiceServer.CompleteAttempt(ctx, r)
+		if err == nil && reply.GetDecision() == pb.Decision_STOP_REQUESTED {
+			s.stopSeen.Store(true)
+		}
+		return reply, err
+	}
+	return s.WorkerServiceServer.CompleteAttempt(ctx, r)
+}
 
 func TestWorkerAcknowledgesLiveCancellation(t *testing.T) {
 	configureServerTestDatabase(t)
@@ -92,7 +154,7 @@ func TestWorkerAcknowledgesLiveCancellation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	service := workerapi.NewService(pool, store.AcquisitionPolicy{AllowSoftScratch: true}, nil)
+	service := &cancelOnCompletionService{WorkerServiceServer: workerapi.NewService(pool, store.AcquisitionPolicy{AllowSoftScratch: true}, nil), pool: pool, projectID: queued.ProjectID}
 	server, err := workerapi.NewServer(pool, certificate, pki.roots, service)
 	if err != nil {
 		t.Fatal(err)
@@ -133,7 +195,7 @@ func TestWorkerAcknowledgesLiveCancellation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var diagnostic bytes.Buffer
+	var diagnostic lockedBuffer
 	command.Stderr = &diagnostic
 	if err := command.Start(); err != nil {
 		t.Fatal(err)
@@ -203,7 +265,7 @@ func TestWorkerAcknowledgesLiveCancellation(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(root, "work", attempt)); !os.IsNotExist(err) {
 		t.Fatal("cancelled workspace survived cleanup", err)
 	}
-	job.Spec.Command = []string{"sh", "-c", "printf resumed"}
+	job.Spec.Command = []string{"sh", "-c", "printf resumed; sleep 1"}
 	_, nextHash, err := job.Canonical()
 	if err != nil {
 		t.Fatal(err)
@@ -212,6 +274,7 @@ func TestWorkerAcknowledgesLiveCancellation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	service.target.Store(nextJob.ID)
 	for {
 		var event struct {
 			Event     string `json:"event"`
@@ -228,8 +291,68 @@ func TestWorkerAcknowledgesLiveCancellation(t *testing.T) {
 			break
 		}
 	}
+	var raced, racedReason, racedReservation, racedAttempt string
+	if err := pool.QueryRow(ctx, `SELECT j.state,a.reason,r.state,a.id::text FROM jobs j JOIN attempts a ON a.job_id=j.id JOIN reservations r ON r.attempt_id=a.id WHERE j.id=$1`, nextJob.ID).Scan(&raced, &racedReason, &racedReservation, &racedAttempt); err != nil || raced != "CANCELLED" || racedReason != "USER_CANCELLED" || racedReservation != "released" || !service.stopSeen.Load() {
+		t.Fatal("finalization cancellation was not acknowledged", raced, racedReason, racedReservation, service.stopSeen.Load(), err, diagnostic.String())
+	}
+	if _, err := os.Stat(filepath.Join(root, "work", racedAttempt)); !os.IsNotExist(err) {
+		t.Fatal("sealed-result cancellation left a workspace", err)
+	}
+	job.Spec.Command = []string{"sh", "-c", "printf abc > /outputs/result; sleep 1"}
+	job.Spec.Outputs = []spec.Output{{Name: "result", Path: "/outputs/result", Required: true, MaxBytes: 3}}
+	_, thirdHash, err := job.Canonical()
+	if err != nil {
+		t.Fatal(err)
+	}
+	thirdJob, err := store.SubmitJob(ctx, pool, uuid.NewString(), thirdHash, job)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.uploadTarget.Store(thirdJob.ID)
+	for {
+		var event struct {
+			Event string `json:"event"`
+		}
+		if err := decoder.Decode(&event); err != nil {
+			t.Fatal("worker stopped after finalization cancellation", err, diagnostic.String())
+		}
+		if event.Event == "attempt_terminal" {
+			break
+		}
+	}
+	var thirdState, thirdReason, thirdReservation, thirdAttempt string
+	if err := pool.QueryRow(ctx, `SELECT j.state,a.reason,r.state,a.id::text FROM jobs j JOIN attempts a ON a.job_id=j.id JOIN reservations r ON r.attempt_id=a.id WHERE j.id=$1`, thirdJob.ID).Scan(&thirdState, &thirdReason, &thirdReservation, &thirdAttempt); err != nil || thirdState != "CANCELLED" || thirdReason != "USER_CANCELLED" || thirdReservation != "released" || !service.uploadFired.Load() {
+		t.Fatal("mid-finalization cancellation was not acknowledged", thirdState, thirdReason, service.uploadFired.Load(), err, diagnostic.String())
+	}
+	if _, err := os.Stat(filepath.Join(root, "work", thirdAttempt)); !os.IsNotExist(err) {
+		t.Fatal("mid-finalization cancellation left a workspace", err)
+	}
+	if containers := docker("ps", "-aq", "--filter", "label=dev.dispatch.worker="+worker.WorkerID); containers != "" {
+		t.Fatal("finalization cancellation left a container", containers)
+	}
+	job.Spec.Outputs = nil
+	job.Spec.Command = []string{"sh", "-c", "printf resumed"}
+	_, fourthHash, err := job.Canonical()
+	if err != nil {
+		t.Fatal(err)
+	}
+	fourthJob, err := store.SubmitJob(ctx, pool, uuid.NewString(), fourthHash, job)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for {
+		var event struct {
+			Event string `json:"event"`
+		}
+		if err := decoder.Decode(&event); err != nil {
+			t.Fatal("worker stopped before resuming", err, diagnostic.String())
+		}
+		if event.Event == "attempt_terminal" {
+			break
+		}
+	}
 	var resumed string
-	if err := pool.QueryRow(ctx, "SELECT state FROM jobs WHERE id=$1", nextJob.ID).Scan(&resumed); err != nil || resumed != "SUCCEEDED" {
-		t.Fatal("worker did not resume admission after cancellation", resumed, err)
+	if err := pool.QueryRow(ctx, "SELECT state FROM jobs WHERE id=$1", fourthJob.ID).Scan(&resumed); err != nil || resumed != "SUCCEEDED" {
+		t.Fatal("worker did not resume admission after finalization cancellation", resumed, err)
 	}
 }
