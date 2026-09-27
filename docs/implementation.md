@@ -2037,3 +2037,13 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   live visibility or preserve arbitrary noisy output. The bounded follower,
   queue, assembler, and spool still need runner lifecycle wiring for the full
   D15 gate; truncation is reported as incomplete.
+
+### D15q: Collect a live queue into bounded segments
+
+- Added a collector that polls the Docker follower and bounded capture queue
+  together, flushes segments every two seconds, drains the queue after follower
+  exit, and carries final per-stream sequence counters for tail-loss reporting.
+- Focused tests cover both streams and saturated queue counts, including a
+  follower error. The collector is still a component: the attempt runner must
+  start it after launch, supervise it through exit, and publish sealed segments
+  before this becomes live user-visible logging. See [live-log-collector.md](live-log-collector.md).

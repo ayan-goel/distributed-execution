@@ -18,6 +18,8 @@ pub mod log_capture;
 pub mod log_delivery;
 pub mod log_format;
 #[cfg(unix)]
+pub mod log_live;
+#[cfg(unix)]
 pub mod log_spool;
 #[cfg(unix)]
 pub mod log_summary;
