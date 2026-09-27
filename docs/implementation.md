@@ -1763,3 +1763,22 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   the pinned Linux worker test profile passed.
 - This proves stop selection in worker logic, not a live cancellation completion
   or release of the server reservation. Those remain D14 work.
+
+### D14d: Acknowledge confirmed live cancellation and resume admission
+
+- The agent now distinguishes confirmed `STOP_REQUESTED` cleanup from uncertain
+  or unrelated execution failures. It seals one journaled `USER_CANCELLED`
+  completion with exact attempt/exit evidence, verifies the stopped container's
+  current authority and spec before removal, delivers the same completion after
+  transient RPC errors, removes its workspace, and returns to acquisition.
+- A real Docker/PostgreSQL test first failed because the worker exited after
+  stopping the workload without acknowledgement. It now observes one accepted
+  cancellation, released reservation, no remaining container or workspace, and
+  a successful second job on the same worker. The stopped-container identity
+  gate also passed its isolated Docker runtime test.
+- Native `make test lint smoke`, the full isolated PostgreSQL/object-storage
+  suite, and the pinned Linux worker test profile passed. The live fixture
+  requests cancellation through `dispatch cancel` and the real HTTP API.
+- Prelaunch cancellation, finalization cancellation, and the broader concurrent
+  fault matrix remain open. The current stop grace is fixed at five seconds;
+  the spec's per-job bound remains to be implemented.

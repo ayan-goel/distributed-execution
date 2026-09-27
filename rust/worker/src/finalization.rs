@@ -3,14 +3,16 @@ use crate::{
     control::{completion_digest, ClientError, ControlClient},
     execution::ExecutionSpec,
     journal::{new_uuid, AsyncJournal, JournalError},
-    launch::FinalizingAttempt,
+    launch::{CleanupEvidence, FinalizingAttempt},
     outputs::{collect_outputs, CollectionError, CollectionLimits},
     runtime::PreparedWorkspace,
     supervisor::StopReason,
     transfer::{TransferClient, TransferError},
     upload::{deliver_output, UploadError},
 };
-use dispatch_protocol::v1::{CompleteAttemptRequest, FailureReason, OutputReference};
+use dispatch_protocol::v1::{
+    AttemptAuthority, CompleteAttemptRequest, FailureReason, OutputReference,
+};
 use std::{fmt, time::Duration};
 
 const MAX_DELIVERY_ATTEMPTS: usize = 3;
@@ -18,6 +20,7 @@ const MAX_DELIVERY_ATTEMPTS: usize = 3;
 #[derive(Debug)]
 pub enum FinalizationError {
     Identity,
+    StopUnconfirmed,
     Authority(StopReason),
     Journal(JournalError),
     Collection(CollectionError),
@@ -29,6 +32,7 @@ impl fmt::Display for FinalizationError {
         // Neither workload paths nor signed storage capabilities belong in errors.
         let category = match self {
             Self::Identity => "identity",
+            Self::StopUnconfirmed => "stop unconfirmed",
             Self::Authority(_) => "authority",
             Self::Journal(_) => "journal",
             Self::Collection(_) => "collection",
@@ -43,6 +47,46 @@ impl From<JournalError> for FinalizationError {
     fn from(error: JournalError) -> Self {
         Self::Journal(error)
     }
+}
+
+/// Seal a cancellation acknowledgement only after the executor confirmed that
+/// its container stopped or was never created. The journal binds this evidence
+/// to one attempt so a lost reply cannot invent a second completion identity.
+pub async fn prepare_cancelled_completion(
+    journal: &AsyncJournal,
+    identity: &AttemptAuthority,
+    cleanup: CleanupEvidence,
+) -> Result<CompleteAttemptRequest, FinalizationError> {
+    let saved = journal
+        .load_attempt(identity.attempt_id.clone())
+        .await?
+        .ok_or(FinalizationError::Identity)?;
+    if saved.assignment().authority.as_ref() != Some(identity) {
+        return Err(FinalizationError::Identity);
+    }
+    match (cleanup, saved.container_id()) {
+        (CleanupEvidence::Stopped, Some(_)) | (CleanupEvidence::NotCreated, None) => {}
+        _ => return Err(FinalizationError::StopUnconfirmed),
+    }
+    if let Some(request) = saved.completion() {
+        return if request.reason == FailureReason::UserCancelled as i32 && request.stopped {
+            Ok(request.clone())
+        } else {
+            Err(FinalizationError::Identity)
+        };
+    }
+    let mut request = CompleteAttemptRequest {
+        authority: Some(identity.clone()),
+        completion_id: new_uuid()?,
+        exit_code: saved.exit().map(|exit| exit.exit_code),
+        reason: FailureReason::UserCancelled as i32,
+        stopped: true,
+        logs_complete: false,
+        ..Default::default()
+    };
+    request.payload_sha256 = completion_digest(&request).map_err(FinalizationError::Payload)?;
+    journal.persist_completion(request.clone()).await?;
+    Ok(request)
 }
 
 /// Prepare durable completion for an observed exit. Renew leases independently.

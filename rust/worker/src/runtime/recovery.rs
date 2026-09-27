@@ -142,6 +142,62 @@ impl RecoveryRuntime for DockerRuntime {
     }
 }
 
+impl DockerRuntime {
+    pub async fn remove_stopped_current(
+        &self,
+        authority: &AttemptAuthority,
+        container_id: &str,
+        spec_sha256: &str,
+    ) -> Result<(), RuntimeError> {
+        if !canonical_uuid(&authority.worker_id)
+            || !canonical_uuid(&authority.session_id)
+            || !canonical_uuid(&authority.job_id)
+            || !canonical_uuid(&authority.attempt_id)
+            || !lower_hash(container_id)
+            || !lower_hash(spec_sha256)
+        {
+            return Err(RuntimeError::Identity);
+        }
+        let actual = match bounded(
+            RPC_TIMEOUT,
+            self.docker.inspect_container(container_id, None),
+        )
+        .await
+        {
+            Ok(actual) => actual,
+            Err(RuntimeError::Daemon(404)) => return Ok(()),
+            Err(error) => return Err(error),
+        };
+        let checked = recover(actual, &authority.worker_id, container_id)?;
+        // INVARIANT: current-session cleanup can remove only this journaled,
+        // physically stopped attempt. A running or relabeled container must
+        // block local capacity reuse instead of being force-removed.
+        if checked.authority() != authority
+            || checked.fingerprint.spec_sha256 != spec_sha256
+            || checked.status().running
+            || !matches!(
+                checked.status().state,
+                ContainerState::Exited | ContainerState::Dead
+            )
+        {
+            return Err(RuntimeError::Identity);
+        }
+        let options = RemoveContainerOptionsBuilder::default()
+            .force(false)
+            .v(true)
+            .build();
+        match bounded(
+            RPC_TIMEOUT,
+            self.docker.remove_container(container_id, Some(options)),
+        )
+        .await
+        {
+            Ok(()) | Err(RuntimeError::Daemon(404)) => Ok(()),
+            Err(error) => Err(error),
+        }
+    }
+}
+
 fn recover(
     actual: ContainerInspectResponse,
     worker: &str,

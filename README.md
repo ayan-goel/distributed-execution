@@ -28,7 +28,9 @@ into 27 jobs distributed across your machines.
 **v0.1 is in development and targets CPU workloads.** GPU support is planned for v0.2.
 An integration test now runs CLI submission through the real worker daemon and
 Docker, then verifies the output with a CLI download. A second integration test
-verifies worker-loss retry across two worker identities. Strict scratch limits,
+verifies worker-loss retry across two worker identities. Running-job cancellation
+is also verified through worker stop, durable acknowledgement, cleanup, and
+subsequent admission. Strict scratch limits,
 input staging, logs, full retry policy coverage, and other v0.1 gates remain. See the
 [implementation ledger](docs/implementation.md) for verified progress and remaining work.
 

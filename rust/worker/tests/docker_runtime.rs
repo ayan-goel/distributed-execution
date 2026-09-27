@@ -219,7 +219,22 @@ id -u; printf out; printf err >&2; printf result > /outputs/result; sleep 1
     runtime.start(&handle, &lease()).await.unwrap();
     runtime.stop(&handle, 0).await.unwrap();
     assert!(!runtime.inspect(&handle).await.unwrap().running);
-    runtime.remove(&handle).await.unwrap();
+    let mut wrong = identity.clone();
+    wrong.session_id = "00000000-0000-0000-0000-000000000099".into();
+    assert_eq!(
+        runtime
+            .remove_stopped_current(&wrong, handle.id(), sleeper.sha256())
+            .await,
+        Err(RuntimeError::Identity)
+    );
+    runtime
+        .remove_stopped_current(&identity, handle.id(), sleeper.sha256())
+        .await
+        .unwrap();
+    runtime
+        .remove_stopped_current(&identity, handle.id(), sleeper.sha256())
+        .await
+        .unwrap();
 
     identity.attempt_id.replace_range(24..36, "00000000000c");
     let memory_hog = execution(

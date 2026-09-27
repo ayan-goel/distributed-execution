@@ -308,8 +308,14 @@ When live authority reports `STOP_REQUESTED`, the worker first asks Docker for
 a bounded SIGTERM stop with a five-second grace period. It confirms the container
 is no longer running; if the stop fails or remains uncertain, it tries the
 immediate kill path. Lease expiry and fencing still use immediate kill. Confirmed
-physical stop alone does not terminalize the job: a durable cancellation
-completion acknowledgement and full container/workspace cleanup remain open.
+physical stop alone does not terminalize the job. Once the executor confirms
+stop, the agent seals one `USER_CANCELLED` completion in its journal, removes
+the stopped container, delivers the same completion through retries, then
+removes its workspace before admitting another job. The server releases the
+reservation only with the accepted completion. If cleanup cannot be proven,
+the agent stops rather than reusing capacity, and lease expiry fences the job.
+Cancellation during prelaunch or finalization uncertainty still needs a live
+release gate.
 
 ## Source references
 

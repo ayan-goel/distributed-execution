@@ -2,13 +2,13 @@
 use super::{workspace::prepare_attempt_workspace, *};
 use crate::{
     control::{GrantedAssignment, WorkOutcome},
-    finalization::prepare_completion,
-    launch::execute,
+    finalization::{prepare_cancelled_completion, prepare_completion},
+    launch::{execute, CleanupEvidence, ExecutionError, LaunchCause},
     runtime::Runtime,
-    supervisor::{authority_channel, SupervisedAuthority},
+    supervisor::{authority_channel, StopReason, SupervisedAuthority},
     transfer::TransferClient,
 };
-use dispatch_protocol::v1::{AcquireWorkRequest, WorkerSession};
+use dispatch_protocol::v1::{AcquireWorkRequest, CompleteAttemptResponse, WorkerSession};
 
 pub(super) struct ExecutionContext<'a> {
     pub config: &'a AgentConfig,
@@ -114,7 +114,7 @@ async fn run_assignment(
         })
         .await
         .map_err(|_| AgentError::Task)??;
-    let mut finalizing = execute(
+    let outcome = execute(
         context.runtime,
         client,
         context.journal,
@@ -123,7 +123,37 @@ async fn run_assignment(
         &workspace,
         authority,
     )
-    .await?;
+    .await;
+    let mut finalizing = match outcome {
+        Ok(finalizing) => finalizing,
+        Err(error) => {
+            let Some(cleanup) = confirmed_cancellation(&error) else {
+                return Err(error.into());
+            };
+            // Seal the exact stopped evidence before network delivery. A
+            // failure to remove local state keeps this worker from admitting
+            // another job, even if a later incarnation replays the completion.
+            prepare_cancelled_completion(context.journal, identity, cleanup).await?;
+            let saved = context
+                .journal
+                .load_attempt(identity.attempt_id.clone())
+                .await?
+                .ok_or(AgentError::Task)?;
+            if let Some(container_id) = saved.container_id() {
+                context
+                    .runtime
+                    .remove_stopped_current(identity, container_id, &grant.assignment().spec_sha256)
+                    .await?;
+            }
+            drop(workspace);
+            let reply = deliver_terminal(context.journal, client, &identity.attempt_id).await?;
+            if !terminal_decision(&reply) {
+                return Err(AgentError::Task);
+            }
+            remove_workspace(path).await?;
+            return Ok(());
+        }
+    };
     prepare_completion(
         &mut finalizing,
         context.journal,
@@ -132,9 +162,41 @@ async fn run_assignment(
         workspace,
     )
     .await?;
-    let reply = loop {
-        match deliver_pending(context.journal, client, &identity.attempt_id).await {
-            Ok(Some(reply)) => break reply,
+    let reply = deliver_terminal(context.journal, client, &identity.attempt_id).await?;
+    if !terminal_decision(&reply) {
+        return Err(AgentError::Task);
+    }
+    context.runtime.remove(finalizing.handle()).await?;
+    drop(finalizing);
+    remove_workspace(path).await
+}
+
+fn confirmed_cancellation(error: &ExecutionError) -> Option<CleanupEvidence> {
+    let (cause, cleanup) = match error {
+        ExecutionError::Launch(error) => (&error.cause, error.cleanup),
+        ExecutionError::AfterLaunch { cause, cleanup } => (cause, *cleanup),
+    };
+    if matches!(
+        cause,
+        LaunchCause::Authority(StopReason::Rejected(Decision::StopRequested))
+    ) && matches!(
+        cleanup,
+        CleanupEvidence::Stopped | CleanupEvidence::NotCreated
+    ) {
+        Some(cleanup)
+    } else {
+        None
+    }
+}
+
+async fn deliver_terminal(
+    journal: &AsyncJournal,
+    client: &mut ControlClient,
+    attempt_id: &str,
+) -> Result<CompleteAttemptResponse, AgentError> {
+    loop {
+        match deliver_pending(journal, client, attempt_id).await {
+            Ok(Some(reply)) => return Ok(reply),
             Ok(None) => return Err(AgentError::Task),
             Err(DeliveryError::Control(error)) if error.retryable() => {
                 // A committed completion can already be terminal, so historical
@@ -143,15 +205,17 @@ async fn run_assignment(
             }
             Err(error) => return Err(error.into()),
         }
-    };
-    if !matches!(
+    }
+}
+
+fn terminal_decision(reply: &CompleteAttemptResponse) -> bool {
+    matches!(
         Decision::try_from(reply.decision),
         Ok(Decision::Accepted | Decision::AlreadyTerminal | Decision::Fenced)
-    ) {
-        return Err(AgentError::Task);
-    }
-    context.runtime.remove(finalizing.handle()).await?;
-    drop(finalizing);
+    )
+}
+
+async fn remove_workspace(path: std::path::PathBuf) -> Result<(), AgentError> {
     // Removal follows a durable terminal decision. A failed unlink quarantines
     // this process rather than silently reusing local scratch for another job.
     tokio::task::spawn_blocking(move || {

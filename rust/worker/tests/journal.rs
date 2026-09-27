@@ -6,7 +6,9 @@ use dispatch_protocol::v1::{
 };
 use dispatch_protocol::v1::{RegisterWorkerRequest, RegisterWorkerResponse, WorkerSession};
 use dispatch_worker::control::completion_digest;
+use dispatch_worker::finalization::prepare_cancelled_completion;
 use dispatch_worker::journal::{AsyncJournal, Journal, JournalError, JournalLimits};
+use dispatch_worker::launch::CleanupEvidence;
 use ring::digest::{digest, SHA256};
 use std::{
     fs,
@@ -138,6 +140,40 @@ fn completion_reply(decision: Decision, state: AttemptState) -> CompleteAttemptR
         state: state as i32,
         accepted_manifest_json: vec![],
     }
+}
+
+#[tokio::test]
+async fn confirmed_stop_seals_one_replayable_cancellation_completion() {
+    let fixture = Fixture::new();
+    let journal = AsyncJournal::new(fixture.open());
+    let identity = assignment().authority.unwrap();
+    journal.persist_assignment(assignment()).await.unwrap();
+    journal
+        .prepare_phase(ATTEMPT.into(), AttemptState::Starting)
+        .await
+        .unwrap();
+    journal
+        .bind_container(ATTEMPT.into(), "a".repeat(64))
+        .await
+        .unwrap();
+    assert!(
+        prepare_cancelled_completion(&journal, &identity, CleanupEvidence::Uncertain)
+            .await
+            .is_err()
+    );
+    let first = prepare_cancelled_completion(&journal, &identity, CleanupEvidence::Stopped)
+        .await
+        .unwrap();
+    assert_eq!(first.reason, FailureReason::UserCancelled as i32);
+    assert!(first.stopped);
+    assert_eq!(first.exit_code, None);
+    assert_eq!(first.payload_sha256, completion_digest(&first).unwrap());
+    let replay = prepare_cancelled_completion(&journal, &identity, CleanupEvidence::Stopped)
+        .await
+        .unwrap();
+    assert_eq!(first, replay);
+    let saved = journal.load_attempt(ATTEMPT.into()).await.unwrap().unwrap();
+    assert_eq!(saved.completion(), Some(&first));
 }
 
 #[tokio::test]

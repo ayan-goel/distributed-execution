@@ -178,8 +178,10 @@ A submit-role token can request cancellation through the CLI or
 `POST /v1/jobs/JOB_UUID/cancel`. Queued jobs become `CANCELLED` immediately;
 active jobs become `CANCELLING` and retain their reservation until stop is
 confirmed or authority expires. Repeating the request returns the current job
-without adding another event. Live worker stop acknowledgement is still in
-progress.
+without adding another event. For a running job, the worker now journals a
+confirmed-stop acknowledgement, removes the container, and remains able to
+accept another job. Cancellation before launch or during finalization still
+needs full fault-matrix verification.
 
 Use an HTTPS origin and omit `DISPATCH_DEV_INSECURE` for remote servers. The client
 uses the system certificate trust store and refuses redirects. Environment tokens
