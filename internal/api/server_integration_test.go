@@ -183,6 +183,53 @@ func TestHTTPSubmissionRecoveryAndAuthorization(t *testing.T) {
 	}
 }
 
+func TestHTTPCancellationIsScopedAndIdempotent(t *testing.T) {
+	pool := apiPool(t)
+	ctx := context.Background()
+	submit, _, err := store.IssueToken(ctx, pool, "research", store.RoleSubmit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	read, _, err := store.IssueToken(ctx, pool, "research", store.RoleRead)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreign, _, err := store.IssueToken(ctx, pool, "other", store.RoleSubmit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := New(pool, resolverFunc(func(context.Context, string) (string, error) {
+		return "registry.example.org/eval@sha256:" + strings.Repeat("a", 64), nil
+	}), nil)
+	submitted := call(h, "POST", "/v1/jobs", submit, "cancel-job", jobBody(t))
+	if submitted.Code != 201 {
+		t.Fatal(submitted.Code, submitted.Body.String())
+	}
+	var job store.JobRecord
+	if err := json.Unmarshal(submitted.Body.Bytes(), &job); err != nil {
+		t.Fatal(err)
+	}
+	path := "/v1/jobs/" + job.ID + "/cancel"
+	for _, tc := range []struct {
+		token string
+		want  int
+	}{{read, 403}, {foreign, 404}, {submit, 200}, {submit, 200}} {
+		response := call(h, "POST", path, tc.token, "", nil)
+		if response.Code != tc.want {
+			t.Fatal("cancel status", response.Code, tc.want, response.Body.String())
+		}
+		if tc.want == 200 {
+			var result store.JobRecord
+			if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil || result.State != "CANCELLED" {
+				t.Fatal(result, err)
+			}
+		}
+	}
+	if response := call(h, "POST", "/v1/jobs/nope/cancel", submit, "", nil); response.Code != 404 {
+		t.Fatal("invalid id disclosed or accepted", response.Code)
+	}
+}
+
 func TestHTTPBoundariesAndSanitizedErrors(t *testing.T) {
 	pool := apiPool(t)
 	ctx := context.Background()

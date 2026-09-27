@@ -108,6 +108,22 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.submit(w, r, p)
+	case strings.HasPrefix(r.URL.Path, "/v1/jobs/") && strings.HasSuffix(r.URL.Path, "/cancel") && r.Method == http.MethodPost:
+		if !p.Allows(store.RoleSubmit) {
+			fail(w, 403, "FORBIDDEN", "submit permission required", false)
+			return
+		}
+		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/jobs/"), "/cancel")
+		if _, err := uuid.Parse(id); err != nil {
+			fail(w, 404, "NOT_FOUND", "job not found", false)
+			return
+		}
+		job, err := store.RequestCancellation(ctx, s.pool, p.ProjectID, id)
+		if err != nil {
+			s.storeError(w, err)
+			return
+		}
+		writeJSON(w, 200, job)
 	case strings.HasPrefix(r.URL.Path, "/v1/jobs/") && strings.HasSuffix(r.URL.Path, "/artifacts") && r.Method == http.MethodGet:
 		s.artifacts(w, r, p)
 	case strings.HasPrefix(r.URL.Path, "/v1/jobs/") && r.Method == http.MethodGet:

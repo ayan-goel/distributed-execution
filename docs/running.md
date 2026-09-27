@@ -121,8 +121,9 @@ new incarnation before quarantined capacity is released.
 
 The worker-loss integration gate kills an agent during a real Docker run, lets the
 server reap its expired lease, and verifies that a second worker identity completes
-the retry with the sole accepted artifact. The fixture advances expiry in its
-isolated database to avoid a 30-second wait; both workers share one Docker daemon.
+the retry with the sole accepted artifact. One test advances expiry to isolate the
+transition; another waits for the original 30-second lease. Both workers share one
+Docker daemon.
 
 ## Configure artifact storage
 
@@ -171,6 +172,13 @@ export DISPATCH_TOKEN="$(python3 -c 'import json; print(json.load(open(".local/t
 bin/dispatch submit examples/cpu/job.yaml --idempotency-key cpu-demo-1 --json
 bin/dispatch jobs get JOB_UUID --json
 ```
+
+A submit-role token can request cancellation through
+`POST /v1/jobs/JOB_UUID/cancel`. Queued jobs become `CANCELLED` immediately;
+active jobs become `CANCELLING` and retain their reservation until stop is
+confirmed or authority expires. Repeating the request returns the current job
+without adding another event. The CLI cancel command and live worker stop
+acknowledgement are still in progress.
 
 Use an HTTPS origin and omit `DISPATCH_DEV_INSECURE` for remote servers. The client
 uses the system certificate trust store and refuses redirects. Environment tokens

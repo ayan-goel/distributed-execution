@@ -1725,3 +1725,18 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   SeaweedFS. This verifies the natural detector path in the local fixture. It
   does not measure the spec's two-second interval excluding processing delay
   or prove worker migration between independent Linux hosts.
+
+### D14a: Record scoped cancellation intent and order it against completion
+
+- Added `POST /v1/jobs/{id}/cancel` for submit/operator tokens. The store locks
+  the project-scoped job under the cluster transition lock used by completion,
+  so whichever transaction commits first determines the durable outcome.
+  Queued/retry-wait jobs become `CANCELLED`; active jobs become `CANCELLING`
+  without releasing capacity before physical stop confirmation. Terminal and
+  repeated requests retain their state and create no duplicate event or audit.
+- PostgreSQL race tests exercise cancellation against accepted completion and
+  verify either immutable success or stop intent, then cancellation
+  acknowledgement. Additional tests cover state transitions, replay, rollback
+  after event insertion failure, HTTP role checks, and project isolation.
+- The worker's graceful stop acknowledgement, CLI command, physical-cancellation
+  integration, and wider D14 fault matrix remain open.
