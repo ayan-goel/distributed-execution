@@ -29,7 +29,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D10 worker recovery | D08,D09 | Durable journal; agent kill/restart stops old containers before new capacity | agent-owned job kill/restart, fencing, container/workspace cleanup, and reservation release passed; broader recovery matrix pending |
 | D11 artifacts | D03,D04 | Scoped grants; verified exact versions; stale publication rejection | grants, verification, completion, public metadata, and verified CLI download gates passed; Rust transfers and multipart support pending |
 | D12 first real job | D05–D11 | CLI submit → gRPC → Docker → verified output → CLI download | full component chain passed with cached digest and fixed fixture resolver; external registry and image pull pending |
-| D13 loss/retry | D09,D12 | Reaper/reconciliation; recorded retry; backoff/deadlines; nonretryable failure | transactional reaper plus startup/two-second server loop passed; real loss/retry runtime gate pending |
+| D13 loss/retry | D09,D12 | Reaper/reconciliation; recorded retry; backoff/deadlines; nonretryable failure | reaper, server loop, and real two-identity retry on one Docker daemon passed; natural timer and independent-host gates pending |
 | D14 cancellation | D12,D13 | Both completion/cancellation race orders, repeat requests, uncertain cleanup | pending |
 | D15 logs | D08,D11 | Bounded queues/spool, noisy-job truncation, stream cursors, reconnect | pending |
 | D16 datasets | D11 | Immutable registration/cache; corruption rejection; pin-aware eviction | pending |
@@ -1698,3 +1698,17 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   suite passed with the new server lifecycle.
 - Full end-to-end worker loss, physical reconciliation, retry on another host,
   cancellation races, and measured loss-detection timing remain open.
+
+### D13c: Execute a worker-loss retry through real Docker and storage
+
+- A real-process fixture starts an agent-owned running Docker job, kills that
+  worker, expires its database lease, and waits for the executable server's
+  periodic reaper. A second mTLS worker identity acquires the retry, executes it,
+  and publishes a verified exact-version output to SeaweedFS.
+- Race-enabled integration passed twice. PostgreSQL shows two distinct attempts,
+  one `LOST` event, no old-attempt completion, quarantined old capacity, one
+  successful retry/completion, and an accepted pointer only to the new attempt.
+- Both identities share the local Docker daemon. The fixture advances lease time
+  to isolate transition semantics; it does not prove the natural 30-second
+  detector or the two-independent-Linux-host release gate. Automatic old-host
+  cleanup and broader failure classification remain open.

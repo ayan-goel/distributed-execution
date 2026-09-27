@@ -119,6 +119,11 @@ retries only when policy allows. Startup failure stops both listeners; periodic
 database errors are logged and retried. Worker cleanup must still be proven by a
 new incarnation before quarantined capacity is released.
 
+The worker-loss integration gate kills an agent during a real Docker run, lets the
+server reap its expired lease, and verifies that a second worker identity completes
+the retry with the sole accepted artifact. The fixture advances expiry in its
+isolated database to avoid a 30-second wait; both workers share one Docker daemon.
+
 ## Configure artifact storage
 
 For worker upload grants, add all three options to `dispatch-server serve`:

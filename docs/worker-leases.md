@@ -292,7 +292,14 @@ the executable server now runs it before opening listeners and every two seconds
 while serving. Each pass drains bounded transactions until caught up. Transient
 periodic errors are logged and retried on the next tick; startup errors prevent
 the listeners from opening. Server integration verifies both timing points and
-restart idempotency. The full loss/retry runtime gate remains pending.
+restart idempotency. Natural-time and independent-host loss/retry gates remain pending.
+
+A separate real Docker/SeaweedFS test kills a running worker, forces its lease
+past expiry, and observes the periodic reaper move the job through `RETRY_WAIT`.
+Another worker identity executes the retry and publishes the only accepted result.
+The old attempt has no completion and its physical reservation stays quarantined.
+Both workers use one local Docker daemon, so this does not satisfy the independent
+two-host release gate or measure the natural 30-second loss-detection window.
 
 ## Source references
 
