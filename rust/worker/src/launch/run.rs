@@ -236,7 +236,8 @@ async fn execute_inner_impl<R: Runtime>(
     };
     let (outcome, capture) = if capture_logs {
         match runtime.take_capture(&handle).await {
-            Some(Ok(mut collector)) => {
+            Some(Ok(running)) => {
+                let mut collector = running.task;
                 tokio::pin!(outcome);
                 let mut early_capture = None;
                 let result = loop {

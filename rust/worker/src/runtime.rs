@@ -3,7 +3,7 @@ use crate::{
     execution::ExecutionSpec,
     lease::AuthorityWindow,
     log_capture::{LogQueue, QUEUE_CHUNKS},
-    log_live::{collect_capture, LiveCapture, LiveLogError},
+    log_live::{collect_capture_shared, new_shared, LiveLogError, RunningCapture},
     log_spool::MAX_SPOOL_BYTES,
 };
 use bollard::{
@@ -110,9 +110,7 @@ pub struct ContainerHandle {
     capture: Option<Arc<CaptureSlot>>,
 }
 
-type CaptureTask = tokio::task::JoinHandle<Result<LiveCapture, LiveLogError>>;
-
-struct CaptureSlot(tokio::sync::Mutex<Option<Result<CaptureTask, LiveLogError>>>);
+struct CaptureSlot(tokio::sync::Mutex<Option<Result<RunningCapture, LiveLogError>>>);
 impl fmt::Debug for CaptureSlot {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("CaptureSlot").finish_non_exhaustive()
@@ -122,8 +120,8 @@ impl Drop for CaptureSlot {
     fn drop(&mut self) {
         // A failed launch must not leave a detached Docker reader or private
         // spool writer running after the container cleanup path has started.
-        if let Some(Ok(task)) = self.0.get_mut().take() {
-            task.abort();
+        if let Some(Ok(capture)) = self.0.get_mut().take() {
+            capture.task.abort();
         }
     }
 }
@@ -208,7 +206,7 @@ pub trait Runtime {
     fn take_capture(
         &self,
         _handle: &Self::Handle,
-    ) -> impl Future<Output = Option<Result<CaptureTask, LiveLogError>>> + Send {
+    ) -> impl Future<Output = Option<Result<RunningCapture, LiveLogError>>> + Send {
         async { None }
     }
     fn remove(
@@ -319,49 +317,49 @@ impl DockerRuntime {
             .build();
         let attached = bounded(RPC_TIMEOUT, self.docker.attach_container(id, Some(options))).await;
         let task = match attached {
-            Ok(attached) => {
-                let root = workspace.root().to_owned();
-                let mut output = attached.output;
-                let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
-                let task = tokio::spawn(async move {
-                    let workspace = PreparedWorkspace::soft_development(root)
-                        .map_err(|_| LiveLogError::Capture)?;
-                    let (queue, receiver, counts) =
-                        LogQueue::bounded(QUEUE_CHUNKS).map_err(|_| LiveLogError::Capture)?;
-                    let producer = async move {
-                        let _ = ready_tx.send(());
-                        while let Some(frame) = output.next().await {
-                            let (stream, bytes) = match frame.map_err(RuntimeError::from)? {
-                                LogOutput::StdOut { message } => {
-                                    (dispatch_protocol::v1::LogStream::Stdout, message)
-                                }
-                                LogOutput::StdErr { message } => {
-                                    (dispatch_protocol::v1::LogStream::Stderr, message)
-                                }
-                                _ => return Err(RuntimeError::Transport),
-                            };
-                            queue
-                                .push_frame(stream, &bytes)
-                                .map_err(|_| RuntimeError::Transport)?;
+            Ok(attached) => match new_shared(workspace, MAX_SPOOL_BYTES) {
+                Ok(assembler) => {
+                    let mut output = attached.output;
+                    let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
+                    let collecting = assembler.clone();
+                    let task = tokio::spawn(async move {
+                        let (queue, receiver, counts) =
+                            LogQueue::bounded(QUEUE_CHUNKS).map_err(|_| LiveLogError::Capture)?;
+                        let producer = async move {
+                            let _ = ready_tx.send(());
+                            while let Some(frame) = output.next().await {
+                                let (stream, bytes) = match frame.map_err(RuntimeError::from)? {
+                                    LogOutput::StdOut { message } => {
+                                        (dispatch_protocol::v1::LogStream::Stdout, message)
+                                    }
+                                    LogOutput::StdErr { message } => {
+                                        (dispatch_protocol::v1::LogStream::Stderr, message)
+                                    }
+                                    _ => return Err(RuntimeError::Transport),
+                                };
+                                queue
+                                    .push_frame(stream, &bytes)
+                                    .map_err(|_| RuntimeError::Transport)?;
+                            }
+                            Ok(())
+                        };
+                        let mut captured =
+                            collect_capture_shared(collecting, receiver, counts, producer).await?;
+                        // Recovered containers that already ran may have rotated
+                        // Docker files before this attachment began.
+                        captured.complete &= before_start;
+                        Ok(captured)
+                    });
+                    match tokio::time::timeout(RPC_TIMEOUT, ready_rx).await {
+                        Ok(Ok(())) => Ok(RunningCapture { assembler, task }),
+                        _ => {
+                            task.abort();
+                            Err(LiveLogError::Capture)
                         }
-                        Ok(())
-                    };
-                    let mut captured =
-                        collect_capture(&workspace, MAX_SPOOL_BYTES, receiver, counts, producer)
-                            .await?;
-                    // Recovered containers that already ran may have rotated
-                    // Docker files before this attachment began.
-                    captured.complete &= before_start;
-                    Ok(captured)
-                });
-                match tokio::time::timeout(RPC_TIMEOUT, ready_rx).await {
-                    Ok(Ok(())) => Ok(task),
-                    _ => {
-                        task.abort();
-                        Err(LiveLogError::Capture)
                     }
                 }
-            }
+                Err(error) => Err(error),
+            },
             Err(_) => Err(LiveLogError::Capture),
         };
         Arc::new(CaptureSlot(tokio::sync::Mutex::new(Some(task))))
@@ -657,7 +655,7 @@ impl Runtime for DockerRuntime {
     async fn take_capture(
         &self,
         handle: &ContainerHandle,
-    ) -> Option<Result<CaptureTask, LiveLogError>> {
+    ) -> Option<Result<RunningCapture, LiveLogError>> {
         let slot = handle.capture.as_ref()?;
         slot.0.lock().await.take()
     }

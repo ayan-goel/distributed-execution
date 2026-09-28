@@ -2092,3 +2092,15 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   producer exits, alongside the existing dropped-tail and two-stream tests.
   Native test/lint/smoke and the full isolated PostgreSQL/object-storage/
   Docker integration suite passed. The network publisher is the next slice.
+
+### D15u: Hand off the running capture and its shared assembler
+
+- Docker now creates the shared spool before starting its output collector and
+  returns the collector task with the same assembler handle. The launch path
+  can retain both through execution, which is needed to publish sealed segments
+  while Docker continues writing. Failed launch still aborts the collector.
+- Native test/lint/smoke and the full isolated PostgreSQL/object-storage/Docker
+  integration suite passed. An earlier full-suite run failed intermittently in
+  cancellation and retry; both tests passed alone, and the whole suite passed
+  on rerun. The failure was not reproduced or attributed to this change.
+- No segment is published before exit yet; that remains the next D15 slice.

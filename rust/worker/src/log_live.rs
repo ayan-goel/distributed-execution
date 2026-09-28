@@ -34,6 +34,11 @@ pub struct LiveCapture {
 
 pub type SharedAssembler = Arc<Mutex<LogAssembler>>;
 
+pub struct RunningCapture {
+    pub assembler: SharedAssembler,
+    pub task: tokio::task::JoinHandle<Result<LiveCapture, LiveLogError>>,
+}
+
 pub fn new_shared(
     workspace: &PreparedWorkspace,
     spool_cap: u64,
