@@ -131,3 +131,10 @@ one registered version per project/name and one registration per upload.
 This is a schema boundary, not an upload API. The next slices must validate
 manifests, verify the exact object version outside the database transaction,
 authorize registration, resolve names at admission, and stage inputs on workers.
+
+`CreateDatasetUpload` now validates the project, name, size, and SHA-256 and
+allocates one generated object key per `(project_id, request_id)`. It computes
+the request hash on the server, so an uncertain call can replay the same
+declaration but cannot bind changed bytes to that key. It permits only the
+current single-part storage limit; multipart data requires a later contract.
+The operation returns metadata, not a signed capability or registered dataset.

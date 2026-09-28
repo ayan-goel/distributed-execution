@@ -32,7 +32,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D13 loss/retry | D09,D12 | Reaper/reconciliation; recorded retry; backoff/deadlines; nonretryable failure | reaper, server loop, and real two-identity retry on one Docker daemon passed; natural timer and independent-host gates pending |
 | D14 cancellation | D12,D13 | Both completion/cancellation race orders, repeat requests, uncertain cleanup | pending |
 | D15 logs | D08,D11 | Bounded queues/spool, noisy-job truncation, stream cursors, reconnect | catalog, HTTP cursor/tail gaps, binary format, private spool, Rust registration client, journaled delivery, bounded Docker follower, assembler, completion summary, CLI follow, pre-start capture, and live publication passed; reconnect/fault matrix pending |
-| D16 datasets | D11 | Immutable registration/cache; corruption rejection; pin-aware eviction | ownership schema passed; registration, admission, staging, and cache pending |
+| D16 datasets | D11 | Immutable registration/cache; corruption rejection; pin-aware eviction | ownership schema and replay-safe upload declarations passed; registration, API, admission, staging, and cache pending |
 | D17 sweeps/metrics | D05,D13,D16 | Atomic 27-child sweep; 1000 cap; concurrency; fail-fast; finite scalar export | pending |
 | D18 placement | D07,D17 | Project fairness/aging, blockers, two real independent hosts without oversubscription | pending |
 | D19 faults/benchmarks | D14–D18 | Spec §21/22 runtime matrix, 27-job worker kill, stale result, measured benchmarks | pending |
@@ -2136,3 +2136,15 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 - The full isolated PostgreSQL/worker integration suite, native test/lint/smoke,
   and fresh migration/rollback/reapply gates passed. No dataset upload API,
   object verification, admission resolution, or worker staging exists yet.
+
+### D16b: Allocate replay-safe dataset upload keys
+
+- A real PostgreSQL test first failed because the upload operation was absent.
+  `CreateDatasetUpload` now validates project identity and content metadata,
+  locks the project against concurrent disablement, and creates a single
+  server-scoped key for each project/request ID. A changed replay conflicts.
+- Thirty-two concurrent identical requests returned one upload ID and key:
+  one winner and 31 replays. The test also rejects an unsafe name, an upload
+  above the current single-part bound, and allocation for a disabled project.
+- The full isolated store/worker suite passed. Native test/lint/smoke passed.
+  Grant issuance, exact-version verification, and registration remain next.
