@@ -20,6 +20,8 @@ pub mod log_format;
 #[cfg(unix)]
 pub mod log_live;
 #[cfg(unix)]
+pub(crate) mod log_publish;
+#[cfg(unix)]
 pub mod log_spool;
 #[cfg(unix)]
 pub mod log_summary;

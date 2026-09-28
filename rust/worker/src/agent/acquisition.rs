@@ -140,6 +140,7 @@ async fn run_assignment(
         session,
         &workspace,
         authority,
+        transfers,
     )
     .await;
     let mut finalizing = match outcome {

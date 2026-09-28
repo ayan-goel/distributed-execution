@@ -89,7 +89,7 @@ func TestWorkerDaemonAcquiresExecutesAndPublishes(t *testing.T) {
 	}
 	job.Spec.Inputs = nil
 	job.Spec.Image = image
-	job.Spec.Command = []string{"sh", "-c", "printf abc > /outputs/result; printf 'run out'; head -c 3300000 /dev/zero; printf 'run err' >&2; sleep 2; exit 0"}
+	job.Spec.Command = []string{"sh", "-c", "printf abc > /outputs/result; printf 'run out'; head -c 3300000 /dev/zero; printf 'run err' >&2; sleep 15; exit 0"}
 	job.Spec.Retry.MaxAttempts = 1
 	job.Spec.Outputs = []spec.Output{{Name: "result", Path: "/outputs/result", Required: true, MaxBytes: 3}}
 	job.Spec.Args = nil
@@ -175,6 +175,29 @@ func TestWorkerDaemonAcquiresExecutesAndPublishes(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = command.Process.Kill(); _ = command.Wait() })
+	var liveState string
+	var liveSegments int
+	liveDeadline := time.Now().Add(12 * time.Second)
+	for time.Now().Before(liveDeadline) {
+		err := pool.QueryRow(ctx, `SELECT coalesce((SELECT a.state FROM attempts a
+			WHERE a.job_id=j.id ORDER BY a.attempt_number DESC LIMIT 1),''),
+			(SELECT count(*) FROM log_segments s
+			JOIN attempts a ON a.id=s.attempt_id WHERE a.job_id=j.id)
+			FROM jobs j WHERE j.id=$1`, submitted.ID).Scan(&liveState, &liveSegments)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if liveSegments > 0 {
+			break
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	if liveSegments == 0 || liveState != "RUNNING" {
+		t.Fatal("first sealed log segment was not published during execution", liveState, liveSegments)
+	}
+	if liveLogs := string(cliRun("logs", submitted.ID)); !strings.Contains(liveLogs, "[stdout #1] run out") {
+		t.Fatal("CLI could not read the live verified log segment")
+	}
 	decoder := json.NewDecoder(stdout)
 	var attempt string
 	for attempt == "" {

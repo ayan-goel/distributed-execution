@@ -4,7 +4,9 @@ use crate::{
     journal::ExitEvidence,
     lease::PhaseDeadline,
     log_live::{LiveCapture, LiveLogError},
+    log_publish::publish_running,
     runtime::ContainerStatus,
+    transfer::TransferClient,
 };
 use dispatch_protocol::v1::AttemptAuthority;
 
@@ -105,8 +107,12 @@ pub async fn execute<R: Runtime>(
     .await
 }
 
-/// Run the same supervised attempt while draining Docker output into a bounded
-/// private spool. Publication still needs current finalization authority.
+/// Run the supervised attempt with bounded capture and live publication under
+/// current attempt authority.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "keep authority and transfer dependencies explicit"
+)]
 pub async fn execute_with_logs<R: Runtime>(
     runtime: &R,
     client: &mut ControlClient,
@@ -115,6 +121,7 @@ pub async fn execute_with_logs<R: Runtime>(
     session: &WorkerSession,
     workspace: &PreparedWorkspace,
     authority: SupervisedAuthority,
+    transfers: &TransferClient,
 ) -> Result<FinalizingAttempt<R::Handle>, ExecutionError> {
     execute_inner_impl(
         runtime,
@@ -128,6 +135,7 @@ pub async fn execute_with_logs<R: Runtime>(
         session,
         workspace,
         authority,
+        Some((client.clone(), transfers.clone())),
     )
     .await
 }
@@ -142,11 +150,15 @@ pub(super) async fn execute_inner<R: Runtime>(
     authority: SupervisedAuthority,
 ) -> Result<FinalizingAttempt<R::Handle>, ExecutionError> {
     execute_inner_impl(
-        runtime, client, journal, input, session, workspace, authority,
+        runtime, client, journal, input, session, workspace, authority, None,
     )
     .await
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "keep launch and publisher dependencies explicit"
+)]
 async fn execute_inner_impl<R: Runtime>(
     runtime: &R,
     client: &mut impl PhaseReporter,
@@ -155,6 +167,7 @@ async fn execute_inner_impl<R: Runtime>(
     session: &WorkerSession,
     workspace: &PreparedWorkspace,
     mut authority: SupervisedAuthority,
+    live_publisher: Option<(ControlClient, TransferClient)>,
 ) -> Result<FinalizingAttempt<R::Handle>, ExecutionError> {
     let identity = authority.identity().clone();
     let timeouts = &input.execution.job().spec.timeouts;
@@ -175,6 +188,8 @@ async fn execute_inner_impl<R: Runtime>(
     )
     .await
     .map_err(ExecutionError::Launch)?;
+    let publish_context = live_publisher
+        .map(|(client, transfers)| (client, journal.clone(), transfers, authority.observer()));
     let outcome = async {
         let first = authority.while_live(runtime.inspect(&handle)).await??;
         let status = if exited(&first) {
@@ -238,6 +253,19 @@ async fn execute_inner_impl<R: Runtime>(
         match runtime.take_capture(&handle).await {
             Some(Ok(running)) => {
                 let mut collector = running.task;
+                let publisher = publish_context.map(|(client, journal, transfers, observer)| {
+                    let (stop, done) = tokio::sync::oneshot::channel();
+                    let task = tokio::spawn(publish_running(
+                        running.assembler,
+                        journal,
+                        client,
+                        transfers,
+                        identity.attempt_id.clone(),
+                        observer,
+                        done,
+                    ));
+                    (stop, task)
+                });
                 tokio::pin!(outcome);
                 let mut early_capture = None;
                 let result = loop {
@@ -246,6 +274,14 @@ async fn execute_inner_impl<R: Runtime>(
                         captured = &mut collector, if early_capture.is_none() => early_capture = Some(captured),
                     }
                 };
+                if let Some((stop, publisher)) = publisher {
+                    if result.is_ok() {
+                        let _ = stop.send(());
+                    } else {
+                        publisher.abort();
+                    }
+                    let _ = publisher.await;
+                }
                 let captured = if result.is_ok() {
                     if let Some(early) = early_capture {
                         flatten_capture(early)

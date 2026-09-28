@@ -204,7 +204,9 @@ Options follow the file or job ID. Successful commands exit 0; validation, API,
 configuration, transport, and output errors exit 2. `--json` writes one job object
 to stdout for submit/get/cancel, or `{valid,specHash}` for validation; diagnostics stay on
 stderr. Human submit/get/cancel output includes the job UUID and quoted state. Wait,
-list, logs, and datasets will be added in their slices.
+list and datasets will be added in their slices. Use `bin/dispatch logs JOB_UUID`
+to inspect verified segments, or `bin/dispatch logs JOB_UUID --follow` to poll
+for new segments while the job runs.
 
 For a successfully completed job with an accepted output named `result`:
 
