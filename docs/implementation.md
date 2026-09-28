@@ -32,7 +32,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D13 loss/retry | D09,D12 | Reaper/reconciliation; recorded retry; backoff/deadlines; nonretryable failure | reaper, server loop, and real two-identity retry on one Docker daemon passed; natural timer and independent-host gates pending |
 | D14 cancellation | D12,D13 | Both completion/cancellation race orders, repeat requests, uncertain cleanup | pending |
 | D15 logs | D08,D11 | Bounded queues/spool, noisy-job truncation, stream cursors, reconnect | catalog, HTTP cursor/tail gaps, binary format, private spool, Rust registration client, journaled delivery, bounded Docker follower, assembler, completion summary, CLI follow, pre-start capture, and live publication passed; reconnect/fault matrix pending |
-| D16 datasets | D11 | Immutable registration/cache; corruption rejection; pin-aware eviction | ownership schema, upload/completion APIs, project-scoped resolution, and typed client metadata calls passed; byte transfer, admission, staging, and cache pending |
+| D16 datasets | D11 | Immutable registration/cache; corruption rejection; pin-aware eviction | ownership schema, upload/completion APIs, project-scoped resolution, and checked client byte transfer passed; CLI, admission, staging, and cache pending |
 | D17 sweeps/metrics | D05,D13,D16 | Atomic 27-child sweep; 1000 cap; concurrency; fail-fast; finite scalar export | pending |
 | D18 placement | D07,D17 | Project fairness/aging, blockers, two real independent hosts without oversubscription | pending |
 | D19 faults/benchmarks | D14–D18 | Spec §21/22 runtime matrix, 27-job worker kill, stale result, measured benchmarks | pending |
@@ -2219,3 +2219,19 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   transfer archive bytes; a separate slice will enforce transfer integrity and
   return the exact uploaded version to completion.
 - Native test/lint/smoke passed.
+
+### D16h: Transfer declared dataset archive bytes
+
+- The client test first failed because there was no byte-upload method. The
+  client now binds a session to the declared size and SHA-256, validates bytes
+  before network I/O, uses only signed storage headers on a credential-free
+  transfer client, refuses redirects, and requires a non-null object version
+  from the PUT response. Completion checks the returned registration against
+  the original declaration when available.
+- HTTP fixtures verify a valid versioned transfer, same-length corruption
+  rejected before transfer, expiry rejection, redirect refusal, missing-version
+  rejection, and no project bearer token or cookies sent to storage. The real
+  isolated PostgreSQL/SeaweedFS test additionally replays an API declaration
+  through the Go client and uploads its signed bytes before exact-version
+  completion. The command-line archive builder remains next.
+- Native test/lint/smoke and the targeted real-storage composition passed.

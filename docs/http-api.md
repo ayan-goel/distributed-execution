@@ -76,9 +76,9 @@ changed versions or manifests return 409. A corrupt version returns 422 and
 leaves no dataset registration. Both endpoints require submit permission and
 are scoped to the token's project. Archive entries are independently checked
 against the manifest during worker staging, which remains pending.
-The Go client has typed calls for both metadata endpoints and validates upload
-grant scope before returning it. Archive byte transfer is not yet exposed by
-the CLI.
+The Go client has typed calls for both metadata endpoints, validates upload
+grant scope, and transfers only bytes matching the declared size and SHA-256.
+Archive creation and upload are not yet exposed by the CLI.
 Job listing, full attempt history, log byte rendering/follow, events, sweeps,
 dataset admission/staging, and worker administration remain required.
 

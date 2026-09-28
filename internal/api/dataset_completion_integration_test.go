@@ -9,13 +9,13 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"testing"
 	"time"
 
+	"dispatch.local/dispatch/internal/client"
 	"dispatch.local/dispatch/internal/objectstore"
 	"dispatch.local/dispatch/internal/store"
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -80,37 +80,13 @@ func TestHTTPDatasetCompletionVerifiesRealObjectVersion(t *testing.T) {
 	}
 	digest := func(body []byte) string { sum := sha256.Sum256(body); return hex.EncodeToString(sum[:]) }
 	h := New(pool, nil, objects)
-	declaration, _ := json.Marshal(map[string]any{"requestId": uuid.NewString(), "name": "input-v1",
+	requestID := uuid.NewString()
+	declaration, _ := json.Marshal(map[string]any{"requestId": requestID, "name": "input-v1",
 		"sizeBytes": archive.Len(), "sha256": digest(archive.Bytes())})
 	w := call(h, http.MethodPost, "/v1/datasets/uploads", submitter, "", declaration)
 	var session DatasetUploadSession
 	if w.Code != 201 || json.Unmarshal(w.Body.Bytes(), &session) != nil || session.UploadID == "" {
 		t.Fatal("upload session unavailable", w.Code, w.Body.String())
-	}
-	put := func(body []byte, signed bool) string {
-		t.Helper()
-		if signed {
-			req, err := http.NewRequest(http.MethodPut, session.UploadURL, bytes.NewReader(body))
-			if err != nil {
-				t.Fatal(err)
-			}
-			req.Header = session.RequiredHeaders.Clone()
-			response, err := http.DefaultClient.Do(req)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer response.Body.Close()
-			_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
-			if response.StatusCode != 200 {
-				t.Fatal("signed upload failed", response.StatusCode)
-			}
-			return response.Header.Get("X-Amz-Version-Id")
-		}
-		result, err := admin.PutObject(ctx, &s3.PutObjectInput{Bucket: aws.String(cfg.Bucket), Key: aws.String(session.ObjectKey), Body: bytes.NewReader(body)})
-		if err != nil {
-			t.Fatal(err)
-		}
-		return aws.ToString(result.VersionId)
 	}
 	manifest := store.DatasetManifest{Format: "tar.v1", Files: []store.DatasetFile{{Path: "input.txt", SizeBytes: int64(len(data)), SHA256: digest(data)}}}
 	completePath := "/v1/datasets/uploads/" + session.UploadID + "/complete"
@@ -121,7 +97,11 @@ func TestHTTPDatasetCompletionVerifiesRealObjectVersion(t *testing.T) {
 	if w := complete("any-version", reader); w.Code != 403 {
 		t.Fatal("read token completed a dataset", w.Code)
 	}
-	corruptVersion := put([]byte("tampered archive"), false)
+	corrupt, err := admin.PutObject(ctx, &s3.PutObjectInput{Bucket: aws.String(cfg.Bucket), Key: aws.String(session.ObjectKey), Body: bytes.NewReader([]byte("tampered archive"))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	corruptVersion := aws.ToString(corrupt.VersionId)
 	if corruptVersion == "" || corruptVersion == "null" {
 		t.Fatal("fixture did not create immutable corrupt version")
 	}
@@ -132,7 +112,20 @@ func TestHTTPDatasetCompletionVerifiesRealObjectVersion(t *testing.T) {
 	if err := pool.QueryRow(ctx, "SELECT count(*) FROM datasets WHERE upload_id=$1", session.UploadID).Scan(&count); err != nil || count != 0 {
 		t.Fatal("corrupt version left a dataset registration", count, err)
 	}
-	goodVersion := put(archive.Bytes(), true)
+	server := httptest.NewServer(h)
+	defer server.Close()
+	c, err := client.New(server.URL, submitter, true, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientSession, err := c.CreateDatasetUpload(ctx, requestID, "input-v1", int64(archive.Len()), digest(archive.Bytes()))
+	if err != nil || clientSession.UploadID != session.UploadID || !clientSession.Replayed {
+		t.Fatal("client could not recover the upload declaration", err)
+	}
+	goodVersion, err := c.UploadDatasetBytes(ctx, clientSession, archive.Bytes())
+	if err != nil {
+		t.Fatal("client could not transfer signed dataset bytes", err)
+	}
 	if goodVersion == "" || goodVersion == "null" || goodVersion == corruptVersion {
 		t.Fatal("signed upload did not create an immutable version")
 	}

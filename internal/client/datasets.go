@@ -20,6 +20,8 @@ type DatasetUploadSession struct {
 	RequiredHeaders http.Header `json:"requiredHeaders"`
 	ExpiresAt       time.Time   `json:"expiresAt"`
 	Replayed        bool        `json:"replayed"`
+	declaredSize    int64       `json:"-"`
+	declaredSHA256  string      `json:"-"`
 }
 
 func (DatasetUploadSession) String() string { return "dataset upload grant (redacted)" }
@@ -65,6 +67,8 @@ func (c *Client) CreateDatasetUpload(ctx context.Context, requestID, name string
 	if json.Unmarshal(response, &session) != nil || c.validateUploadSession(session) != nil {
 		return DatasetUploadSession{}, errors.New("invalid dataset upload session")
 	}
+	session.declaredSize = size
+	session.declaredSHA256 = sha256
 	return session, nil
 }
 
@@ -131,6 +135,9 @@ func (c *Client) CompleteDatasetUpload(ctx context.Context, session DatasetUploa
 		!artifactName.MatchString(registered.Name) || !objectSHA.MatchString(registered.SHA256) ||
 		!reflect.DeepEqual(registered.Manifest, manifest) {
 		return DatasetRegistration{}, errors.New("invalid dataset registration response")
+	}
+	if session.declaredSize != 0 && (registered.SizeBytes != session.declaredSize || registered.SHA256 != session.declaredSHA256) {
+		return DatasetRegistration{}, errors.New("dataset registration disagrees with upload declaration")
 	}
 	return registered, nil
 }
