@@ -33,7 +33,9 @@ is also verified through worker stop, durable acknowledgement, cleanup, and
 subsequent admission. Cancellations before launch and during finalization are
 also covered. The worker captures bounded logs while jobs run and publishes
 sealed segments during execution for `dispatch logs --follow`; missing data is
-reported as incomplete. Strict scratch limits, input staging, full retry
+reported as incomplete. The CLI can register immutable datasets from a local
+directory, but jobs cannot consume them until worker input staging lands.
+Strict scratch limits, input staging, full retry
 policy coverage, and other
 v0.1 gates remain. See the
 [implementation ledger](docs/implementation.md) for verified progress and remaining work.

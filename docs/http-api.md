@@ -78,7 +78,10 @@ are scoped to the token's project. Archive entries are independently checked
 against the manifest during worker staging, which remains pending.
 The Go client has typed calls for both metadata endpoints, validates upload
 grant scope, and transfers only bytes matching the declared size and SHA-256.
-Archive creation and upload are not yet exposed by the CLI.
+`dispatch dataset upload DIRECTORY --name NAME` now builds a deterministic
+archive and completes registration through these endpoints. Its recovery
+options reuse the request ID and exact uploaded version after an uncertain
+response. Dataset-backed job execution remains pending.
 Job listing, full attempt history, log byte rendering/follow, events, sweeps,
 dataset admission/staging, and worker administration remain required.
 

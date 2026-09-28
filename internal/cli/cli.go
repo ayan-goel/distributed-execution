@@ -22,6 +22,7 @@ const usage = `usage:
   dispatch cancel JOB_ID [--json]
   dispatch logs JOB_ID [--follow] [--stream stdout|stderr]
   dispatch artifacts download JOB_ID NAME --output FILE [--json]
+  dispatch dataset upload DIRECTORY --name NAME [--request-id UUID] [--resume-version VERSION] [--json]
 
 Configure DISPATCH_URL and DISPATCH_TOKEN for server commands.
 Set DISPATCH_DEV_INSECURE=1 only for literal-loopback HTTP development.
@@ -51,6 +52,9 @@ func run(ctx context.Context, args []string, getenv func(string) string, out, er
 	}
 	if args[0] == "artifacts" {
 		return downloadArtifact(ctx, args, getenv, out)
+	}
+	if args[0] == "dataset" {
+		return uploadDataset(ctx, args, getenv, out, errout)
 	}
 	if args[0] == "logs" {
 		return showLogs(ctx, args, getenv, out)

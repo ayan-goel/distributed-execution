@@ -32,7 +32,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D13 loss/retry | D09,D12 | Reaper/reconciliation; recorded retry; backoff/deadlines; nonretryable failure | reaper, server loop, and real two-identity retry on one Docker daemon passed; natural timer and independent-host gates pending |
 | D14 cancellation | D12,D13 | Both completion/cancellation race orders, repeat requests, uncertain cleanup | pending |
 | D15 logs | D08,D11 | Bounded queues/spool, noisy-job truncation, stream cursors, reconnect | catalog, HTTP cursor/tail gaps, binary format, private spool, Rust registration client, journaled delivery, bounded Docker follower, assembler, completion summary, CLI follow, pre-start capture, and live publication passed; reconnect/fault matrix pending |
-| D16 datasets | D11 | Immutable registration/cache; corruption rejection; pin-aware eviction | ownership schema, upload/completion APIs, project-scoped resolution, checked client transfer, and deterministic archive builder passed; CLI wiring, admission, staging, and cache pending |
+| D16 datasets | D11 | Immutable registration/cache; corruption rejection; pin-aware eviction | ownership schema, upload/completion APIs, project-scoped resolution, and real CLI registration passed; admission, staging, and cache pending |
 | D17 sweeps/metrics | D05,D13,D16 | Atomic 27-child sweep; 1000 cap; concurrency; fail-fast; finite scalar export | pending |
 | D18 placement | D07,D17 | Project fairness/aging, blockers, two real independent hosts without oversubscription | pending |
 | D19 faults/benchmarks | D14–D18 | Spec §21/22 runtime matrix, 27-job worker kill, stale result, measured benchmarks | pending |
@@ -2247,3 +2247,16 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   and oversized files before an upload session is requested. CLI command
   wiring and end-to-end upload remain next.
 - Native test/lint/smoke passed.
+
+### D16j: Expose dataset upload and completion in the CLI
+
+- The CLI test first failed with usage because the command did not exist.
+  `dispatch dataset upload` now builds the bounded archive, declares its hash,
+  PUTs through a scoped signed grant, and completes exact-version registration.
+  It prints recovery identifiers before uncertain network steps; a retry with
+  `--request-id` and `--resume-version` completes without another upload.
+- Local HTTP fixtures verify archive identity, no token on storage traffic,
+  registration output, and no second PUT on resume. The isolated PostgreSQL
+  and versioned SeaweedFS test runs the real CLI command through the API and
+  storage adapter. Input-backed job execution remains blocked until staging.
+- Native test/lint/smoke and the targeted real-storage CLI composition passed.

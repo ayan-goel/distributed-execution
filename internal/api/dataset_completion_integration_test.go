@@ -12,9 +12,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
+	"dispatch.local/dispatch/internal/cli"
 	"dispatch.local/dispatch/internal/client"
 	"dispatch.local/dispatch/internal/objectstore"
 	"dispatch.local/dispatch/internal/store"
@@ -145,5 +147,27 @@ func TestHTTPDatasetCompletionVerifiesRealObjectVersion(t *testing.T) {
 	}
 	if w := complete(goodVersion, foreign); w.Code != 404 {
 		t.Fatal("other project inspected dataset registration", w.Code)
+	}
+	cliRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(cliRoot, "sample.txt"), []byte("CLI dataset"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	getenv := func(name string) string {
+		switch name {
+		case "DISPATCH_URL":
+			return server.URL
+		case "DISPATCH_TOKEN":
+			return submitter
+		case "DISPATCH_DEV_INSECURE":
+			return "1"
+		}
+		return ""
+	}
+	var cliOutput, cliErrors bytes.Buffer
+	code := cli.Run(ctx, []string{"dataset", "upload", cliRoot, "--name", "cli-v1", "--json"}, getenv, &cliOutput, &cliErrors)
+	var cliDataset client.DatasetRegistration
+	if code != 0 || json.Unmarshal(cliOutput.Bytes(), &cliDataset) != nil || cliDataset.DatasetID == "" ||
+		cliDataset.Name != "cli-v1" || cliDataset.ObjectVersion == "" {
+		t.Fatal("real CLI dataset workflow failed", code, cliOutput.String(), cliErrors.String())
 	}
 }

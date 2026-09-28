@@ -204,9 +204,24 @@ Options follow the file or job ID. Successful commands exit 0; validation, API,
 configuration, transport, and output errors exit 2. `--json` writes one job object
 to stdout for submit/get/cancel, or `{valid,specHash}` for validation; diagnostics stay on
 stderr. Human submit/get/cancel output includes the job UUID and quoted state. Wait,
-list and datasets will be added in their slices. Use `bin/dispatch logs JOB_UUID`
+list and dataset-backed job execution will be added in their slices. Use `bin/dispatch logs JOB_UUID`
 to inspect verified segments, or `bin/dispatch logs JOB_UUID --follow` to poll
 for new segments while the job runs.
+
+To register a local directory as one immutable dataset:
+
+```sh
+bin/dispatch dataset upload ./data --name data-v1 --json
+```
+
+The command builds a deterministic archive of up to 1,024 regular files and
+64 MiB, then prints a request ID, upload ID, and exact object version to stderr
+as each becomes available. If completion returns an uncertain error after the
+version was printed, rerun with the same directory and name plus
+`--request-id UUID --resume-version VERSION`. This completes the previously
+uploaded version without another PUT. Keep those recovery values private.
+Dataset references in job submissions still return 501 until worker staging is
+implemented.
 
 For a successfully completed job with an accepted output named `result`:
 
