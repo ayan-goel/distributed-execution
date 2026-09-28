@@ -153,3 +153,8 @@ unlisted entries and verify each file before mounting it.
 The public completion endpoint now supplies the real versioned object-store
 verifier. It never selects the key's latest version implicitly; corrupt bytes
 at the requested version leave the registration table unchanged.
+
+`ResolveDatasetNames` reads registered names only within the calling project
+and returns pinned versions and manifests in requested order. A missing name
+rejects the complete lookup, including when another project owns that name.
+Admission must still bind these results into the immutable job specification.

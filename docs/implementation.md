@@ -32,7 +32,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D13 loss/retry | D09,D12 | Reaper/reconciliation; recorded retry; backoff/deadlines; nonretryable failure | reaper, server loop, and real two-identity retry on one Docker daemon passed; natural timer and independent-host gates pending |
 | D14 cancellation | D12,D13 | Both completion/cancellation race orders, repeat requests, uncertain cleanup | pending |
 | D15 logs | D08,D11 | Bounded queues/spool, noisy-job truncation, stream cursors, reconnect | catalog, HTTP cursor/tail gaps, binary format, private spool, Rust registration client, journaled delivery, bounded Docker follower, assembler, completion summary, CLI follow, pre-start capture, and live publication passed; reconnect/fault matrix pending |
-| D16 datasets | D11 | Immutable registration/cache; corruption rejection; pin-aware eviction | ownership schema, replay-safe declarations, scoped upload and verified completion APIs passed; admission, staging, and cache pending |
+| D16 datasets | D11 | Immutable registration/cache; corruption rejection; pin-aware eviction | ownership schema, upload/completion APIs, and project-scoped name resolution passed; admission binding, staging, and cache pending |
 | D17 sweeps/metrics | D05,D13,D16 | Atomic 27-child sweep; 1000 cap; concurrency; fail-fast; finite scalar export | pending |
 | D18 placement | D07,D17 | Project fairness/aging, blockers, two real independent hosts without oversubscription | pending |
 | D19 faults/benchmarks | D14–D18 | Spec §21/22 runtime matrix, 27-job worker kill, stale result, measured benchmarks | pending |
@@ -2194,3 +2194,16 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   version conflict, read-token denial, and cross-project 404.
 - Native test/lint/smoke and the full combined PostgreSQL, worker, and
   versioned-object-storage integration suite passed.
+
+### D16f: Resolve registered names within one project
+
+- The PostgreSQL test first failed because `ResolveDatasetNames` did not exist.
+  The store now reads a bounded set of project-owned registrations and returns
+  their immutable object versions and manifests in input order, preserving
+  repeated names for separate mounts. A missing name rejects the entire set.
+- The test covers ordered results, repeated names, cross-project isolation,
+  missing and invalid names, and project disablement. The HTTP submission and
+  worker execution paths still reject inputs until resolved bindings are
+  included in the admitted execution contract and staged safely.
+- Native test/lint/smoke and the full isolated store/worker integration suite
+  passed.
