@@ -32,7 +32,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D13 loss/retry | D09,D12 | Reaper/reconciliation; recorded retry; backoff/deadlines; nonretryable failure | reaper, server loop, and real two-identity retry on one Docker daemon passed; natural timer and independent-host gates pending |
 | D14 cancellation | D12,D13 | Both completion/cancellation race orders, repeat requests, uncertain cleanup | pending |
 | D15 logs | D08,D11 | Bounded queues/spool, noisy-job truncation, stream cursors, reconnect | catalog, HTTP cursor/tail gaps, binary format, private spool, Rust registration client, journaled delivery, bounded Docker follower, assembler, completion summary, CLI follow, pre-start capture, and live publication passed; reconnect/fault matrix pending |
-| D16 datasets | D11 | Immutable registration/cache; corruption rejection; pin-aware eviction | ownership schema and replay-safe upload declarations passed; registration, API, admission, staging, and cache pending |
+| D16 datasets | D11 | Immutable registration/cache; corruption rejection; pin-aware eviction | ownership schema, replay-safe declarations, and exact-version registration transaction passed; API, admission, staging, and cache pending |
 | D17 sweeps/metrics | D05,D13,D16 | Atomic 27-child sweep; 1000 cap; concurrency; fail-fast; finite scalar export | pending |
 | D18 placement | D07,D17 | Project fairness/aging, blockers, two real independent hosts without oversubscription | pending |
 | D19 faults/benchmarks | D14–D18 | Spec §21/22 runtime matrix, 27-job worker kill, stale result, measured benchmarks | pending |
@@ -2148,3 +2148,17 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   above the current single-part bound, and allocation for a disabled project.
 - The full isolated store/worker suite passed. Native test/lint/smoke passed.
   Grant issuance, exact-version verification, and registration remain next.
+
+### D16c: Register one verified immutable dataset version
+
+- A real PostgreSQL test first failed because registration did not exist. The
+  store now validates a bounded sorted `tar.v1` file manifest, invokes an
+  exact-version verifier outside database locks, then rechecks project state
+  and upload ownership before committing the immutable name/version/manifest.
+- Tests reject a corrupt object with no dataset row, changed-version replay,
+  unsafe or ambiguous paths, and a project disabled during verification. A
+  same-version replay returns the original registration without re-verifying.
+- The full isolated store/worker integration suite and native test/lint/smoke
+  passed. This slice uses an injected verifier to test the transaction; the
+  public API must wire it to the real S3-compatible verifier and test that
+  composition before claiming end-to-end dataset registration.

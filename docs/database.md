@@ -138,3 +138,11 @@ the request hash on the server, so an uncertain call can replay the same
 declaration but cannot bind changed bytes to that key. It permits only the
 current single-part storage limit; multipart data requires a later contract.
 The operation returns metadata, not a signed capability or registered dataset.
+
+`RegisterDataset` takes a typed `tar.v1` manifest with sorted regular-file paths
+and checks its bounds before calling an exact-version object verifier. The
+verifier runs outside database locks; a second transaction rechecks project
+enablement and the original upload declaration before fixing the name, version,
+and manifest. Same-version replay returns the prior registration, while changed
+versions or manifests conflict. Worker tar extraction must independently reject
+unlisted entries and verify each file before mounting it.

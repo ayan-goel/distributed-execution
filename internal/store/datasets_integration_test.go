@@ -8,7 +8,9 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
+	"dispatch.local/dispatch/internal/objectstore"
 	"github.com/google/uuid"
 )
 
@@ -79,6 +81,90 @@ func TestDatasetRecordsPinOneImmutableProjectOwnedVersion(t *testing.T) {
 	if _, err := pool.Exec(ctx, `INSERT INTO datasets(project_id,name,upload_id,object_version,manifest)
 		VALUES($1,'invalid-version',$2,'null',$3)`, project, invalid, manifest); err == nil {
 		t.Fatal("dataset accepted an unversioned object")
+	}
+}
+
+func TestDatasetRegistrationPinsOnlyVerifiedExactVersion(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	if err := Migrate(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
+	var project string
+	if err := pool.QueryRow(ctx, `INSERT INTO projects(name,cpu_quota,memory_quota_mib,concurrency_quota)
+		VALUES('dataset-register',1000,1024,1) RETURNING id::text`).Scan(&project); err != nil {
+		t.Fatal(err)
+	}
+	declaration, err := CreateDatasetUpload(ctx, pool, DatasetUploadRequest{
+		ProjectID: project, RequestID: uuid.NewString(), Name: "antibodies-v1",
+		SizeBytes: 10240, SHA256: strings.Repeat("a", 64),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := DatasetRegistrationRequest{
+		ProjectID: project, UploadID: declaration.ID, Version: "version-1",
+		Manifest: DatasetManifest{Format: "tar.v1", Files: []DatasetFile{{Path: "data/input.txt", SizeBytes: 3, SHA256: strings.Repeat("b", 64)}}},
+	}
+	var verified int
+	check := func(_ context.Context, object objectstore.Object) error {
+		verified++
+		if object.Key != declaration.ObjectKey || object.Version != request.Version || object.Size != declaration.SizeBytes || object.SHA256 != declaration.SHA256 {
+			t.Fatal("verifier received a changed object", object)
+		}
+		return nil
+	}
+	if _, err := RegisterDataset(ctx, pool, request, func(context.Context, objectstore.Object) error { return objectstore.ErrIntegrity }); !errors.Is(err, objectstore.ErrIntegrity) {
+		t.Fatal("corrupt object was registered", err)
+	}
+	var count int
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM datasets WHERE upload_id=$1", declaration.ID).Scan(&count); err != nil || count != 0 {
+		t.Fatal("corrupt registration left a dataset", count, err)
+	}
+	first, err := RegisterDataset(ctx, pool, request, check)
+	if err != nil || first.ID == "" || first.Name != "antibodies-v1" || first.Object.Version != "version-1" || verified != 1 || first.Replayed {
+		t.Fatal("verified registration failed", first, verified, err)
+	}
+	replay, err := RegisterDataset(ctx, pool, request, check)
+	if err != nil || replay.ID != first.ID || !replay.Replayed || verified != 1 {
+		t.Fatal("same registration did not replay", replay, verified, err)
+	}
+	changed := request
+	changed.Version = "version-2"
+	if _, err := RegisterDataset(ctx, pool, changed, check); !errors.Is(err, ErrConflict) || verified != 1 {
+		t.Fatal("changed version reused a registered name", err, verified)
+	}
+	changed = request
+	changed.Manifest.Files = []DatasetFile{{Path: "data/other.txt", SizeBytes: 3, SHA256: strings.Repeat("b", 64)}}
+	if _, err := RegisterDataset(ctx, pool, changed, check); !errors.Is(err, ErrConflict) || verified != 1 {
+		t.Fatal("changed manifest reused a registered name", err, verified)
+	}
+	changed = request
+	changed.Manifest.Files = append([]DatasetFile(nil), request.Manifest.Files...)
+	changed.Manifest.Files[0].Path = "../escape"
+	if _, err := RegisterDataset(ctx, pool, changed, check); !errors.Is(err, ErrInvalid) {
+		t.Fatal("unsafe tar path was accepted", err)
+	}
+	second, err := CreateDatasetUpload(ctx, pool, DatasetUploadRequest{
+		ProjectID: project, RequestID: uuid.NewString(), Name: "later-v1",
+		SizeBytes: 10240, SHA256: strings.Repeat("c", 64),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	changeDuringVerify := request
+	changeDuringVerify.UploadID = second.ID
+	verifyAndDisable := func(context.Context, objectstore.Object) error {
+		deadline, cancel := context.WithTimeout(ctx, time.Second)
+		defer cancel()
+		_, err := pool.Exec(deadline, "UPDATE projects SET enabled=false WHERE id=$1", project)
+		return err
+	}
+	if _, err := RegisterDataset(ctx, pool, changeDuringVerify, verifyAndDisable); !errors.Is(err, ErrDisabled) {
+		t.Fatal("project disabled during verification still registered data", err)
+	}
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM datasets WHERE upload_id=$1", second.ID).Scan(&count); err != nil || count != 0 {
+		t.Fatal("disabled project left a dataset row", count, err)
 	}
 }
 
