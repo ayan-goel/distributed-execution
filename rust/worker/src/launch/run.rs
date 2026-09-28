@@ -1,6 +1,11 @@
 //! Own one launched container through observed exit and fresh finalization authority.
 use super::*;
-use crate::{journal::ExitEvidence, lease::PhaseDeadline, runtime::ContainerStatus};
+use crate::{
+    journal::ExitEvidence,
+    lease::PhaseDeadline,
+    log_live::{capture_running, LiveCapture, LiveLogError},
+    runtime::ContainerStatus,
+};
 use dispatch_protocol::v1::AttemptAuthority;
 
 const OBSERVATION_PERIOD: Duration = Duration::from_millis(100);
@@ -12,6 +17,7 @@ pub struct FinalizingAttempt<H> {
     authority: SupervisedAuthority,
     deadline: PhaseDeadline,
     workspace: std::path::PathBuf,
+    capture: Option<Result<LiveCapture, LiveLogError>>,
 }
 impl<H> FinalizingAttempt<H> {
     pub fn handle(&self) -> &H {
@@ -28,6 +34,9 @@ impl<H> FinalizingAttempt<H> {
     }
     pub(crate) fn owns_workspace(&self, workspace: &PreparedWorkspace) -> bool {
         self.workspace == workspace.root()
+    }
+    pub(crate) fn take_capture(&mut self) -> Option<Result<LiveCapture, LiveLogError>> {
+        self.capture.take()
     }
     pub(crate) async fn while_finalizing<T>(
         &mut self,
@@ -87,6 +96,34 @@ pub async fn execute<R: Runtime>(
         LaunchInput {
             assignment: grant.assignment(),
             execution: grant.execution(),
+            capture_logs: false,
+        },
+        session,
+        workspace,
+        authority,
+    )
+    .await
+}
+
+/// Run the same supervised attempt while draining Docker output into a bounded
+/// private spool. Publication still needs current finalization authority.
+pub async fn execute_with_logs<R: Runtime>(
+    runtime: &R,
+    client: &mut ControlClient,
+    journal: &AsyncJournal,
+    grant: &GrantedAssignment,
+    session: &WorkerSession,
+    workspace: &PreparedWorkspace,
+    authority: SupervisedAuthority,
+) -> Result<FinalizingAttempt<R::Handle>, ExecutionError> {
+    execute_inner_impl(
+        runtime,
+        client,
+        journal,
+        LaunchInput {
+            assignment: grant.assignment(),
+            execution: grant.execution(),
+            capture_logs: true,
         },
         session,
         workspace,
@@ -102,6 +139,21 @@ pub(super) async fn execute_inner<R: Runtime>(
     input: LaunchInput<'_>,
     session: &WorkerSession,
     workspace: &PreparedWorkspace,
+    authority: SupervisedAuthority,
+) -> Result<FinalizingAttempt<R::Handle>, ExecutionError> {
+    execute_inner_impl(
+        runtime, client, journal, input, session, workspace, authority,
+    )
+    .await
+}
+
+async fn execute_inner_impl<R: Runtime>(
+    runtime: &R,
+    client: &mut impl PhaseReporter,
+    journal: &AsyncJournal,
+    input: LaunchInput<'_>,
+    session: &WorkerSession,
+    workspace: &PreparedWorkspace,
     mut authority: SupervisedAuthority,
 ) -> Result<FinalizingAttempt<R::Handle>, ExecutionError> {
     let identity = authority.identity().clone();
@@ -109,6 +161,7 @@ pub(super) async fn execute_inner<R: Runtime>(
     let grace_seconds = input.execution.job().spec.termination_grace_seconds;
     let execution_seconds = timeouts.execution_seconds;
     let finalization_seconds = timeouts.finalization_seconds;
+    let capture_logs = input.capture_logs;
     // The handle comes only from this successful launch. Callers cannot pair an
     // unrelated runtime handle with a valid attempt and cause incorrect cleanup.
     let handle = launch_inner(
@@ -180,8 +233,40 @@ pub(super) async fn execute_inner<R: Runtime>(
         })
         .await??;
         Ok((exit, deadline))
-    }
-    .await;
+    };
+    let (outcome, capture) = if capture_logs {
+        let collector = capture_running(runtime, &handle, workspace);
+        tokio::pin!(collector);
+        tokio::pin!(outcome);
+        let mut early_capture = None;
+        let result = loop {
+            tokio::select! {
+                result = &mut outcome => break result,
+                captured = &mut collector, if early_capture.is_none() => early_capture = Some(captured),
+            }
+        };
+        let captured = if result.is_ok() {
+            if let Some(early) = early_capture {
+                early
+            } else {
+                tokio::time::timeout(Duration::from_secs(2), collector)
+                    .await
+                    .unwrap_or(Err(LiveLogError::Capture))
+            }
+        } else {
+            Err(LiveLogError::Capture)
+        };
+        // The follower starts after Docker start. A burst may rotate daemon
+        // files before attachment, so even a clean follower cannot prove a
+        // complete source stream until pre-start attachment is implemented.
+        let captured = captured.map(|mut value: LiveCapture| {
+            value.complete = false;
+            value
+        });
+        (result, Some(captured))
+    } else {
+        (outcome.await, None)
+    };
     match outcome {
         Ok((exit, deadline)) => Ok(FinalizingAttempt {
             handle,
@@ -190,6 +275,7 @@ pub(super) async fn execute_inner<R: Runtime>(
             authority,
             deadline,
             workspace: workspace.root().to_owned(),
+            capture,
         }),
         Err(cause) => {
             // Retain evidence even after uncertain phase commits. Cleanup confirms

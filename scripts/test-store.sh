@@ -12,4 +12,8 @@ until docker exec "$container" pg_isready -h 127.0.0.1 -U postgres > /dev/null 2
 done
 port=$(docker port "$container" 5432/tcp | sed 's/.*://')
 export DISPATCH_TEST_DATABASE_URL="postgres://postgres:dispatch_test@127.0.0.1:$port/dispatch_test?sslmode=disable"
-make store-test
+if [ "$#" -eq 0 ]; then
+    make store-test
+else
+    "$@"
+fi

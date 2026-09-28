@@ -103,12 +103,15 @@ pub(super) fn build(
                 format!("rw,nosuid,nodev,noexec,size={temporary},mode=1777"),
             )])),
             shm_size: Some(temporary),
-            // Bound daemon-side retention even when the agent is disconnected.
-            // D15 will additionally stream/spool logs and report retention gaps.
+            // Bound daemon-side retention when the agent is disconnected. An
+            // early burst can precede follower polling, and JSON escaping can
+            // expand binary bytes sixfold; 1 MiB rotation lost real log data.
+            // The collector still needs a pre-start attachment to close that
+            // remaining gap without growing this bound indefinitely.
             log_config: Some(HostConfigLogConfig {
                 typ: Some("json-file".into()),
                 config: Some(HashMap::from([
-                    ("max-size".into(), "1m".into()),
+                    ("max-size".into(), "8m".into()),
                     ("max-file".into(), "2".into()),
                 ])),
             }),

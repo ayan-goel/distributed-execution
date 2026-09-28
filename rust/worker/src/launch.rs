@@ -12,7 +12,7 @@ use dispatch_protocol::v1::{
 use std::{fmt, future::Future, time::Duration};
 
 mod run;
-pub use run::{execute, ExecutionError, FinalizingAttempt};
+pub use run::{execute, execute_with_logs, ExecutionError, FinalizingAttempt};
 
 #[derive(Debug)]
 pub enum LaunchCause {
@@ -111,6 +111,7 @@ impl PhaseReporter for ControlClient {
 struct LaunchInput<'a> {
     assignment: &'a Assignment,
     execution: &'a ExecutionSpec,
+    capture_logs: bool,
 }
 
 pub async fn launch<R: Runtime>(
@@ -129,6 +130,7 @@ pub async fn launch<R: Runtime>(
         LaunchInput {
             assignment: grant.assignment(),
             execution: grant.execution(),
+            capture_logs: false,
         },
         session,
         workspace,

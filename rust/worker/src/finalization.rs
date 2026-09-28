@@ -67,48 +67,61 @@ pub async fn publish_finished_logs(
     if !attempt.owns_workspace(workspace) {
         return Err(FinalizationError::Identity);
     }
+    let capture = attempt.take_capture();
     let handle = attempt.handle().clone();
     let id = attempt.identity().attempt_id.clone();
     attempt
         .while_finalizing(async {
-            let logs = match runtime.logs(&handle, MAX_FINAL_LOG_BYTES).await {
-                Ok(logs) => logs,
-                Err(_) => {
+            let (mut assembler, captured, capture_finished) = match capture {
+                Some(Ok(capture)) => (capture.assembler, capture.counts, capture.complete),
+                Some(Err(_)) => {
                     return Ok(LogSummary {
                         complete: false,
                         gaps: Vec::new(),
                     })
                 }
-            };
-            let mut assembler = LogAssembler::new(workspace, MAX_SPOOL_BYTES)
-                .map_err(|_| FinalizationError::Log)?;
-            let mut captured = [0u64; 2];
-            for (index, (stream, bytes)) in [
-                (LogStream::Stdout, logs.stdout),
-                (LogStream::Stderr, logs.stderr),
-            ]
-            .into_iter()
-            .enumerate()
-            {
-                for payload in bytes.chunks(crate::log_capture::MAX_CHUNK_BYTES) {
-                    captured[index] += 1;
-                    let nanos = SystemTime::now()
-                        .duration_since(UNIX_EPOCH)
-                        .map_err(|_| FinalizationError::Log)?
-                        .as_nanos();
-                    let capture_unix_nanos =
-                        i64::try_from(nanos).map_err(|_| FinalizationError::Log)?;
-                    assembler
-                        .ingest(CapturedChunk {
-                            stream,
-                            sequence: captured[index],
-                            capture_unix_nanos,
-                            payload: payload.to_vec(),
-                        })
+                None => {
+                    let logs = match runtime.logs(&handle, MAX_FINAL_LOG_BYTES).await {
+                        Ok(logs) => logs,
+                        Err(_) => {
+                            return Ok(LogSummary {
+                                complete: false,
+                                gaps: Vec::new(),
+                            })
+                        }
+                    };
+                    let mut assembler = LogAssembler::new(workspace, MAX_SPOOL_BYTES)
                         .map_err(|_| FinalizationError::Log)?;
+                    let mut captured = [0u64; 2];
+                    for (index, (stream, bytes)) in [
+                        (LogStream::Stdout, logs.stdout),
+                        (LogStream::Stderr, logs.stderr),
+                    ]
+                    .into_iter()
+                    .enumerate()
+                    {
+                        for payload in bytes.chunks(crate::log_capture::MAX_CHUNK_BYTES) {
+                            captured[index] += 1;
+                            let nanos = SystemTime::now()
+                                .duration_since(UNIX_EPOCH)
+                                .map_err(|_| FinalizationError::Log)?
+                                .as_nanos();
+                            let capture_unix_nanos =
+                                i64::try_from(nanos).map_err(|_| FinalizationError::Log)?;
+                            assembler
+                                .ingest(CapturedChunk {
+                                    stream,
+                                    sequence: captured[index],
+                                    capture_unix_nanos,
+                                    payload: payload.to_vec(),
+                                })
+                                .map_err(|_| FinalizationError::Log)?;
+                        }
+                    }
+                    assembler.flush_all().map_err(|_| FinalizationError::Log)?;
+                    (assembler, captured, !logs.truncated)
                 }
-            }
-            assembler.flush_all().map_err(|_| FinalizationError::Log)?;
+            };
             let mut delivered = true;
             while let Some(pending) = assembler.front() {
                 let stream = pending.stream();
@@ -160,7 +173,7 @@ pub async fn publish_finished_logs(
                 .load_attempt(id)
                 .await?
                 .ok_or(JournalError::Invalid)?;
-            log_summary::summarize(saved.logs(), captured, !logs.truncated && delivered)
+            log_summary::summarize(saved.logs(), captured, capture_finished && delivered)
                 .map_err(|_| FinalizationError::Log)
         })
         .await

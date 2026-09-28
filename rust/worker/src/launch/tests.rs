@@ -131,6 +131,7 @@ impl Fixture {
         LaunchInput {
             assignment: &self.assignment,
             execution: &self.execution,
+            capture_logs: false,
         }
     }
     fn runtime(&self, mode: Mode) -> FakeRuntime {

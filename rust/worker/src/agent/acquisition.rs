@@ -5,7 +5,7 @@ use crate::{
     finalization::{
         prepare_cancelled_completion, prepare_completion, publish_finished_logs, FinalizationError,
     },
-    launch::{execute, CleanupEvidence, ExecutionError, LaunchCause},
+    launch::{execute_with_logs, CleanupEvidence, ExecutionError, LaunchCause},
     runtime::Runtime,
     supervisor::{authority_channel, StopReason, SupervisedAuthority},
     transfer::TransferClient,
@@ -132,7 +132,7 @@ async fn run_assignment(
             return Err(AgentError::Task);
         }
     };
-    let outcome = execute(
+    let outcome = execute_with_logs(
         context.runtime,
         client,
         context.journal,

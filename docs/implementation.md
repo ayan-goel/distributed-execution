@@ -31,7 +31,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D12 first real job | D05–D11 | CLI submit → gRPC → Docker → verified output → CLI download | full component chain passed with cached digest and fixed fixture resolver; external registry and image pull pending |
 | D13 loss/retry | D09,D12 | Reaper/reconciliation; recorded retry; backoff/deadlines; nonretryable failure | reaper, server loop, and real two-identity retry on one Docker daemon passed; natural timer and independent-host gates pending |
 | D14 cancellation | D12,D13 | Both completion/cancellation race orders, repeat requests, uncertain cleanup | pending |
-| D15 logs | D08,D11 | Bounded queues/spool, noisy-job truncation, stream cursors, reconnect | catalog, HTTP cursor/tail gaps, binary format, private spool, Rust registration client, journaled delivery, bounded Docker follower, assembler, completion summary, CLI follow, and post-exit delivery passed; live runner wiring pending |
+| D15 logs | D08,D11 | Bounded queues/spool, noisy-job truncation, stream cursors, reconnect | catalog, HTTP cursor/tail gaps, binary format, private spool, Rust registration client, journaled delivery, bounded Docker follower, assembler, completion summary, CLI follow, and run-time capture with post-exit delivery passed; pre-start attachment and live publication pending |
 | D16 datasets | D11 | Immutable registration/cache; corruption rejection; pin-aware eviction | pending |
 | D17 sweeps/metrics | D05,D13,D16 | Atomic 27-child sweep; 1000 cap; concurrency; fail-fast; finite scalar export | pending |
 | D18 placement | D07,D17 | Project fairness/aging, blockers, two real independent hosts without oversubscription | pending |
@@ -2047,3 +2047,22 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   follower error. The collector is still a component: the attempt runner must
   start it after launch, supervise it through exit, and publish sealed segments
   before this becomes live user-visible logging. See [live-log-collector.md](live-log-collector.md).
+
+### D15r: Capture running Docker output and publish after exit
+
+- The agent now polls Docker's bounded follower and log collector alongside
+  execution. It carries the sealed spool and final sequence counters into
+  finalization, then registers exact object versions before completing. Failed
+  followers and unregistered tails cannot produce `logsComplete=true`.
+- The real daemon fixture writes 1.1 MiB of binary stdout plus stderr, checks
+  multiple stdout segments and verified CLI rendering, and still exercises
+  output publication and terminal cleanup. The first run found Docker's 1 MiB
+  JSON-file rotation had discarded early bytes before follower polling. A
+  bounded 8 MiB × 2 daemon window passed the targeted fixture after that fix.
+- The follower still attaches after the container starts, so a sufficiently
+  fast burst can rotate both daemon files before it reads them. This cannot
+  satisfy the full loss-accounting gate. Agent completions therefore mark logs
+  incomplete even when all observed chunks were registered. Attach before
+  start, then deliver segments while the job runs. The full isolated suite
+  passed before the conservative flag; the focused noisy-job gate and native
+  test/lint/smoke gate passed again after it.

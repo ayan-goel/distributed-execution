@@ -7,8 +7,7 @@ transferring bytes. It records the exact object version, registers the segment
 in the catalog, then removes the local copy. Completion claims use only
 registered evidence; failed delivery or truncated capture marks logs incomplete.
 
-This path makes short completed jobs readable through `dispatch logs JOB_ID`.
-It does not stream logs while a job runs. The follower and bounded queue need
-to be connected to the attempt runner before D15's live and noisy-job gates
-can pass. An incomplete flag without a numeric gap means the post-exit Docker
-snapshot could not establish how many bytes were omitted.
+This snapshot path remains available to the launch probe. The ordinary agent
+now captures through a bounded Docker follower while the job runs and uploads
+the resulting segments after exit. An incomplete flag without a numeric gap
+means the Docker source could not establish how many bytes were omitted.

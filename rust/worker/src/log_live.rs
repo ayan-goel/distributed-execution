@@ -1,8 +1,9 @@
 //! Drain Docker output while preserving a bounded, private log spool.
 use crate::{
     log_assembler::{AssembleError, LogAssembler, FLUSH_INTERVAL},
-    log_capture::{CaptureCounts, CapturedChunk},
-    runtime::{PreparedWorkspace, RuntimeError},
+    log_capture::{CaptureCounts, CapturedChunk, LogQueue, QUEUE_CHUNKS},
+    log_spool::MAX_SPOOL_BYTES,
+    runtime::{PreparedWorkspace, Runtime, RuntimeError},
 };
 use dispatch_protocol::v1::LogStream;
 use std::{fmt, future::Future};
@@ -29,6 +30,23 @@ pub struct LiveCapture {
     pub assembler: LogAssembler,
     pub counts: [u64; 2],
     pub complete: bool,
+}
+
+pub async fn capture_running<R: Runtime>(
+    runtime: &R,
+    handle: &R::Handle,
+    workspace: &PreparedWorkspace,
+) -> Result<LiveCapture, LiveLogError> {
+    let (queue, receiver, counts) =
+        LogQueue::bounded(QUEUE_CHUNKS).map_err(|_| LiveLogError::Capture)?;
+    collect_capture(
+        workspace,
+        MAX_SPOOL_BYTES,
+        receiver,
+        counts,
+        runtime.follow_logs(handle, queue),
+    )
+    .await
 }
 
 pub async fn collect_capture<F>(

@@ -171,12 +171,12 @@ func publicationStorage(t *testing.T, mode string, evidence *publicationEvidence
 	}
 }
 
-func verifyPublication(t *testing.T, ctx context.Context, pool *pgxpool.Pool, objects *objectstore.Store, evidence *publicationEvidence, attempt, artifact, wantState string) {
+func verifyPublication(t *testing.T, ctx context.Context, pool *pgxpool.Pool, objects *objectstore.Store, evidence *publicationEvidence, attempt, artifact, wantState string, wantLogsComplete bool) {
 	t.Helper()
 	if evidence.creates != 2 || evidence.finalizes != 2 || evidence.completions != 2 || artifact == "" {
 		t.Fatal("missing exact publication retries", evidence.creates, evidence.finalizes, evidence.completions)
 	}
-	if !evidence.complete.LogsComplete || !evidence.complete.Stopped || len(evidence.complete.Outputs) != 1 || evidence.complete.Outputs[0].ArtifactId != artifact {
+	if evidence.complete.LogsComplete != wantLogsComplete || !evidence.complete.Stopped || len(evidence.complete.Outputs) != 1 || evidence.complete.Outputs[0].ArtifactId != artifact {
 		t.Fatal("completion did not bind observed output and stopped evidence")
 	}
 	wantReason := pb.FailureReason_FAILURE_REASON_UNSPECIFIED
@@ -223,7 +223,7 @@ func verifyPublication(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ob
 		} `json:"outputs"`
 		LogsComplete bool `json:"logsComplete"`
 	}
-	if err := json.Unmarshal(manifest, &result); err != nil || accepted == nil || *accepted != attempt || len(result.Outputs) != 1 || !result.LogsComplete {
+	if err := json.Unmarshal(manifest, &result); err != nil || accepted == nil || *accepted != attempt || len(result.Outputs) != 1 || result.LogsComplete != wantLogsComplete {
 		t.Fatal("invalid accepted result", err)
 	}
 	if result.Outputs[0].ArtifactID != artifact || result.Outputs[0].Object.Key != exact.Key || result.Outputs[0].Object.Version != exact.Version {

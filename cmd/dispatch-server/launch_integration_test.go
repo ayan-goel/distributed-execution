@@ -308,7 +308,7 @@ func testRustLaunchScenario(t *testing.T, mode string) {
 			if invalidOutput || mode == "publish_transfer_failed" {
 				verifyFailedPublication(t, ctx, pool, service.publication, result.Attempt, mode)
 			} else {
-				verifyPublication(t, ctx, pool, objects, service.publication, result.Attempt, result.Outputs[0].Artifact, wantState)
+				verifyPublication(t, ctx, pool, objects, service.publication, result.Attempt, result.Outputs[0].Artifact, wantState, true)
 			}
 		}
 	}

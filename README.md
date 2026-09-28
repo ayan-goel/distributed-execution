@@ -31,8 +31,10 @@ Docker, then verifies the output with a CLI download. A second integration test
 verifies worker-loss retry across two worker identities. Running-job cancellation
 is also verified through worker stop, durable acknowledgement, cleanup, and
 subsequent admission. Cancellations before launch and during finalization are
-also covered. Strict scratch limits,
-input staging, live worker log publishing, full retry policy coverage, and other
+also covered. The worker captures bounded logs while jobs run and publishes
+them after exit for `dispatch logs`; completion reports them as incomplete
+until capture starts before the container. Strict scratch limits, input staging,
+live log publishing, full retry policy coverage, and other
 v0.1 gates remain. See the
 [implementation ledger](docs/implementation.md) for verified progress and remaining work.
 
