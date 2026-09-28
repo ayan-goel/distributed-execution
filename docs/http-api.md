@@ -10,6 +10,7 @@
 | `POST /v1/jobs/{id}/cancel` | submit | Idempotently record project-scoped cancellation intent |
 | `GET /v1/jobs/{id}/artifacts` | read | Accepted outputs with exact-version, 60-second download grants |
 | `GET /v1/attempts/{id}/logs` | read | Registered log ranges, frozen completion gaps, a stream cursor, and exact-version, 60-second download grants |
+| `POST /v1/datasets/uploads` | submit | Reserve a project-owned dataset key and return a 60-second upload grant |
 
 Send `Authorization: Bearer <project-token>`. Submission requires `Idempotency-Key`
 (1–128 characters) and one bounded JSON/YAML Job document. New submissions return
@@ -56,8 +57,17 @@ submission replay, missing results before completion, and 404 for another projec
 token. Client and CLI tests verify the accepted identity and exact metric text.
 
 Dataset admission currently returns an explicit 501 rather than queuing unresolved
-inputs. Job listing, full attempt history, log byte rendering/follow, events, sweeps,
-datasets, and worker administration remain required endpoints in later slices.
+inputs. `POST /v1/datasets/uploads` accepts one JSON object with `requestId`
+(UUID), `name`, `sizeBytes`, and lowercase hex `sha256`. The server allocates the
+object key; callers cannot choose one. The response includes `uploadId`,
+`objectKey`, `uploadUrl`, `method`, `requiredHeaders`, `expiresAt`, and `replayed`.
+Send the exact declared bytes using the returned method and headers. Identical
+requests replay with a fresh grant and HTTP 200; a new declaration returns 201,
+and changed metadata for the same project/request ID returns 409. A failed
+signer leaves the declaration replayable. This endpoint does not register a
+dataset; completion must verify and freeze one object version in the next slice.
+Job listing, full attempt history, log byte rendering/follow, events, sweeps,
+dataset completion/staging, and worker administration remain required.
 
 ## Evidence
 

@@ -32,7 +32,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D13 loss/retry | D09,D12 | Reaper/reconciliation; recorded retry; backoff/deadlines; nonretryable failure | reaper, server loop, and real two-identity retry on one Docker daemon passed; natural timer and independent-host gates pending |
 | D14 cancellation | D12,D13 | Both completion/cancellation race orders, repeat requests, uncertain cleanup | pending |
 | D15 logs | D08,D11 | Bounded queues/spool, noisy-job truncation, stream cursors, reconnect | catalog, HTTP cursor/tail gaps, binary format, private spool, Rust registration client, journaled delivery, bounded Docker follower, assembler, completion summary, CLI follow, pre-start capture, and live publication passed; reconnect/fault matrix pending |
-| D16 datasets | D11 | Immutable registration/cache; corruption rejection; pin-aware eviction | ownership schema, replay-safe declarations, and exact-version registration transaction passed; API, admission, staging, and cache pending |
+| D16 datasets | D11 | Immutable registration/cache; corruption rejection; pin-aware eviction | ownership schema, replay-safe declarations, registration transaction, and scoped upload-session API passed; completion, admission, staging, and cache pending |
 | D17 sweeps/metrics | D05,D13,D16 | Atomic 27-child sweep; 1000 cap; concurrency; fail-fast; finite scalar export | pending |
 | D18 placement | D07,D17 | Project fairness/aging, blockers, two real independent hosts without oversubscription | pending |
 | D19 faults/benchmarks | D14–D18 | Spec §21/22 runtime matrix, 27-job worker kill, stale result, measured benchmarks | pending |
@@ -2162,3 +2162,20 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   passed. This slice uses an injected verifier to test the transaction; the
   public API must wire it to the real S3-compatible verifier and test that
   composition before claiming end-to-end dataset registration.
+
+### D16d: Issue scoped dataset upload sessions
+
+- The HTTP integration test first failed to compile without an upload response
+  or route. `POST /v1/datasets/uploads` now accepts a bounded strict JSON
+  declaration with a UUID request ID, calls the project-scoped allocation, and
+  signs only its server-generated key for 60 seconds with the declared length
+  and SHA-256. Identical retries return the same upload ID with a new grant;
+  changed declarations conflict.
+- Real PostgreSQL tests cover read-token denial, cross-project separation,
+  malformed and oversized requests, signer failure with durable replay, and
+  token revocation during signing. The endpoint returns no dataset registration;
+  exact-version completion and a real storage-backed workflow remain required.
+- The full isolated PostgreSQL/worker integration suite and native
+  test/lint/smoke gate passed. A first unprivileged native run hit a local
+  socket permission error in existing Rust fault tests; the permitted rerun
+  passed without code changes.

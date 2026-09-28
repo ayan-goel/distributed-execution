@@ -102,6 +102,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch {
+	case r.URL.Path == "/v1/datasets/uploads" && r.Method == http.MethodPost:
+		if !p.Allows(store.RoleSubmit) {
+			fail(w, 403, "FORBIDDEN", "submit permission required", false)
+			return
+		}
+		s.datasetUpload(w, r, p)
 	case r.URL.Path == "/v1/jobs" && r.Method == http.MethodPost:
 		if !p.Allows(store.RoleSubmit) {
 			fail(w, 403, "FORBIDDEN", "submit permission required", false)

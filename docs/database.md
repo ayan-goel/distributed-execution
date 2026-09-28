@@ -137,7 +137,10 @@ allocates one generated object key per `(project_id, request_id)`. It computes
 the request hash on the server, so an uncertain call can replay the same
 declaration but cannot bind changed bytes to that key. It permits only the
 current single-part storage limit; multipart data requires a later contract.
-The operation returns metadata, not a signed capability or registered dataset.
+The store operation returns metadata, not a signed capability or registered
+dataset. The public upload-session endpoint now issues a short-lived capability
+for that allocated key after submit authorization and rechecks token revocation
+before returning it. Dataset registration remains a separate verified step.
 
 `RegisterDataset` takes a typed `tar.v1` manifest with sorted regular-file paths
 and checks its bounds before calling an exact-version object verifier. The
