@@ -4,9 +4,9 @@ use crate::{
     execution::ExecutionSpec,
     journal::{new_uuid, AsyncJournal, JournalError},
     launch::{CleanupEvidence, FinalizingAttempt},
-    log_assembler::LogAssembler,
     log_capture::CapturedChunk,
     log_delivery::{deliver_log, LogDeliveryError},
+    log_live::new_shared,
     log_spool::MAX_SPOOL_BYTES,
     log_summary::{self, LogSummary},
     outputs::{collect_outputs, CollectionError, CollectionLimits},
@@ -72,7 +72,7 @@ pub async fn publish_finished_logs(
     let id = attempt.identity().attempt_id.clone();
     attempt
         .while_finalizing(async {
-            let (mut assembler, captured, capture_finished) = match capture {
+            let (assembler, captured, capture_finished) = match capture {
                 Some(Ok(capture)) => (capture.assembler, capture.counts, capture.complete),
                 Some(Err(_)) => {
                     return Ok(LogSummary {
@@ -90,7 +90,7 @@ pub async fn publish_finished_logs(
                             })
                         }
                     };
-                    let mut assembler = LogAssembler::new(workspace, MAX_SPOOL_BYTES)
+                    let assembler = new_shared(workspace, MAX_SPOOL_BYTES)
                         .map_err(|_| FinalizationError::Log)?;
                     let mut captured = [0u64; 2];
                     for (index, (stream, bytes)) in [
@@ -109,6 +109,8 @@ pub async fn publish_finished_logs(
                             let capture_unix_nanos =
                                 i64::try_from(nanos).map_err(|_| FinalizationError::Log)?;
                             assembler
+                                .lock()
+                                .await
                                 .ingest(CapturedChunk {
                                     stream,
                                     sequence: captured[index],
@@ -118,24 +120,42 @@ pub async fn publish_finished_logs(
                                 .map_err(|_| FinalizationError::Log)?;
                         }
                     }
-                    assembler.flush_all().map_err(|_| FinalizationError::Log)?;
+                    assembler
+                        .lock()
+                        .await
+                        .flush_all()
+                        .map_err(|_| FinalizationError::Log)?;
                     (assembler, captured, !logs.truncated)
                 }
             };
             let mut delivered = true;
-            while let Some(pending) = assembler.front() {
-                let stream = pending.stream();
-                let first = pending.first_sequence();
-                let last = pending.last_sequence();
-                let gaps = pending.gaps().to_vec();
-                let size = pending.size();
-                let sha256 = pending.sha256().to_owned();
+            loop {
+                let pending = {
+                    let assembler = assembler.lock().await;
+                    assembler.front().map(|pending| {
+                        (
+                            pending.stream(),
+                            pending.first_sequence(),
+                            pending.last_sequence(),
+                            pending.gaps().to_vec(),
+                            pending.size(),
+                            pending.sha256().to_owned(),
+                        )
+                    })
+                };
+                let Some((stream, first, last, gaps, size, sha256)) = pending else {
+                    break;
+                };
                 journal
                     .prepare_log(id.clone(), stream, first, last, gaps, size, sha256)
                     .await?;
                 let mut accepted = false;
                 for round in 0..MAX_DELIVERY_ATTEMPTS {
-                    let source = assembler.read_front().map_err(|_| FinalizationError::Log)?;
+                    let source = assembler
+                        .lock()
+                        .await
+                        .read_front()
+                        .map_err(|_| FinalizationError::Log)?;
                     match deliver_log(journal, client, transfers, &id, stream, first, source).await
                     {
                         Ok(()) => {
@@ -166,6 +186,8 @@ pub async fn publish_finished_logs(
                     break;
                 }
                 assembler
+                    .lock()
+                    .await
                     .acknowledge_front()
                     .map_err(|_| FinalizationError::Log)?;
             }

@@ -2081,3 +2081,14 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   PostgreSQL/object-storage/Docker integration suite passed.
 - Segments are still uploaded after exit; live follow during execution is the
   next D15 gate.
+
+### D15t: Share sealed spool state with a running publisher
+
+- The collector now owns an asynchronously shared assembler. A reader can
+  inspect a sealed segment after its two-second flush while Docker continues
+  producing output. Finalization locks only around local spool operations;
+  it never holds that lock across a network upload or server registration.
+- A focused concurrent test verifies a segment becomes available before the
+  producer exits, alongside the existing dropped-tail and two-stream tests.
+  Native test/lint/smoke and the full isolated PostgreSQL/object-storage/
+  Docker integration suite passed. The network publisher is the next slice.

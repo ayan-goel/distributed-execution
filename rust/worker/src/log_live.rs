@@ -6,8 +6,8 @@ use crate::{
     runtime::{PreparedWorkspace, Runtime, RuntimeError},
 };
 use dispatch_protocol::v1::LogStream;
-use std::{fmt, future::Future};
-use tokio::sync::mpsc;
+use std::{fmt, future::Future, sync::Arc};
+use tokio::sync::{mpsc, Mutex};
 
 #[derive(Debug)]
 pub enum LiveLogError {
@@ -27,9 +27,20 @@ impl From<AssembleError> for LiveLogError {
 }
 
 pub struct LiveCapture {
-    pub assembler: LogAssembler,
+    pub assembler: SharedAssembler,
     pub counts: [u64; 2],
     pub complete: bool,
+}
+
+pub type SharedAssembler = Arc<Mutex<LogAssembler>>;
+
+pub fn new_shared(
+    workspace: &PreparedWorkspace,
+    spool_cap: u64,
+) -> Result<SharedAssembler, LiveLogError> {
+    Ok(Arc::new(Mutex::new(LogAssembler::new(
+        workspace, spool_cap,
+    )?)))
 }
 
 pub async fn capture_running<R: Runtime>(
@@ -52,6 +63,19 @@ pub async fn capture_running<R: Runtime>(
 pub async fn collect_capture<F>(
     workspace: &PreparedWorkspace,
     spool_cap: u64,
+    receiver: mpsc::Receiver<CapturedChunk>,
+    counts: CaptureCounts,
+    producer: F,
+) -> Result<LiveCapture, LiveLogError>
+where
+    F: Future<Output = Result<(), RuntimeError>>,
+{
+    let assembler = new_shared(workspace, spool_cap)?;
+    collect_capture_shared(assembler, receiver, counts, producer).await
+}
+
+pub async fn collect_capture_shared<F>(
+    assembler: SharedAssembler,
     mut receiver: mpsc::Receiver<CapturedChunk>,
     counts: CaptureCounts,
     producer: F,
@@ -59,7 +83,6 @@ pub async fn collect_capture<F>(
 where
     F: Future<Output = Result<(), RuntimeError>>,
 {
-    let mut assembler = LogAssembler::new(workspace, spool_cap)?;
     let mut producer = std::pin::pin!(producer);
     let mut producer_result = None;
     let mut receiver_closed = false;
@@ -72,13 +95,13 @@ where
         tokio::select! {
             result = &mut producer, if producer_result.is_none() => producer_result = Some(result),
             item = receiver.recv(), if !receiver_closed => match item {
-                Some(chunk) => assembler.ingest(chunk)?,
+                Some(chunk) => assembler.lock().await.ingest(chunk)?,
                 None => receiver_closed = true,
             },
-            _ = flush.tick() => assembler.flush_due()?,
+            _ = flush.tick() => assembler.lock().await.flush_due()?,
         }
     }
-    assembler.flush_all()?;
+    assembler.lock().await.flush_all()?;
     // Count dropped tail chunks even when no later record exists to bridge
     // their sequence gap in a sealed segment.
     let totals = [

@@ -2,7 +2,9 @@
 
 use dispatch_protocol::v1::LogStream;
 use dispatch_worker::{
-    log_capture::LogQueue, log_live::collect_capture, log_spool::MAX_SPOOL_BYTES,
+    log_capture::LogQueue,
+    log_live::{collect_capture, collect_capture_shared, new_shared},
+    log_spool::MAX_SPOOL_BYTES,
     runtime::PreparedWorkspace,
 };
 use std::{
@@ -47,20 +49,16 @@ async fn collector_drains_both_streams_and_seals_segments() {
         queue.push_frame(LogStream::Stderr, b"err").unwrap();
         Ok(())
     };
-    let mut captured = collect_capture(&prepared, MAX_SPOOL_BYTES, receiver, counts, producer)
+    let captured = collect_capture(&prepared, MAX_SPOOL_BYTES, receiver, counts, producer)
         .await
         .unwrap();
     assert!(captured.complete);
     assert_eq!(captured.counts, [1, 1]);
-    assert_eq!(
-        captured.assembler.front().unwrap().stream(),
-        LogStream::Stdout
-    );
-    captured.assembler.acknowledge_front().unwrap();
-    assert_eq!(
-        captured.assembler.front().unwrap().stream(),
-        LogStream::Stderr
-    );
+    let mut assembler = captured.assembler.lock().await;
+    assert_eq!(assembler.front().unwrap().stream(), LogStream::Stdout);
+    assembler.acknowledge_front().unwrap();
+    assert_eq!(assembler.front().unwrap().stream(), LogStream::Stderr);
+    drop(assembler);
     fs::remove_dir_all(base).unwrap();
 }
 
@@ -79,6 +77,37 @@ async fn collector_keeps_drop_counts_and_marks_follower_failure() {
         .unwrap();
     assert!(!captured.complete);
     assert_eq!(captured.counts, [3, 0]);
-    assert_eq!(captured.assembler.front().unwrap().last_sequence(), 1);
+    assert_eq!(
+        captured
+            .assembler
+            .lock()
+            .await
+            .front()
+            .unwrap()
+            .last_sequence(),
+        1
+    );
+    fs::remove_dir_all(base).unwrap();
+}
+
+#[tokio::test]
+async fn sealed_segment_is_visible_before_producer_exits() {
+    let (base, prepared) = workspace();
+    let assembler = new_shared(&prepared, MAX_SPOOL_BYTES).unwrap();
+    let (queue, receiver, counts) = LogQueue::bounded(256).unwrap();
+    let (release, paused) = tokio::sync::oneshot::channel::<()>();
+    let producer = async move {
+        queue.push_frame(LogStream::Stdout, b"running").unwrap();
+        let _ = paused.await;
+        Ok(())
+    };
+    let observed = assembler.clone();
+    let collecting = tokio::spawn(collect_capture_shared(
+        assembler, receiver, counts, producer,
+    ));
+    tokio::time::sleep(std::time::Duration::from_millis(2150)).await;
+    assert_eq!(observed.lock().await.front().unwrap().first_sequence(), 1);
+    release.send(()).unwrap();
+    assert!(collecting.await.unwrap().unwrap().complete);
     fs::remove_dir_all(base).unwrap();
 }

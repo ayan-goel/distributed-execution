@@ -12,4 +12,6 @@ container, then launches this collector. The attempt runner joins it through
 exit and uses its counters in the frozen completion claim. A recovered
 container that was already running cannot prove its earlier Docker history, so
 its logs remain incomplete. The worker still uploads segments during
-finalization, so the CLI cannot follow them live.
+finalization, so the CLI cannot follow them live. The assembler is shared for
+short, local-only locks: a future publisher can inspect sealed segments while
+capture continues without holding the lock during transfers.
