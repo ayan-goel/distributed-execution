@@ -32,8 +32,8 @@ verifies worker-loss retry across two worker identities. Running-job cancellatio
 is also verified through worker stop, durable acknowledgement, cleanup, and
 subsequent admission. Cancellations before launch and during finalization are
 also covered. The worker captures bounded logs while jobs run and publishes
-them after exit for `dispatch logs`; completion reports them as incomplete
-until capture starts before the container. Strict scratch limits, input staging,
+them after exit for `dispatch logs`; missing data is reported as incomplete.
+Strict scratch limits, input staging,
 live log publishing, full retry policy coverage, and other
 v0.1 gates remain. See the
 [implementation ledger](docs/implementation.md) for verified progress and remaining work.

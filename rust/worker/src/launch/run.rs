@@ -3,7 +3,7 @@ use super::*;
 use crate::{
     journal::ExitEvidence,
     lease::PhaseDeadline,
-    log_live::{capture_running, LiveCapture, LiveLogError},
+    log_live::{LiveCapture, LiveLogError},
     runtime::ContainerStatus,
 };
 use dispatch_protocol::v1::AttemptAuthority;
@@ -235,35 +235,37 @@ async fn execute_inner_impl<R: Runtime>(
         Ok((exit, deadline))
     };
     let (outcome, capture) = if capture_logs {
-        let collector = capture_running(runtime, &handle, workspace);
-        tokio::pin!(collector);
-        tokio::pin!(outcome);
-        let mut early_capture = None;
-        let result = loop {
-            tokio::select! {
-                result = &mut outcome => break result,
-                captured = &mut collector, if early_capture.is_none() => early_capture = Some(captured),
+        match runtime.take_capture(&handle).await {
+            Some(Ok(mut collector)) => {
+                tokio::pin!(outcome);
+                let mut early_capture = None;
+                let result = loop {
+                    tokio::select! {
+                        result = &mut outcome => break result,
+                        captured = &mut collector, if early_capture.is_none() => early_capture = Some(captured),
+                    }
+                };
+                let captured = if result.is_ok() {
+                    if let Some(early) = early_capture {
+                        flatten_capture(early)
+                    } else {
+                        match tokio::time::timeout(Duration::from_secs(2), &mut collector).await {
+                            Ok(joined) => flatten_capture(joined),
+                            Err(_) => {
+                                collector.abort();
+                                Err(LiveLogError::Capture)
+                            }
+                        }
+                    }
+                } else {
+                    collector.abort();
+                    Err(LiveLogError::Capture)
+                };
+                (result, Some(captured))
             }
-        };
-        let captured = if result.is_ok() {
-            if let Some(early) = early_capture {
-                early
-            } else {
-                tokio::time::timeout(Duration::from_secs(2), collector)
-                    .await
-                    .unwrap_or(Err(LiveLogError::Capture))
-            }
-        } else {
-            Err(LiveLogError::Capture)
-        };
-        // The follower starts after Docker start. A burst may rotate daemon
-        // files before attachment, so even a clean follower cannot prove a
-        // complete source stream until pre-start attachment is implemented.
-        let captured = captured.map(|mut value: LiveCapture| {
-            value.complete = false;
-            value
-        });
-        (result, Some(captured))
+            Some(Err(error)) => (outcome.await, Some(Err(error))),
+            None => (outcome.await, Some(Err(LiveLogError::Capture))),
+        }
     } else {
         (outcome.await, None)
     };
@@ -289,6 +291,12 @@ async fn execute_inner_impl<R: Runtime>(
             Err(ExecutionError::AfterLaunch { cause, cleanup })
         }
     }
+}
+
+fn flatten_capture(
+    joined: Result<Result<LiveCapture, LiveLogError>, tokio::task::JoinError>,
+) -> Result<LiveCapture, LiveLogError> {
+    joined.unwrap_or(Err(LiveLogError::Capture))
 }
 
 fn exited(status: &ContainerStatus) -> bool {

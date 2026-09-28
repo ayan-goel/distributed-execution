@@ -31,7 +31,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D12 first real job | D05–D11 | CLI submit → gRPC → Docker → verified output → CLI download | full component chain passed with cached digest and fixed fixture resolver; external registry and image pull pending |
 | D13 loss/retry | D09,D12 | Reaper/reconciliation; recorded retry; backoff/deadlines; nonretryable failure | reaper, server loop, and real two-identity retry on one Docker daemon passed; natural timer and independent-host gates pending |
 | D14 cancellation | D12,D13 | Both completion/cancellation race orders, repeat requests, uncertain cleanup | pending |
-| D15 logs | D08,D11 | Bounded queues/spool, noisy-job truncation, stream cursors, reconnect | catalog, HTTP cursor/tail gaps, binary format, private spool, Rust registration client, journaled delivery, bounded Docker follower, assembler, completion summary, CLI follow, and run-time capture with post-exit delivery passed; pre-start attachment and live publication pending |
+| D15 logs | D08,D11 | Bounded queues/spool, noisy-job truncation, stream cursors, reconnect | catalog, HTTP cursor/tail gaps, binary format, private spool, Rust registration client, journaled delivery, bounded Docker follower, assembler, completion summary, CLI follow, pre-start capture, and post-exit delivery passed; live publication pending |
 | D16 datasets | D11 | Immutable registration/cache; corruption rejection; pin-aware eviction | pending |
 | D17 sweeps/metrics | D05,D13,D16 | Atomic 27-child sweep; 1000 cap; concurrency; fail-fast; finite scalar export | pending |
 | D18 placement | D07,D17 | Project fairness/aging, blockers, two real independent hosts without oversubscription | pending |
@@ -2066,3 +2066,18 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   start, then deliver segments while the job runs. The full isolated suite
   passed before the conservative flag; the focused noisy-job gate and native
   test/lint/smoke gate passed again after it.
+
+### D15s: Attach to Docker before container start
+
+- The production agent now establishes Docker's attached stdout/stderr stream
+  before `start`, launches the bounded collector, and joins its result after
+  exit. Launch cleanup aborts unclaimed capture tasks. A recovered container
+  that already ran remains conservatively incomplete.
+- The real Docker fixture writes 3.3 MiB of NUL bytes, exceeding both 8 MiB
+  JSON-file retention windows after escaping. It verifies every byte was
+  cataloged across at least four stdout segments, both streams rendered via
+  the CLI, and the successful completion records complete logs. The targeted
+  isolated fixture, native test/lint/smoke gate, and full isolated
+  PostgreSQL/object-storage/Docker integration suite passed.
+- Segments are still uploaded after exit; live follow during execution is the
+  next D15 gate.

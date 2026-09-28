@@ -1,5 +1,11 @@
 //! Docker operations bound to an immutable attempt; the supervisor owns journaling and leases.
-use crate::{execution::ExecutionSpec, lease::AuthorityWindow, log_capture::LogQueue};
+use crate::{
+    execution::ExecutionSpec,
+    lease::AuthorityWindow,
+    log_capture::{LogQueue, QUEUE_CHUNKS},
+    log_live::{collect_capture, LiveCapture, LiveLogError},
+    log_spool::MAX_SPOOL_BYTES,
+};
 use bollard::{
     container::LogOutput, errors::Error as DockerError, models::*, query_parameters::*, Docker,
     API_DEFAULT_VERSION,
@@ -11,6 +17,7 @@ use std::{
     fmt,
     future::Future,
     path::{Path, PathBuf},
+    sync::Arc,
     time::Duration,
 };
 
@@ -100,6 +107,25 @@ pub struct ContainerHandle {
     id: String,
     expected: ContainerCreateBody,
     image_id: String,
+    capture: Option<Arc<CaptureSlot>>,
+}
+
+type CaptureTask = tokio::task::JoinHandle<Result<LiveCapture, LiveLogError>>;
+
+struct CaptureSlot(tokio::sync::Mutex<Option<Result<CaptureTask, LiveLogError>>>);
+impl fmt::Debug for CaptureSlot {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CaptureSlot").finish_non_exhaustive()
+    }
+}
+impl Drop for CaptureSlot {
+    fn drop(&mut self) {
+        // A failed launch must not leave a detached Docker reader or private
+        // spool writer running after the container cleanup path has started.
+        if let Some(Ok(task)) = self.0.get_mut().take() {
+            task.abort();
+        }
+    }
 }
 impl ContainerHandle {
     pub fn id(&self) -> &str {
@@ -179,6 +205,12 @@ pub trait Runtime {
     ) -> impl Future<Output = Result<(), RuntimeError>> + Send {
         async { Err(RuntimeError::Unsupported) }
     }
+    fn take_capture(
+        &self,
+        _handle: &Self::Handle,
+    ) -> impl Future<Output = Option<Result<CaptureTask, LiveLogError>>> + Send {
+        async { None }
+    }
     fn remove(
         &self,
         handle: &Self::Handle,
@@ -188,8 +220,14 @@ pub trait Runtime {
 pub struct DockerRuntime {
     docker: Docker,
     start_gate: tokio::sync::Mutex<()>,
+    capture_logs: bool,
 }
 impl DockerRuntime {
+    pub async fn connect_with_logs(socket: &str) -> Result<Self, RuntimeError> {
+        let mut runtime = Self::connect(socket).await?;
+        runtime.capture_logs = true;
+        Ok(runtime)
+    }
     pub async fn check_capacity(
         &self,
         resources: &dispatch_protocol::v1::Resources,
@@ -246,6 +284,7 @@ impl DockerRuntime {
         Ok(Self {
             docker,
             start_gate: tokio::sync::Mutex::new(()),
+            capture_logs: false,
         })
     }
 
@@ -264,6 +303,68 @@ impl DockerRuntime {
             return Err(RuntimeError::Identity);
         }
         Ok(actual)
+    }
+
+    async fn attach_capture(
+        &self,
+        id: &str,
+        workspace: &PreparedWorkspace,
+        before_start: bool,
+    ) -> Arc<CaptureSlot> {
+        let options = AttachContainerOptionsBuilder::default()
+            .logs(true)
+            .stream(true)
+            .stdout(true)
+            .stderr(true)
+            .build();
+        let attached = bounded(RPC_TIMEOUT, self.docker.attach_container(id, Some(options))).await;
+        let task = match attached {
+            Ok(attached) => {
+                let root = workspace.root().to_owned();
+                let mut output = attached.output;
+                let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
+                let task = tokio::spawn(async move {
+                    let workspace = PreparedWorkspace::soft_development(root)
+                        .map_err(|_| LiveLogError::Capture)?;
+                    let (queue, receiver, counts) =
+                        LogQueue::bounded(QUEUE_CHUNKS).map_err(|_| LiveLogError::Capture)?;
+                    let producer = async move {
+                        let _ = ready_tx.send(());
+                        while let Some(frame) = output.next().await {
+                            let (stream, bytes) = match frame.map_err(RuntimeError::from)? {
+                                LogOutput::StdOut { message } => {
+                                    (dispatch_protocol::v1::LogStream::Stdout, message)
+                                }
+                                LogOutput::StdErr { message } => {
+                                    (dispatch_protocol::v1::LogStream::Stderr, message)
+                                }
+                                _ => return Err(RuntimeError::Transport),
+                            };
+                            queue
+                                .push_frame(stream, &bytes)
+                                .map_err(|_| RuntimeError::Transport)?;
+                        }
+                        Ok(())
+                    };
+                    let mut captured =
+                        collect_capture(&workspace, MAX_SPOOL_BYTES, receiver, counts, producer)
+                            .await?;
+                    // Recovered containers that already ran may have rotated
+                    // Docker files before this attachment began.
+                    captured.complete &= before_start;
+                    Ok(captured)
+                });
+                match tokio::time::timeout(RPC_TIMEOUT, ready_rx).await {
+                    Ok(Ok(())) => Ok(task),
+                    _ => {
+                        task.abort();
+                        Err(LiveLogError::Capture)
+                    }
+                }
+            }
+            Err(_) => Err(LiveLogError::Capture),
+        };
+        Arc::new(CaptureSlot(tokio::sync::Mutex::new(Some(task))))
     }
 }
 
@@ -355,6 +456,11 @@ impl Runtime for DockerRuntime {
             Err(error) => return Err(error),
         };
         config::verify(&actual, &expected, &image_id)?;
+        let before_start = actual
+            .state
+            .as_ref()
+            .and_then(|state| state.status.as_ref())
+            == Some(&ContainerStateStatusEnum::CREATED);
         let id = actual.id.ok_or(RuntimeError::Identity)?;
         if id.len() != 64
             || !id
@@ -364,10 +470,19 @@ impl Runtime for DockerRuntime {
             return Err(RuntimeError::Identity);
         }
         remaining(authority)?;
+        let capture = if self.capture_logs {
+            // The attach handshake completes while Docker still reports a
+            // created container. This prevents daemon log rotation before
+            // the worker has a reader for the first workload byte.
+            Some(self.attach_capture(&id, workspace, before_start).await)
+        } else {
+            None
+        };
         Ok(ContainerHandle {
             id,
             expected,
             image_id,
+            capture,
         })
     }
 
@@ -537,6 +652,14 @@ impl Runtime for DockerRuntime {
                 .map_err(|_| RuntimeError::Transport)?;
         }
         Ok(())
+    }
+
+    async fn take_capture(
+        &self,
+        handle: &ContainerHandle,
+    ) -> Option<Result<CaptureTask, LiveLogError>> {
+        let slot = handle.capture.as_ref()?;
+        slot.0.lock().await.take()
     }
 
     async fn remove(&self, handle: &ContainerHandle) -> Result<(), RuntimeError> {

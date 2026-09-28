@@ -249,7 +249,7 @@ pub async fn run(config: AgentConfig) -> Result<(), AgentError> {
     .map_err(|_| AgentError::Task)??;
     let session_id = saved.registration().requested_session_id.clone();
     event("session_pending", &config.worker_id, &session_id);
-    let runtime = DockerRuntime::connect(&config.docker_socket).await?;
+    let runtime = DockerRuntime::connect_with_logs(&config.docker_socket).await?;
     runtime
         .check_capacity(
             saved.registration().allocatable.as_ref().unwrap(),
