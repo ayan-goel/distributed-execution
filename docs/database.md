@@ -22,7 +22,7 @@ The database enforces:
 These constraints are a backstop. They do not yet implement authorization, lease
 expiry, placement, sum-of-reservations capacity checks, or allowed transition order.
 Those require the transaction operations and race tests in subsequent slices.
-Artifact/dataset/sweep tables will be added with their corresponding behavior.
+Artifact and dataset tables appear in later migrations. Sweep tables remain pending.
 
 ## Verification command
 
@@ -119,3 +119,15 @@ Migration 0011 adds immutable completion manifests and exact artifact references
 Deferred constraints bind terminal attempt/completion state and the successful
 job's canonical manifest. See [completion publication](completion.md) for capacity,
 retry, cancellation ordering, historical replay, and verification evidence.
+
+## Dataset ownership foundation (D16a)
+
+Migration 0013 adds project-scoped dataset upload declarations and immutable
+dataset registrations. The generated object key contains only the project and
+server-generated upload IDs. A composite foreign key binds each registered
+dataset to an upload from the same project with the same name; uniqueness fixes
+one registered version per project/name and one registration per upload.
+
+This is a schema boundary, not an upload API. The next slices must validate
+manifests, verify the exact object version outside the database transaction,
+authorize registration, resolve names at admission, and stage inputs on workers.

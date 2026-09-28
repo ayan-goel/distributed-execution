@@ -108,6 +108,10 @@ func TestLogCatalogMigrationPreservesActiveAttempt(t *testing.T) {
 	if err := pool.QueryRow(ctx, "SELECT lease_expires_at,phase_deadline FROM attempts WHERE id=$1", request.Authority.AttemptID).Scan(&lease, &phase); err != nil {
 		t.Fatal(err)
 	}
+	datasetDown, err := os.ReadFile("../../migrations/0013_datasets.down.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
 	down, err := os.ReadFile("../../migrations/0012_log_segments.down.sql")
 	if err != nil {
 		t.Fatal(err)
@@ -117,6 +121,12 @@ func TestLogCatalogMigrationPreservesActiveAttempt(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer rollback(tx)
+	if _, err := tx.Exec(ctx, string(datasetDown)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, "DELETE FROM schema_migrations WHERE name='0013_datasets.up.sql'"); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := tx.Exec(ctx, string(down)); err != nil {
 		t.Fatal(err)
 	}

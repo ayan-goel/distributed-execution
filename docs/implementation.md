@@ -32,7 +32,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D13 loss/retry | D09,D12 | Reaper/reconciliation; recorded retry; backoff/deadlines; nonretryable failure | reaper, server loop, and real two-identity retry on one Docker daemon passed; natural timer and independent-host gates pending |
 | D14 cancellation | D12,D13 | Both completion/cancellation race orders, repeat requests, uncertain cleanup | pending |
 | D15 logs | D08,D11 | Bounded queues/spool, noisy-job truncation, stream cursors, reconnect | catalog, HTTP cursor/tail gaps, binary format, private spool, Rust registration client, journaled delivery, bounded Docker follower, assembler, completion summary, CLI follow, pre-start capture, and live publication passed; reconnect/fault matrix pending |
-| D16 datasets | D11 | Immutable registration/cache; corruption rejection; pin-aware eviction | pending |
+| D16 datasets | D11 | Immutable registration/cache; corruption rejection; pin-aware eviction | ownership schema passed; registration, admission, staging, and cache pending |
 | D17 sweeps/metrics | D05,D13,D16 | Atomic 27-child sweep; 1000 cap; concurrency; fail-fast; finite scalar export | pending |
 | D18 placement | D07,D17 | Project fairness/aging, blockers, two real independent hosts without oversubscription | pending |
 | D19 faults/benchmarks | D14–D18 | Spec §21/22 runtime matrix, 27-job worker kill, stale result, measured benchmarks | pending |
@@ -2122,3 +2122,17 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   disabling incremental compilation allowed the same gate to pass.
 - Live follow now has real producer-side publication. Interrupted-transfer,
   reconnect, and noisy-job fault scenarios still need explicit gates.
+
+### D16a: Add immutable project-owned dataset records
+
+- The first real PostgreSQL test failed because dataset upload tables did not
+  exist. Migration 0013 now separates an upload declaration from the registered
+  dataset, generates the writable key from server-owned IDs, and ties the
+  registered project/name to its originating upload with a composite foreign key.
+- Tests reject cross-project claims, renamed uploads, duplicate registered
+  names, mutable declarations or registrations, and unversioned object IDs.
+  Older-schema upgrade fixtures now roll back 0013 before replaying their
+  original migration scenarios.
+- The full isolated PostgreSQL/worker integration suite, native test/lint/smoke,
+  and fresh migration/rollback/reapply gates passed. No dataset upload API,
+  object verification, admission resolution, or worker staging exists yet.
