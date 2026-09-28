@@ -149,3 +149,7 @@ enablement and the original upload declaration before fixing the name, version,
 and manifest. Same-version replay returns the prior registration, while changed
 versions or manifests conflict. Worker tar extraction must independently reject
 unlisted entries and verify each file before mounting it.
+
+The public completion endpoint now supplies the real versioned object-store
+verifier. It never selects the key's latest version implicitly; corrupt bytes
+at the requested version leave the registration table unchanged.

@@ -32,7 +32,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D13 loss/retry | D09,D12 | Reaper/reconciliation; recorded retry; backoff/deadlines; nonretryable failure | reaper, server loop, and real two-identity retry on one Docker daemon passed; natural timer and independent-host gates pending |
 | D14 cancellation | D12,D13 | Both completion/cancellation race orders, repeat requests, uncertain cleanup | pending |
 | D15 logs | D08,D11 | Bounded queues/spool, noisy-job truncation, stream cursors, reconnect | catalog, HTTP cursor/tail gaps, binary format, private spool, Rust registration client, journaled delivery, bounded Docker follower, assembler, completion summary, CLI follow, pre-start capture, and live publication passed; reconnect/fault matrix pending |
-| D16 datasets | D11 | Immutable registration/cache; corruption rejection; pin-aware eviction | ownership schema, replay-safe declarations, registration transaction, and scoped upload-session API passed; completion, admission, staging, and cache pending |
+| D16 datasets | D11 | Immutable registration/cache; corruption rejection; pin-aware eviction | ownership schema, replay-safe declarations, scoped upload and verified completion APIs passed; admission, staging, and cache pending |
 | D17 sweeps/metrics | D05,D13,D16 | Atomic 27-child sweep; 1000 cap; concurrency; fail-fast; finite scalar export | pending |
 | D18 placement | D07,D17 | Project fairness/aging, blockers, two real independent hosts without oversubscription | pending |
 | D19 faults/benchmarks | D14–D18 | Spec §21/22 runtime matrix, 27-job worker kill, stale result, measured benchmarks | pending |
@@ -2179,3 +2179,18 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   test/lint/smoke gate passed. A first unprivileged native run hit a local
   socket permission error in existing Rust fault tests; the permitted rerun
   passed without code changes.
+
+### D16e: Complete an immutable dataset against real storage
+
+- A new HTTP integration test first failed to compile without a completion
+  response or route. The submit-scoped endpoint now accepts a bounded strict
+  manifest request and calls `RegisterDataset` with the real S3-compatible
+  exact-version streaming verifier. It rechecks token revocation after object
+  verification, before registration.
+- The isolated PostgreSQL and versioned SeaweedFS test writes a corrupt version
+  directly at the allocated key and proves it returns an integrity error with
+  no dataset row. It then uploads a valid archive through the signed grant,
+  registers that returned version, and checks same-version replay, changed
+  version conflict, read-token denial, and cross-project 404.
+- Native test/lint/smoke and the full combined PostgreSQL, worker, and
+  versioned-object-storage integration suite passed.

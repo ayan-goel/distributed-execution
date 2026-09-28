@@ -11,6 +11,7 @@
 | `GET /v1/jobs/{id}/artifacts` | read | Accepted outputs with exact-version, 60-second download grants |
 | `GET /v1/attempts/{id}/logs` | read | Registered log ranges, frozen completion gaps, a stream cursor, and exact-version, 60-second download grants |
 | `POST /v1/datasets/uploads` | submit | Reserve a project-owned dataset key and return a 60-second upload grant |
+| `POST /v1/datasets/uploads/{id}/complete` | submit | Verify one exact object version and register the immutable dataset |
 
 Send `Authorization: Bearer <project-token>`. Submission requires `Idempotency-Key`
 (1–128 characters) and one bounded JSON/YAML Job document. New submissions return
@@ -65,9 +66,18 @@ Send the exact declared bytes using the returned method and headers. Identical
 requests replay with a fresh grant and HTTP 200; a new declaration returns 201,
 and changed metadata for the same project/request ID returns 409. A failed
 signer leaves the declaration replayable. This endpoint does not register a
-dataset; completion must verify and freeze one object version in the next slice.
+dataset. Send `POST /v1/datasets/uploads/{id}/complete` with `version` (the
+object store's upload response version ID) and a `manifest` containing
+`format: "tar.v1"` and sorted file entries with `path`, `sizeBytes`, and
+`sha256`. Completion streams and hashes that exact object version against the
+original upload declaration, then freezes its name, version, and manifest.
+It returns 201 for a new registration and 200 for an identical replay;
+changed versions or manifests return 409. A corrupt version returns 422 and
+leaves no dataset registration. Both endpoints require submit permission and
+are scoped to the token's project. Archive entries are independently checked
+against the manifest during worker staging, which remains pending.
 Job listing, full attempt history, log byte rendering/follow, events, sweeps,
-dataset completion/staging, and worker administration remain required.
+dataset admission/staging, and worker administration remain required.
 
 ## Evidence
 
