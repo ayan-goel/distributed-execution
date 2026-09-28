@@ -124,8 +124,10 @@ func (c *Client) requestBody(ctx context.Context, method, path string, body []by
 	}
 	req.Header.Set("Authorization", "Bearer "+c.token)
 	req.Header.Set("Accept", "application/json")
-	if key != "" {
+	if len(body) != 0 {
 		req.Header.Set("Content-Type", "application/json")
+	}
+	if key != "" {
 		req.Header.Set("Idempotency-Key", key)
 	}
 	resp, err := c.http.Do(req)
