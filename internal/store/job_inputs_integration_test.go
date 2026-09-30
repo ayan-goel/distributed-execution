@@ -128,6 +128,19 @@ func TestSubmissionCommitsResolvedInputsWithTheJob(t *testing.T) {
 	if err := pool.QueryRow(ctx, "SELECT dataset_id::text,mount_path FROM job_inputs WHERE job_id=$1 AND position=0", result.ID).Scan(&datasetID, &mount); err != nil || datasetID != registered.ID || mount != "/inputs/one" {
 		t.Fatal("submission did not bind the registered version", datasetID, mount, err)
 	}
+	loaded, err := LoadJobInputs(ctx, pool, projectID, result.ID, job.Spec.Inputs)
+	if err != nil || len(loaded) != 1 || loaded[0].Dataset.ID != registered.ID ||
+		loaded[0].Dataset.Object.Version != "version-1" || loaded[0].Dataset.Manifest.Files[0].Path != "data.txt" ||
+		loaded[0].MountPath != "/inputs/one" {
+		t.Fatal("durable input binding could not be replayed", loaded, err)
+	}
+	if _, err := LoadJobInputs(ctx, pool, uuid.NewString(), result.ID, job.Spec.Inputs); err == nil {
+		t.Fatal("foreign project read a job input")
+	}
+	if _, err := LoadJobInputs(ctx, pool, projectID, result.ID,
+		[]spec.Input{{Dataset: "one", MountPath: "/inputs/changed"}}); err == nil {
+		t.Fatal("stored mount disagreed with job specification")
+	}
 	replay, err := SubmitJobResolved(ctx, pool, key, hash, job, bindings)
 	if err != nil || !replay.Replayed || replay.ID != result.ID {
 		t.Fatal("submission replay changed binding", replay, err)
