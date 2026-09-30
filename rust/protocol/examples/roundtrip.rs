@@ -39,6 +39,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         return Err("64-bit memory limit did not survive transport".into());
     }
+    let input = assignment.inputs.first().ok_or("missing input manifest")?;
+    if input.dataset_id != "00000000-0000-0000-0000-000000000005"
+        || input.mount_path != "/inputs/example"
+        || input
+            .archive
+            .as_ref()
+            .ok_or("missing archive version")?
+            .size_bytes
+            != 4096
+        || !input
+            .file_manifest_json
+            .starts_with(b"{\"format\":\"tar.v1\"")
+        || input.expires_unix_ms != 1_780_000_000_000
+    {
+        return Err("dataset input contract changed in transport".into());
+    }
     io::stdout().write_all(&match page {
         Some(page) => page.encode_to_vec(),
         None => assignment.encode_to_vec(),

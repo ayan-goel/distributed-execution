@@ -105,19 +105,19 @@ message Assignment {
 message InputManifest {
   string dataset_id = 1;
   string mount_path = 2;
-  repeated InputObject objects = 3;
+  reserved 3;
+  // One registered tar.v1 archive is downloaded by the agent, verified, and
+  // expanded against the immutable per-file manifest before any container mount.
+  ObjectVersion archive = 4;
+  bytes file_manifest_json = 5;
+  string download_url = 6;
+  int64 expires_unix_ms = 7;
 }
 message ObjectVersion {
   string key = 1;
   string version_id = 2;
   uint64 size_bytes = 3;
   string sha256 = 4;
-}
-message InputObject {
-  string relative_path = 1;
-  ObjectVersion object = 2;
-  string download_url = 3;
-  int64 expires_unix_ms = 4;
 }
 message AcquireWorkRequest { WorkerSession session = 1; string request_id = 2; }
 message AcquireWorkResponse {

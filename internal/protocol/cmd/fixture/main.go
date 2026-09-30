@@ -18,6 +18,14 @@ func golden() *pb.Assignment {
 		CanonicalJobSpecJson: []byte(`{"kind":"Job"}`),
 		SpecSha256:           "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 		LeaseDurationMs:      25000,
+		Inputs: []*pb.InputManifest{{
+			DatasetId: "00000000-0000-0000-0000-000000000005", MountPath: "/inputs/example",
+			Archive: &pb.ObjectVersion{Key: "projects/p/datasets/archive", VersionId: "v1", SizeBytes: 4096,
+				Sha256: "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"},
+			FileManifestJson: []byte(`{"format":"tar.v1","files":[{"path":"data.txt","sizeBytes":4,"sha256":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}]}`),
+			DownloadUrl:      "https://storage.example.test/projects/p/datasets/archive?versionId=v1&signature=secret",
+			ExpiresUnixMs:    1780000000000,
+		}},
 	}
 }
 
