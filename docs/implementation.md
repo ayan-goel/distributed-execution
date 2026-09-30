@@ -32,7 +32,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D13 loss/retry | D09,D12 | Reaper/reconciliation; recorded retry; backoff/deadlines; nonretryable failure | reaper, server loop, and real two-identity retry on one Docker daemon passed; natural timer and independent-host gates pending |
 | D14 cancellation | D12,D13 | Both completion/cancellation race orders, repeat requests, uncertain cleanup | pending |
 | D15 logs | D08,D11 | Bounded queues/spool, noisy-job truncation, stream cursors, reconnect | catalog, HTTP cursor/tail gaps, binary format, private spool, Rust registration client, journaled delivery, bounded Docker follower, assembler, completion summary, CLI follow, pre-start capture, and live publication passed; reconnect/fault matrix pending |
-| D16 datasets | D11 | Immutable registration/cache; corruption rejection; pin-aware eviction | ownership schema, upload/completion APIs, project-scoped resolution, real CLI registration, and worker download-to-staging composition passed; admission, mount, and cache pending |
+| D16 datasets | D11 | Immutable registration/cache; corruption rejection; pin-aware eviction | ownership schema, upload/completion APIs, project-scoped resolution, real CLI registration, worker download-to-staging composition, and cache policy passed; on-disk cache, admission, and mount pending |
 | D17 sweeps/metrics | D05,D13,D16 | Atomic 27-child sweep; 1000 cap; concurrency; fail-fast; finite scalar export | pending |
 | D18 placement | D07,D17 | Project fairness/aging, blockers, two real independent hosts without oversubscription | pending |
 | D19 faults/benchmarks | D14–D18 | Spec §21/22 runtime matrix, 27-job worker kill, stale result, measured benchmarks | pending |
@@ -2303,3 +2303,17 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 - This handoff still runs independently of job acquisition. Cache pinning,
   admission bindings, Docker mounts, and a real storage-backed worker test
   remain before input-backed jobs are enabled.
+
+### D16n: Define pin-aware cache capacity and eviction policy
+
+- A focused Rust test first failed because no cache index existed. `CacheIndex`
+  now tracks immutable entry sizes, pins, and deterministic recency. When an
+  incoming archive would cross the high watermark, it selects least recently
+  used unpinned entries and prefers reclaiming to the low watermark. It refuses
+  an oversized entry or an admission that cannot fit without evicting a pin.
+- Tests cover pin protection, multiple LRU victims, recency changes, capacity
+  failure, duplicate insertion, and accounting after removal. Native
+  test/lint/smoke passed.
+- This is a policy component only. The filesystem cache must apply each plan
+  and remove an index entry only after safe on-disk deletion; attempt-lifetime
+  pins and restart reconciliation are still required.
