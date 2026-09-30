@@ -38,6 +38,12 @@ func TestSweepSchemaKeepsChildrenUniqueAndProjectScoped(t *testing.T) {
 	if err := insert(owner, sweep, 0); err != nil {
 		t.Fatal("valid child rejected", err)
 	}
+	if _, err := pool.Exec(ctx, "UPDATE jobs SET sweep_index=1 WHERE sweep_id=$1", sweep); err == nil {
+		t.Fatal("child index changed after admission")
+	}
+	if _, err := pool.Exec(ctx, "UPDATE sweeps SET max_concurrent=1 WHERE id=$1", sweep); err == nil {
+		t.Fatal("sweep policy changed after admission")
+	}
 	for _, invalid := range []struct {
 		project string
 		sweep   any

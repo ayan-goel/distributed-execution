@@ -165,5 +165,10 @@ receives their exact object versions and signed download grants.
 Migration 0015 adds project-scoped sweeps with a 1,000-child bound, concurrency
 limit, and failure-policy checks. Each child job carries a sweep ID and stable
 zero-based index. Composite foreign keys and uniqueness reject cross-project
-links, orphan indices, and duplicate child positions. Sweep submission and
-scheduling must still create and enforce these relationships transactionally.
+links, orphan indices, and duplicate child positions. Sweep records and child
+indices cannot change after admission. `SubmitSweepResolved`
+creates the sweep, ordered children, input bindings, submission events, and
+idempotency claim in one transaction. A failed quota check rolls the claim
+back; concurrent same-key requests return the same child IDs. HTTP/CLI
+submission stays closed until scheduling enforces concurrency and failure
+policies.

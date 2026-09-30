@@ -22,3 +22,26 @@ ALTER TABLE jobs ADD CONSTRAINT jobs_sweep_pair
 ALTER TABLE jobs ADD CONSTRAINT jobs_sweep_project
     FOREIGN KEY(project_id,sweep_id) REFERENCES sweeps(project_id,id);
 ALTER TABLE jobs ADD CONSTRAINT jobs_sweep_index_unique UNIQUE(sweep_id,sweep_index);
+
+CREATE FUNCTION protect_sweep_record() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    -- INVARIANT: admitted matrix and concurrency policy stay fixed while child
+    -- state changes; a new sweep is required for a different experiment.
+    RAISE EXCEPTION 'sweep records are immutable' USING ERRCODE='23514';
+END $$;
+CREATE TRIGGER protect_sweep_record BEFORE UPDATE OR DELETE ON sweeps
+FOR EACH ROW EXECUTE FUNCTION protect_sweep_record();
+
+CREATE OR REPLACE FUNCTION protect_job_identity() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF (OLD.id,OLD.project_id,OLD.spec,OLD.spec_hash,OLD.cpu_millis,OLD.memory_mib,OLD.scratch_mib,OLD.sweep_id,OLD.sweep_index)
+        IS DISTINCT FROM (NEW.id,NEW.project_id,NEW.spec,NEW.spec_hash,NEW.cpu_millis,NEW.memory_mib,NEW.scratch_mib,NEW.sweep_id,NEW.sweep_index) THEN
+        RAISE EXCEPTION 'job specifications are immutable; submit a new job' USING ERRCODE='23514';
+    END IF;
+    IF OLD.state IN ('SUCCEEDED','FAILED','CANCELLED') AND
+        (OLD.state,OLD.accepted_attempt_id,OLD.accepted_manifest,OLD.cancel_requested,OLD.attempt_counter)
+        IS DISTINCT FROM (NEW.state,NEW.accepted_attempt_id,NEW.accepted_manifest,NEW.cancel_requested,NEW.attempt_counter) THEN
+        RAISE EXCEPTION 'terminal job outcomes are immutable' USING ERRCODE='23514';
+    END IF;
+    RETURN NEW;
+END $$;
