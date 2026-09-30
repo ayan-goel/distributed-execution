@@ -3,6 +3,8 @@ pub mod agent;
 #[cfg(unix)]
 pub mod completion;
 pub mod control;
+#[cfg(unix)]
+pub mod dataset_staging;
 pub mod execution;
 #[cfg(unix)]
 pub mod finalization;
