@@ -32,7 +32,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D13 loss/retry | D09,D12 | Reaper/reconciliation; recorded retry; backoff/deadlines; nonretryable failure | reaper, server loop, and real two-identity retry on one Docker daemon passed; natural timer and independent-host gates pending |
 | D14 cancellation | D12,D13 | Both completion/cancellation race orders, repeat requests, uncertain cleanup | pending |
 | D15 logs | D08,D11 | Bounded queues/spool, noisy-job truncation, stream cursors, reconnect | catalog, HTTP cursor/tail gaps, binary format, private spool, Rust registration client, journaled delivery, bounded Docker follower, assembler, completion summary, CLI follow, pre-start capture, and live publication passed; reconnect/fault matrix pending |
-| D16 datasets | D11 | Immutable registration/cache; corruption rejection; pin-aware eviction | ownership schema, upload/completion APIs, project-scoped resolution, real CLI registration, and isolated worker download/staging primitives passed; admission, mount, and cache pending |
+| D16 datasets | D11 | Immutable registration/cache; corruption rejection; pin-aware eviction | ownership schema, upload/completion APIs, project-scoped resolution, real CLI registration, and worker download-to-staging composition passed; admission, mount, and cache pending |
 | D17 sweeps/metrics | D05,D13,D16 | Atomic 27-child sweep; 1000 cap; concurrency; fail-fast; finite scalar export | pending |
 | D18 placement | D07,D17 | Project fairness/aging, blockers, two real independent hosts without oversubscription | pending |
 | D19 faults/benchmarks | D14–D18 | Spec §21/22 runtime matrix, 27-job worker kill, stale result, measured benchmarks | pending |
@@ -2290,3 +2290,16 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 - Native test/lint/smoke passed. The primitive is not connected to admission,
   cache pinning, staging, or Docker mounts yet; input-backed jobs remain
   explicitly unsupported.
+
+### D16m: Compose download with manifest-verified staging
+
+- `prepare_dataset` now downloads the exact signed archive into a private
+  temporary file, calls the worker's per-file manifest verifier, and removes
+  the archive whether publication succeeds or fails.
+- A local HTTP integration test serves an archive with a valid object digest.
+  It first gives the worker a mismatched file manifest and verifies no input
+  tree or temporary archive remains; with the correct manifest, only the
+  verified read-only tree is published. Native test/lint/smoke passed.
+- This handoff still runs independently of job acquisition. Cache pinning,
+  admission bindings, Docker mounts, and a real storage-backed worker test
+  remain before input-backed jobs are enabled.
