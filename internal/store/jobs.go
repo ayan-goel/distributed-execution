@@ -80,6 +80,10 @@ func lookupSubmission(ctx context.Context, q rowQuerier, project, key, requestHa
 }
 
 func SubmitJob(ctx context.Context, pool *pgxpool.Pool, key, requestHash string, job spec.Job) (JobRecord, error) {
+	return SubmitJobResolved(ctx, pool, key, requestHash, job, nil)
+}
+
+func SubmitJobResolved(ctx context.Context, pool *pgxpool.Pool, key, requestHash string, job spec.Job, bindings []DatasetBinding) (JobRecord, error) {
 	var result JobRecord
 	if len(key) < 1 || len(key) > 128 || !hashPattern.MatchString(requestHash) {
 		return result, ErrInvalid
@@ -88,11 +92,15 @@ func SubmitJob(ctx context.Context, pool *pgxpool.Pool, key, requestHash string,
 	if err != nil {
 		return result, fmt.Errorf("%w: %v", ErrInvalid, err)
 	}
-	// INVARIANT: queue insertion accepts resolved execution identities only.
-	// Dataset manifests will extend this contract in the data-pipeline slice;
-	// unresolved dataset names must never silently enter the runnable queue.
-	if !pinnedImage.MatchString(job.Spec.Image) || len(job.Spec.Inputs) != 0 {
+	// INVARIANT: each logical input must have one registered identity before
+	// queue insertion. The transaction below binds those IDs to this exact job.
+	if !pinnedImage.MatchString(job.Spec.Image) || len(job.Spec.Inputs) != len(bindings) {
 		return result, fmt.Errorf("%w: image must be pinned and inputs resolved", ErrInvalid)
+	}
+	for i, binding := range bindings {
+		if !canonicalUUID(binding.ID) || binding.Name != job.Spec.Inputs[i].Dataset {
+			return result, ErrInvalid
+		}
 	}
 	tx, err := pool.Begin(ctx)
 	if err != nil {
@@ -141,6 +149,20 @@ func SubmitJob(ctx context.Context, pool *pgxpool.Pool, key, requestHash string,
 		&result.ID, &result.ProjectID, &result.State, &result.Spec, &result.SpecHash, &result.CreatedAt)
 	if err != nil {
 		return result, err
+	}
+	for position, binding := range bindings {
+		// Recheck registered name and project inside the admission transaction.
+		// A forged or stale resolver result cannot enter the runnable queue.
+		tag, err := tx.Exec(ctx, `INSERT INTO job_inputs(job_id,project_id,position,dataset_id,mount_path)
+			SELECT $1,$2,$3,d.id,$4 FROM datasets d
+			WHERE d.id=$5 AND d.project_id=$2 AND d.name=$6`,
+			id, projectID, position, job.Spec.Inputs[position].MountPath, binding.ID, binding.Name)
+		if err != nil {
+			return JobRecord{}, err
+		}
+		if tag.RowsAffected() != 1 {
+			return JobRecord{}, ErrNotFound
+		}
 	}
 	if _, err = tx.Exec(ctx, `INSERT INTO job_events(job_id,sequence,type,payload) VALUES ($1,1,'SUBMITTED',jsonb_build_object('specHash',$2::text))`, id, executionHash); err != nil {
 		return result, err

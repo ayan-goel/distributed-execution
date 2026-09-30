@@ -32,7 +32,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D13 loss/retry | D09,D12 | Reaper/reconciliation; recorded retry; backoff/deadlines; nonretryable failure | reaper, server loop, and real two-identity retry on one Docker daemon passed; natural timer and independent-host gates pending |
 | D14 cancellation | D12,D13 | Both completion/cancellation race orders, repeat requests, uncertain cleanup | pending |
 | D15 logs | D08,D11 | Bounded queues/spool, noisy-job truncation, stream cursors, reconnect | catalog, HTTP cursor/tail gaps, binary format, private spool, Rust registration client, journaled delivery, bounded Docker follower, assembler, completion summary, CLI follow, pre-start capture, and live publication passed; reconnect/fault matrix pending |
-| D16 datasets | D11 | Immutable registration/cache; corruption rejection; pin-aware eviction | ownership schema, upload/completion APIs, project-scoped resolution, real CLI registration, isolated worker cache, and durable job-input binding schema passed; agent integration, admission writes, and mount pending |
+| D16 datasets | D11 | Immutable registration/cache; corruption rejection; pin-aware eviction | ownership schema, upload/completion APIs, project-scoped resolution, real CLI registration, isolated worker cache, and atomic store admission bindings passed; HTTP submission, assignment delivery, agent integration, and mounts pending |
 | D17 sweeps/metrics | D05,D13,D16 | Atomic 27-child sweep; 1000 cap; concurrency; fail-fast; finite scalar export | pending |
 | D18 placement | D07,D17 | Project fairness/aging, blockers, two real independent hosts without oversubscription | pending |
 | D19 faults/benchmarks | D14–D18 | Spec §21/22 runtime matrix, 27-job worker kill, stale result, measured benchmarks | pending |
@@ -2350,3 +2350,17 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 - Submission does not write `job_inputs` yet, and acquisition still rejects
   nonempty inputs. The schema is a durability boundary for the next admission
   slice, not an enabled input-backed execution path.
+
+### D16q: Commit resolved bindings with job submission
+
+- The PostgreSQL test first failed because `SubmitJobResolved` did not exist.
+  The store now requires one ordered registered binding per declared input,
+  checks each dataset ID/name/project again inside the admission transaction,
+  and commits all `job_inputs` rows with the job, idempotency key, and first
+  event. The original `SubmitJob` remains the input-free wrapper.
+- Tests verify the bound dataset and mount path, same-key replay, and complete
+  rollback when a forged dataset ID is supplied. Native test/lint/smoke and
+  the full isolated PostgreSQL/worker integration suite passed.
+- The HTTP endpoint still returns 501 for inputs, and acquisition still rejects
+  them. Those gates remain until assignment delivery, worker validation,
+  cache ownership, and mounts can execute the stored binding safely.

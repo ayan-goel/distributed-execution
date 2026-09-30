@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"dispatch.local/dispatch/internal/objectstore"
+	"dispatch.local/dispatch/internal/spec"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
@@ -85,5 +86,62 @@ func TestJobInputBindingsStayImmutableAndProjectScoped(t *testing.T) {
 	var count int
 	if err := pool.QueryRow(ctx, "SELECT count(*) FROM job_inputs WHERE job_id=$1", record.ID).Scan(&count); err != nil || count != 1 {
 		t.Fatal("binding changed", count, err)
+	}
+}
+
+func TestSubmissionCommitsResolvedInputsWithTheJob(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	if err := Migrate(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
+	var projectID string
+	if err := pool.QueryRow(ctx, `INSERT INTO projects(name,cpu_quota,memory_quota_mib,concurrency_quota)
+		VALUES('resolved-inputs',4000,8192,4) RETURNING id::text`).Scan(&projectID); err != nil {
+		t.Fatal(err)
+	}
+	upload, err := CreateDatasetUpload(ctx, pool, DatasetUploadRequest{ProjectID: projectID,
+		RequestID: uuid.NewString(), Name: "one", SizeBytes: 3, SHA256: strings.Repeat("a", 64)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	registered, err := RegisterDataset(ctx, pool, DatasetRegistrationRequest{ProjectID: projectID,
+		UploadID: upload.ID, Version: "version-1", Manifest: DatasetManifest{Format: "tar.v1",
+			Files: []DatasetFile{{Path: "data.txt", SizeBytes: 3, SHA256: strings.Repeat("b", 64)}}}},
+		func(context.Context, objectstore.Object) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	bindings, err := ResolveDatasetNames(ctx, pool, projectID, []string{"one"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, _ := admittedExample(t)
+	job.Metadata.Project = "resolved-inputs"
+	job.Spec.Inputs = []spec.Input{{Dataset: "one", MountPath: "/inputs/one"}}
+	key, hash := uuid.NewString(), strings.Repeat("c", 64)
+	result, err := SubmitJobResolved(ctx, pool, key, hash, job, bindings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var datasetID, mount string
+	if err := pool.QueryRow(ctx, "SELECT dataset_id::text,mount_path FROM job_inputs WHERE job_id=$1 AND position=0", result.ID).Scan(&datasetID, &mount); err != nil || datasetID != registered.ID || mount != "/inputs/one" {
+		t.Fatal("submission did not bind the registered version", datasetID, mount, err)
+	}
+	replay, err := SubmitJobResolved(ctx, pool, key, hash, job, bindings)
+	if err != nil || !replay.Replayed || replay.ID != result.ID {
+		t.Fatal("submission replay changed binding", replay, err)
+	}
+	bad := bindings[0]
+	bad.ID = uuid.NewString()
+	if _, err := SubmitJobResolved(ctx, pool, uuid.NewString(), hash, job, []DatasetBinding{bad}); err == nil {
+		t.Fatal("unregistered input admitted")
+	}
+	var jobs, inputs int
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM jobs").Scan(&jobs); err != nil || jobs != 1 {
+		t.Fatal("failed binding leaked a job", jobs, err)
+	}
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM job_inputs").Scan(&inputs); err != nil || inputs != 1 {
+		t.Fatal("failed binding leaked an input", inputs, err)
 	}
 }
