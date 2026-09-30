@@ -1,4 +1,6 @@
 use super::{rpc_request, ClientError, ControlClient, RPC_TIMEOUT};
+use crate::dataset_assignment::validate_inputs;
+use crate::dataset_download::DatasetDownloader;
 use crate::execution::ExecutionSpec;
 use crate::lease::{AuthorityWindow, LeaseError, MonoTime};
 use dispatch_protocol::v1::{
@@ -159,12 +161,16 @@ fn check_assignment(
         || assignment.canonical_job_spec_json.is_empty()
         || assignment.canonical_job_spec_json.len() > 2 * 1024 * 1024
         || !lower_hash(&assignment.spec_sha256)
-        || !assignment.inputs.is_empty()
     {
         return Err(ClientError::Response);
     }
     let execution =
         ExecutionSpec::from_assignment(&assignment).map_err(|_| ClientError::Response)?;
+    if !assignment.inputs.is_empty() {
+        let downloader = DatasetDownloader::new(true).map_err(|_| ClientError::Response)?;
+        validate_inputs(&assignment, &execution.job().spec.inputs, &downloader)
+            .map_err(|_| ClientError::Response)?;
+    }
     // Expiry preserves only the authority tuple for reconciliation/cleanup. It
     // never returns a live window that a caller could use to start the workload.
     match AuthorityWindow::from_grant(
@@ -261,7 +267,7 @@ pub(crate) fn canonical_uuid(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dispatch_protocol::v1::{AttemptAuthority, Resources};
+    use dispatch_protocol::v1::{AttemptAuthority, InputManifest, ObjectVersion, Resources};
 
     fn session() -> WorkerSession {
         WorkerSession {
@@ -316,6 +322,48 @@ mod tests {
         AcquireWorkResponse {
             outcome: Some(acquire_work_response::Outcome::Assignment(Box::new(a))),
         }
+    }
+
+    #[test]
+    fn input_assignment_requires_valid_pinned_manifest_and_grant() {
+        let now = MonoTime::now().unwrap();
+        let mut a = assignment();
+        let mut job: serde_json::Value =
+            serde_json::from_slice(&a.canonical_job_spec_json).unwrap();
+        job["spec"]["inputs"] =
+            serde_json::json!([{"dataset":"dataset-v1","mountPath":"/inputs/data"}]);
+        a.canonical_job_spec_json = serde_json::to_vec(&job).unwrap();
+        a.spec_sha256 = ring::digest::digest(&ring::digest::SHA256, &a.canonical_job_spec_json)
+            .as_ref()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        let digest = "a".repeat(64);
+        a.inputs.push(InputManifest {
+            dataset_id: "00000000-0000-0000-0000-000000000005".into(),
+            dataset_name: "dataset-v1".into(),
+            mount_path: "/inputs/data".into(),
+            archive: Some(ObjectVersion {
+                key: "projects/p/datasets/data".into(),
+                version_id: "v1".into(),
+                size_bytes: 4096,
+                sha256: digest.clone(),
+            }),
+            file_manifest_json: format!("{{\"format\":\"tar.v1\",\"files\":[{{\"path\":\"data.txt\",\"sizeBytes\":4,\"sha256\":\"{digest}\"}}]}}").into_bytes(),
+            download_url: "http://127.0.0.1:1/projects/p/datasets/data?versionId=v1".into(),
+            expires_unix_ms: (std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis()
+                + 60_000) as i64,
+        });
+        assert!(matches!(
+            decode_acquisition(&session(), response(a.clone()), now, now).unwrap(),
+            WorkOutcome::Assignment(_)
+        ));
+        a.inputs[0].download_url =
+            "http://127.0.0.1:1/projects/p/datasets/data?versionId=v2".into();
+        assert!(decode_acquisition(&session(), response(a), now, now).is_err());
     }
 
     #[test]

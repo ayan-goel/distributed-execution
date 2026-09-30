@@ -1,9 +1,9 @@
 //! Sequential admission keeps local capacity owned until terminal cleanup.
 use super::{workspace::prepare_attempt_workspace, *};
 use crate::{
-    control::{GrantedAssignment, WorkOutcome},
-    dataset_assignment::{stage_inputs, InputStageError},
-    dataset_cache_store::{CacheStore, CacheStoreError},
+    control::{ClientError, GrantedAssignment, WorkOutcome},
+    dataset_assignment::{stage_validated_input, validate_replayed_input, InputStageError},
+    dataset_cache_store::{CachePin, CacheStore, CacheStoreError},
     dataset_download::DatasetDownloader,
     finalization::{
         prepare_cancelled_completion, prepare_completion, prepare_unlaunched_transfer_failure,
@@ -25,6 +25,7 @@ pub(super) struct ExecutionContext<'a> {
 }
 
 struct InputServices<'a> {
+    request: &'a AcquireWorkRequest,
     downloader: &'a DatasetDownloader,
     cache: &'a CacheStore,
 }
@@ -95,6 +96,7 @@ pub(super) async fn acquire_and_run(
             client,
             &transfers,
             &InputServices {
+                request: &request,
                 downloader: &downloader,
                 cache: &cache,
             },
@@ -168,22 +170,31 @@ async fn run_assignment(
         Vec::new()
     } else {
         match authority
-            .while_live(stage_inputs(
-                grant.assignment(),
-                grant.execution(),
-                inputs.downloader,
-                inputs.cache,
+            .while_live(stage_refreshed_inputs(
+                client,
+                inputs.request,
+                grant,
+                inputs,
                 &mut workspace,
             ))
             .await
         {
             Ok(Ok(pins)) => pins,
-            Ok(Err(InputStageError::Cache(CacheStoreError::Preparation(_)))) => {
+            Ok(Err(StageReplayError::Input(InputStageError::Cache(
+                CacheStoreError::Preparation(_),
+            )))) => {
                 return complete_unlaunched_transfer_failure(context, client, identity, path).await;
             }
-            Ok(Err(error)) => {
+            Ok(Err(StageReplayError::Input(error))) => {
                 remove_workspace(path).await?;
                 return Err(error.into());
+            }
+            Ok(Err(StageReplayError::Control(error))) => {
+                remove_workspace(path).await?;
+                return Err(error.into());
+            }
+            Ok(Err(StageReplayError::StopRequested)) => {
+                return acknowledge_unlaunched(context, client, identity, Some(path)).await;
             }
             Err(StopReason::Rejected(Decision::StopRequested)) => {
                 return acknowledge_unlaunched(context, client, identity, Some(path)).await;
@@ -311,6 +322,57 @@ async fn run_assignment(
     context.runtime.remove(finalizing.handle()).await?;
     drop(finalizing);
     remove_workspace(path).await
+}
+
+enum StageReplayError {
+    Control(ClientError),
+    Input(InputStageError),
+    StopRequested,
+}
+
+async fn stage_refreshed_inputs(
+    client: &mut ControlClient,
+    request: &AcquireWorkRequest,
+    grant: &GrantedAssignment,
+    inputs: &InputServices<'_>,
+    workspace: &mut crate::runtime::PreparedWorkspace,
+) -> Result<Vec<CachePin>, StageReplayError> {
+    let expected = &grant.execution().job().spec.inputs;
+    let mut pins = Vec::with_capacity(expected.len());
+    for index in 0..expected.len() {
+        // Each input starts from a newly signed grant. A long earlier transfer
+        // cannot consume the later input's capability lifetime.
+        let replay = loop {
+            match client.acquire(request).await {
+                Ok(WorkOutcome::Assignment(replay)) => break replay,
+                Ok(WorkOutcome::Rejected(Decision::StopRequested)) => {
+                    return Err(StageReplayError::StopRequested);
+                }
+                Ok(_) => {
+                    return Err(StageReplayError::Input(InputStageError::Assignment(
+                        crate::dataset_assignment::InputError::SpecMismatch,
+                    )))
+                }
+                Err(error) if error.retryable() => {
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                }
+                Err(error) => return Err(StageReplayError::Control(error)),
+            }
+        };
+        let input = validate_replayed_input(
+            grant.assignment(),
+            replay.assignment(),
+            expected,
+            index,
+            inputs.downloader,
+        )
+        .map_err(|error| StageReplayError::Input(InputStageError::Assignment(error)))?;
+        let pin = stage_validated_input(input, inputs.downloader, inputs.cache, workspace)
+            .await
+            .map_err(StageReplayError::Input)?;
+        pins.push(pin);
+    }
+    Ok(pins)
 }
 
 async fn complete_unlaunched_transfer_failure(

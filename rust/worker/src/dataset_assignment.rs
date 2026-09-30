@@ -149,24 +149,34 @@ pub async fn stage_inputs(
         .map_err(InputStageError::Assignment)?;
     let mut pins = Vec::with_capacity(validated.len());
     for input in validated {
-        let pin = cache
-            .prepare(
-                downloader,
-                &input.archive,
-                &input.download_url,
-                input.expires_unix_ms,
-                &input.manifest,
-            )
-            .await
-            .map_err(InputStageError::Cache)?;
-        // The pin belongs to the caller until physical container cleanup.
-        // Failed later inputs drop earlier pins before a container can launch.
-        workspace
-            .bind_input(&input.mount_path, pin.path())
-            .map_err(InputStageError::Mount)?;
+        let pin = stage_validated_input(input, downloader, cache, workspace).await?;
         pins.push(pin);
     }
     Ok(pins)
+}
+
+pub async fn stage_validated_input(
+    input: ValidatedInput,
+    downloader: &DatasetDownloader,
+    cache: &CacheStore,
+    workspace: &mut PreparedWorkspace,
+) -> Result<CachePin, InputStageError> {
+    let pin = cache
+        .prepare(
+            downloader,
+            &input.archive,
+            &input.download_url,
+            input.expires_unix_ms,
+            &input.manifest,
+        )
+        .await
+        .map_err(InputStageError::Cache)?;
+    // The pin belongs to the caller until physical container cleanup.
+    // Failed later inputs drop earlier pins before a container can launch.
+    workspace
+        .bind_input(&input.mount_path, pin.path())
+        .map_err(InputStageError::Mount)?;
+    Ok(pin)
 }
 
 fn valid_name(name: &str) -> bool {
