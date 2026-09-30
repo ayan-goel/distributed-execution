@@ -170,5 +170,10 @@ indices cannot change after admission. `SubmitSweepResolved`
 creates the sweep, ordered children, input bindings, submission events, and
 idempotency claim in one transaction. A failed quota check rolls the claim
 back; concurrent same-key requests return the same child IDs. HTTP/CLI
-submission stays closed until scheduling enforces concurrency and failure
-policies.
+submission stays closed until the remaining failure policy and progress
+transitions are implemented.
+
+Acquisition now counts each sweep's ASSIGNED through FINALIZING attempts while
+ranking candidates and rechecks the count before reserving a worker. A blocked
+child reports `SWEEP_CONCURRENCY`; another runnable job can backfill. Failure
+policy and terminal progress still need their own transitions.

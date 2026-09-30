@@ -117,6 +117,65 @@ func TestAcquisitionConcurrentReplayAndCapacity(t *testing.T) {
 	}
 }
 
+func TestSweepConcurrencyBlocksOnlyItsOwnChildren(t *testing.T) {
+	pool, id, registration := readyAcquisitionWorker(t)
+	ctx := context.Background()
+	job, _ := admittedExample(t)
+	job.Spec.Placement.Labels["architecture"] = "arm64"
+	sweep := spec.Sweep{APIVersion: spec.APIVersion, Kind: "Sweep",
+		Metadata: spec.Metadata{Name: "two-child-grid", Project: "research"},
+		Spec: spec.SweepSpec{JobTemplate: job,
+			Matrix: map[string][]string{"SEED": {"1", "2"}}, MaxConcurrent: 1}}
+	created, err := SubmitSweepResolved(ctx, pool, uuid.NewString(), strings.Repeat("f", 64), sweep, nil)
+	if err != nil || len(created.ChildIDs) != 2 {
+		t.Fatal("sweep was not queued", created, err)
+	}
+	acquire := func() AcquisitionResult {
+		t.Helper()
+		result, err := AcquireWork(ctx, pool, id,
+			AcquisitionRequest{SessionID: registration.SessionID, RequestID: uuid.NewString()}, AcquisitionPolicy{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return result
+	}
+	first := acquire()
+	if first.Assignment == nil || first.Assignment.Authority.JobID != created.ChildIDs[0] {
+		t.Fatal("first sweep child was not assigned", first)
+	}
+	blocked := make(chan AcquisitionResult, 8)
+	var wg sync.WaitGroup
+	for range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			result, err := AcquireWork(ctx, pool, id,
+				AcquisitionRequest{SessionID: registration.SessionID, RequestID: uuid.NewString()}, AcquisitionPolicy{})
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			blocked <- result
+		}()
+	}
+	wg.Wait()
+	close(blocked)
+	for result := range blocked {
+		if result.NoWorkReason != "SWEEP_CONCURRENCY" || result.Assignment != nil {
+			t.Fatal("sweep cap did not block concurrent second child", result)
+		}
+	}
+	unrelated := queueAcquisitionJob(t, pool, nil)
+	if backfill := acquire(); backfill.Assignment == nil || backfill.Assignment.Authority.JobID != unrelated.ID {
+		t.Fatal("blocked sweep hid unrelated job", backfill)
+	}
+	var active int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM attempts a JOIN jobs j ON j.id=a.job_id
+		WHERE j.sweep_id=$1 AND a.state IN ('ASSIGNED','STARTING','RUNNING','FINALIZING')`, created.ID).Scan(&active); err != nil || active != 1 {
+		t.Fatal("sweep exceeded active-attempt cap", active, err)
+	}
+}
+
 func TestInputAssignmentReplaysTheRegisteredArchiveVersion(t *testing.T) {
 	pool, identity, registration := readyAcquisitionWorker(t)
 	ctx := context.Background()
