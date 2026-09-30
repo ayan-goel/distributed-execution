@@ -41,6 +41,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let input = assignment.inputs.first().ok_or("missing input manifest")?;
     if input.dataset_id != "00000000-0000-0000-0000-000000000005"
+        || input.dataset_name != "example"
         || input.mount_path != "/inputs/example"
         || input
             .archive

@@ -32,7 +32,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D13 loss/retry | D09,D12 | Reaper/reconciliation; recorded retry; backoff/deadlines; nonretryable failure | reaper, server loop, and real two-identity retry on one Docker daemon passed; natural timer and independent-host gates pending |
 | D14 cancellation | D12,D13 | Both completion/cancellation race orders, repeat requests, uncertain cleanup | pending |
 | D15 logs | D08,D11 | Bounded queues/spool, noisy-job truncation, stream cursors, reconnect | catalog, HTTP cursor/tail gaps, binary format, private spool, Rust registration client, journaled delivery, bounded Docker follower, assembler, completion summary, CLI follow, pre-start capture, and live publication passed; reconnect/fault matrix pending |
-| D16 datasets | D11 | Immutable registration/cache; corruption rejection; pin-aware eviction | ownership schema, upload/completion APIs, project-scoped resolution, real CLI registration, isolated worker cache, atomic store admission bindings, durable replay, and archive-based assignment contract passed; HTTP submission, assignment population, agent integration, and mounts pending |
+| D16 datasets | D11 | Immutable registration/cache; corruption rejection; pin-aware eviction | ownership schema, upload/completion APIs, project-scoped resolution, real CLI registration, isolated worker cache, atomic store admission bindings, durable replay, archive assignment contract, and isolated worker validation passed; HTTP submission, assignment population, agent integration, and mounts pending |
 | D17 sweeps/metrics | D05,D13,D16 | Atomic 27-child sweep; 1000 cap; concurrency; fail-fast; finite scalar export | pending |
 | D18 placement | D07,D17 | Project fairness/aging, blockers, two real independent hosts without oversubscription | pending |
 | D19 faults/benchmarks | D14–D18 | Spec §21/22 runtime matrix, 27-job worker kill, stale result, measured benchmarks | pending |
@@ -2391,3 +2391,17 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 - Store acquisition and worker execution still reject nonempty inputs. The
   server must populate this contract from durable bindings and sign the exact
   object version; the worker must validate it before staging and mounting.
+
+### D16t: Validate dataset assignments on the worker
+
+- The wire contract now also carries the dataset's logical name so the worker
+  can compare it with the canonical job spec; Go/Rust bindings and the protocol
+  fixture were regenerated. `validate_inputs` checks ordered names and mounts,
+  dataset IDs, nonoverlapping paths, bounded typed file manifests, archive
+  size, exact version URL, and grant expiry before transfer.
+- Focused Rust tests cover a valid input and mismatched name, mount, manifest,
+  archive, version, and expiry. Protocol round-trip, generated-code parity,
+  and native test/lint/smoke passed.
+- This validator is not yet called by `ExecutionSpec::from_assignment`, which
+  still rejects all inputs. It will be connected only with cache ownership and
+  Docker mounts, so an input-backed job cannot run without its data.

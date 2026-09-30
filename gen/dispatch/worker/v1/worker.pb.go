@@ -1128,6 +1128,7 @@ type InputManifest struct {
 	FileManifestJson []byte         `protobuf:"bytes,5,opt,name=file_manifest_json,json=fileManifestJson,proto3" json:"file_manifest_json,omitempty"`
 	DownloadUrl      string         `protobuf:"bytes,6,opt,name=download_url,json=downloadUrl,proto3" json:"download_url,omitempty"`
 	ExpiresUnixMs    int64          `protobuf:"varint,7,opt,name=expires_unix_ms,json=expiresUnixMs,proto3" json:"expires_unix_ms,omitempty"`
+	DatasetName      string         `protobuf:"bytes,8,opt,name=dataset_name,json=datasetName,proto3" json:"dataset_name,omitempty"`
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
@@ -1202,6 +1203,13 @@ func (x *InputManifest) GetExpiresUnixMs() int64 {
 		return x.ExpiresUnixMs
 	}
 	return 0
+}
+
+func (x *InputManifest) GetDatasetName() string {
+	if x != nil {
+		return x.DatasetName
+	}
+	return ""
 }
 
 type ObjectVersion struct {
@@ -2656,7 +2664,7 @@ const file_dispatch_worker_v1_worker_proto_rawDesc = "" +
 	"\x13server_time_unix_ms\x18\b \x01(\x03R\x10serverTimeUnixMs\x12,\n" +
 	"\x12phase_remaining_ms\x18\t \x01(\x04R\x10phaseRemainingMs\x129\n" +
 	"\x06inputs\x18\n" +
-	" \x03(\v2!.dispatch.worker.v1.InputManifestR\x06inputs\"\x89\x02\n" +
+	" \x03(\v2!.dispatch.worker.v1.InputManifestR\x06inputs\"\xac\x02\n" +
 	"\rInputManifest\x12\x1d\n" +
 	"\n" +
 	"dataset_id\x18\x01 \x01(\tR\tdatasetId\x12\x1d\n" +
@@ -2665,7 +2673,8 @@ const file_dispatch_worker_v1_worker_proto_rawDesc = "" +
 	"\aarchive\x18\x04 \x01(\v2!.dispatch.worker.v1.ObjectVersionR\aarchive\x12,\n" +
 	"\x12file_manifest_json\x18\x05 \x01(\fR\x10fileManifestJson\x12!\n" +
 	"\fdownload_url\x18\x06 \x01(\tR\vdownloadUrl\x12&\n" +
-	"\x0fexpires_unix_ms\x18\a \x01(\x03R\rexpiresUnixMsJ\x04\b\x03\x10\x04\"w\n" +
+	"\x0fexpires_unix_ms\x18\a \x01(\x03R\rexpiresUnixMs\x12!\n" +
+	"\fdataset_name\x18\b \x01(\tR\vdatasetNameJ\x04\b\x03\x10\x04\"w\n" +
 	"\rObjectVersion\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x1d\n" +
 	"\n" +

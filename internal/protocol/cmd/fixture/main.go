@@ -19,7 +19,7 @@ func golden() *pb.Assignment {
 		SpecSha256:           "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 		LeaseDurationMs:      25000,
 		Inputs: []*pb.InputManifest{{
-			DatasetId: "00000000-0000-0000-0000-000000000005", MountPath: "/inputs/example",
+			DatasetId: "00000000-0000-0000-0000-000000000005", MountPath: "/inputs/example", DatasetName: "example",
 			Archive: &pb.ObjectVersion{Key: "projects/p/datasets/archive", VersionId: "v1", SizeBytes: 4096,
 				Sha256: "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"},
 			FileManifestJson: []byte(`{"format":"tar.v1","files":[{"path":"data.txt","sizeBytes":4,"sha256":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}]}`),

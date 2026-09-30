@@ -112,6 +112,7 @@ message InputManifest {
   bytes file_manifest_json = 5;
   string download_url = 6;
   int64 expires_unix_ms = 7;
+  string dataset_name = 8;
 }
 message ObjectVersion {
   string key = 1;

@@ -16,14 +16,14 @@ use std::{
 
 const MAX_ARCHIVE_BYTES: u64 = 64 * 1024 * 1024;
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct DatasetManifest {
     pub format: String,
     pub files: Vec<DatasetFile>,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DatasetFile {
     pub path: String,

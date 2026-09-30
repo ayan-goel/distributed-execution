@@ -4,6 +4,8 @@ pub mod agent;
 pub mod completion;
 pub mod control;
 #[cfg(unix)]
+pub mod dataset_assignment;
+#[cfg(unix)]
 pub mod dataset_cache;
 #[cfg(unix)]
 pub mod dataset_cache_store;
