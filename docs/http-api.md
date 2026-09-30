@@ -84,7 +84,8 @@ grant scope, and transfers only bytes matching the declared size and SHA-256.
 `dispatch dataset upload DIRECTORY --name NAME` now builds a deterministic
 archive and completes registration through these endpoints. Its recovery
 options reuse the request ID and exact uploaded version after an uncertain
-response. Live dataset-backed job execution remains pending end-to-end verification.
+response. A live CLI-to-Docker integration test verifies dataset-backed job
+execution and output download; broader dataset fault coverage remains pending.
 Job listing, full attempt history, log byte rendering/follow, events, sweeps,
 worker administration remains required.
 

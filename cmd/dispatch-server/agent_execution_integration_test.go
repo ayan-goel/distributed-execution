@@ -41,7 +41,7 @@ func TestWorkerDaemonAcquiresExecutesAndPublishes(t *testing.T) {
 	publication := &publicationEvidence{}
 	objects := publicationStorage(t, "agent", publication)
 	pki := testWorkerPKI(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 75*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Second)
 	defer cancel()
 	docker := func(args ...string) string {
 		t.Helper()
@@ -87,9 +87,9 @@ func TestWorkerDaemonAcquiresExecutesAndPublishes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	job.Spec.Inputs = nil
+	job.Spec.Inputs = []spec.Input{{Dataset: "sample-v1", MountPath: "/inputs/data"}}
 	job.Spec.Image = image
-	job.Spec.Command = []string{"sh", "-c", "printf abc > /outputs/result; printf 'run out'; head -c 3300000 /dev/zero; printf 'run err' >&2; sleep 15; exit 0"}
+	job.Spec.Command = []string{"sh", "-c", "cat /inputs/data/input.txt > /outputs/result; printf 'run out'; head -c 3300000 /dev/zero; printf 'run err' >&2; sleep 15; exit 0"}
 	job.Spec.Retry.MaxAttempts = 1
 	job.Spec.Outputs = []spec.Output{{Name: "result", Path: "/outputs/result", Required: true, MaxBytes: 3}}
 	job.Spec.Args = nil
@@ -120,6 +120,14 @@ func TestWorkerDaemonAcquiresExecutesAndPublishes(t *testing.T) {
 		}
 		return output.Bytes()
 	}
+	datasetDir := filepath.Join(t.TempDir(), "dataset")
+	if err := os.Mkdir(datasetDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(datasetDir, "input.txt"), []byte("abc"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cliRun("dataset", "upload", datasetDir, "--name", "sample-v1", "--json")
 	var submitted store.JobRecord
 	if err := json.Unmarshal(cliRun("submit", jobFile, "--idempotency-key", "agent-execution", "--json"), &submitted); err != nil || submitted.State != "QUEUED" {
 		t.Fatal("CLI submission did not queue the job", err, submitted.State)
@@ -141,6 +149,25 @@ func TestWorkerDaemonAcquiresExecutesAndPublishes(t *testing.T) {
 	go func() { served <- server.Serve(listener) }()
 	t.Cleanup(func() { server.Stop(); <-served })
 	root := t.TempDir()
+	t.Cleanup(func() {
+		// Staged cache directories are sealed read-only. Reopen only this test's
+		// root after execution so TempDir can remove verified bytes.
+		err := filepath.WalkDir(filepath.Join(root, "work", ".dataset-cache"), func(path string, entry os.DirEntry, walkErr error) error {
+			if os.IsNotExist(walkErr) {
+				return nil
+			}
+			if walkErr != nil {
+				return walkErr
+			}
+			if entry.IsDir() {
+				return os.Chmod(path, 0700)
+			}
+			return nil
+		})
+		if err != nil {
+			t.Error("cannot reopen isolated dataset cache", err)
+		}
+	})
 	for _, name := range []string{"state", "work"} {
 		if err := os.Mkdir(filepath.Join(root, name), 0700); err != nil {
 			t.Fatal(err)

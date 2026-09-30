@@ -34,11 +34,11 @@ subsequent admission. Cancellations before launch and during finalization are
 also covered. The worker captures bounded logs while jobs run and publishes
 sealed segments during execution for `dispatch logs --follow`; missing data is
 reported as incomplete. The CLI can register immutable datasets from a local
-directory. The worker can now download an exact dataset version into a verified,
-pin-aware local cache, but jobs cannot consume datasets until the cache is
-connected to admission and container mounts. Strict scratch limits, full retry
-policy coverage, and other
-v0.1 gates remain. See the
+directory. Dataset-backed jobs now pin project-owned registrations at submission,
+refresh signed download grants, and mount verified cache contents read-only.
+The real worker and Docker integration test reads an uploaded dataset and
+publishes its output. Strict scratch limits, full retry policy coverage, and
+other v0.1 gates remain. See the
 [implementation ledger](docs/implementation.md) for verified progress and remaining work.
 
 ## Development
