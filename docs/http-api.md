@@ -57,8 +57,11 @@ the real HTTP server and Go client. It checks successful and failed jobs, matchi
 submission replay, missing results before completion, and 404 for another project's
 token. Client and CLI tests verify the accepted identity and exact metric text.
 
-Dataset admission currently returns an explicit 501 rather than queuing unresolved
-inputs. `POST /v1/datasets/uploads` accepts one JSON object with `requestId`
+Jobs with inputs resolve registered dataset names within the authenticated
+project and pin the resulting immutable dataset IDs in the submission
+transaction. Missing or other-project names return 404; an identical
+submission replay reads the committed job without resolving datasets again.
+`POST /v1/datasets/uploads` accepts one JSON object with `requestId`
 (UUID), `name`, `sizeBytes`, and lowercase hex `sha256`. The server allocates the
 object key; callers cannot choose one. The response includes `uploadId`,
 `objectKey`, `uploadUrl`, `method`, `requiredHeaders`, `expiresAt`, and `replayed`.
@@ -75,15 +78,15 @@ It returns 201 for a new registration and 200 for an identical replay;
 changed versions or manifests return 409. A corrupt version returns 422 and
 leaves no dataset registration. Both endpoints require submit permission and
 are scoped to the token's project. Archive entries are independently checked
-against the manifest during worker staging, which remains pending.
+against the manifest during worker staging.
 The Go client has typed calls for both metadata endpoints, validates upload
 grant scope, and transfers only bytes matching the declared size and SHA-256.
 `dispatch dataset upload DIRECTORY --name NAME` now builds a deterministic
 archive and completes registration through these endpoints. Its recovery
 options reuse the request ID and exact uploaded version after an uncertain
-response. Dataset-backed job execution remains pending.
+response. Live dataset-backed job execution remains pending end-to-end verification.
 Job listing, full attempt history, log byte rendering/follow, events, sweeps,
-dataset admission/staging, and worker administration remain required.
+worker administration remains required.
 
 ## Evidence
 

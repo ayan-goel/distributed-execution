@@ -194,12 +194,8 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request, p store.Principa
 		s.storeError(w, err)
 		return
 	}
-	// Recover duplicate requests before registry access: losing an HTTP response
-	// must not make an already committed submission depend on a healthy registry.
-	if len(j.Spec.Inputs) > 0 {
-		fail(w, 501, "UNIMPLEMENTED", "dataset admission is not available yet", false)
-		return
-	}
+	// Recover duplicate requests before registry or dataset resolution: losing
+	// an HTTP response must not make a committed submission depend on either.
 	pinned, err := s.images.Resolve(r.Context(), j.Spec.Image)
 	if err != nil {
 		if errors.Is(err, admission.ErrRegistryDenied) {
@@ -210,7 +206,19 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request, p store.Principa
 		return
 	}
 	j.Spec.Image = pinned
-	result, err := store.SubmitJob(r.Context(), s.pool, key, requestHash, j)
+	var bindings []store.DatasetBinding
+	if len(j.Spec.Inputs) > 0 {
+		names := make([]string, len(j.Spec.Inputs))
+		for i, input := range j.Spec.Inputs {
+			names[i] = input.Dataset
+		}
+		bindings, err = store.ResolveDatasetNames(r.Context(), s.pool, p.ProjectID, names)
+		if err != nil {
+			s.storeError(w, err)
+			return
+		}
+	}
+	result, err := store.SubmitJobResolved(r.Context(), s.pool, key, requestHash, j, bindings)
 	if err != nil {
 		s.storeError(w, err)
 		return
