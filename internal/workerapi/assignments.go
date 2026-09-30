@@ -25,7 +25,19 @@ func (s *Service) ListAssignments(ctx context.Context, request *pb.ListAssignmen
 	if err != nil {
 		return nil, rpcError(err)
 	}
-	return assignmentPageResponse(page)
+	response, err := assignmentPageResponse(page)
+	if err != nil {
+		return nil, err
+	}
+	for _, assignment := range response.Assignments {
+		if err := s.signInputGrants(ctx, assignment); err != nil {
+			return nil, err
+		}
+	}
+	if proto.Size(response) > maxWorkerMessageBytes {
+		return nil, status.Error(codes.ResourceExhausted, "ASSIGNMENT_PAGE_TOO_LARGE")
+	}
+	return response, nil
 }
 
 func assignmentPageResponse(page store.AssignmentPage) (*pb.ListAssignmentsResponse, error) {

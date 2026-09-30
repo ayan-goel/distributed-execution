@@ -2,11 +2,13 @@ package workerapi
 
 import (
 	"context"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
 
 	pb "dispatch.local/dispatch/gen/dispatch/worker/v1"
+	"dispatch.local/dispatch/internal/objectstore"
 	"dispatch.local/dispatch/internal/spec"
 	"dispatch.local/dispatch/internal/store"
 	"google.golang.org/grpc/codes"
@@ -62,5 +64,47 @@ func TestAcquisitionWireRejectsUnrecognizedOutcomes(t *testing.T) {
 		if _, err := acquisitionResponse(result); status.Code(err) != codes.Internal {
 			t.Fatal("invalid result became wire authority", result, err)
 		}
+	}
+}
+
+func TestInputWireCarriesAndSignsTheExactRegisteredArchive(t *testing.T) {
+	now := time.Now()
+	a := store.WorkAssignment{
+		Job: spec.Job{Spec: spec.JobSpec{Inputs: []spec.Input{{Dataset: "data-v1", MountPath: "/inputs/data"}}}},
+		Inputs: []store.JobInputBinding{{Dataset: store.DatasetBinding{ID: "00000000-0000-0000-0000-000000000005", Name: "data-v1",
+			Object:   objectstore.Object{Key: "projects/p/datasets/archive", Version: "version-1", Size: 4096, SHA256: strings.Repeat("a", 64)},
+			Manifest: store.DatasetManifest{Format: "tar.v1", Files: []store.DatasetFile{{Path: "data.txt", SizeBytes: 4, SHA256: strings.Repeat("b", 64)}}}},
+			MountPath: "/inputs/data"}},
+		ServerTime: now, LeaseExpiresAt: now.Add(30 * time.Second), PhaseDeadline: now.Add(time.Minute),
+	}
+	response, err := acquisitionResponse(store.AcquisitionResult{Assignment: &a})
+	if err != nil || response.GetAssignment() == nil || len(response.GetAssignment().Inputs) != 1 {
+		t.Fatal("input metadata missing from assignment", response, err)
+	}
+	input := response.GetAssignment().Inputs[0]
+	if input.DatasetName != "data-v1" || input.MountPath != "/inputs/data" || input.Archive.GetVersionId() != "version-1" ||
+		!strings.Contains(string(input.FileManifestJson), `"format":"tar.v1"`) {
+		t.Fatal("assignment changed registered input", input)
+	}
+	objects, err := objectstore.New(objectstore.Config{Endpoint: "https://storage.example.org", Region: "test", Bucket: "results", AccessKey: "test-access", SecretKey: "test-secret"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := NewService(nil, store.AcquisitionPolicy{}, objects)
+	if err := service.signInputGrants(context.Background(), response.GetAssignment()); err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := url.Parse(input.DownloadUrl)
+	if err != nil || parsed.Query().Get("versionId") != "version-1" || !strings.HasSuffix(parsed.Path, "/projects/p/datasets/archive") ||
+		input.ExpiresUnixMs <= time.Now().UnixMilli() || input.ExpiresUnixMs > time.Now().Add(time.Minute).UnixMilli() {
+		t.Fatal("signed grant was not scoped to the immutable version", input, err)
+	}
+	if err := NewService(nil, store.AcquisitionPolicy{}, nil).signInputGrants(context.Background(), response.GetAssignment()); status.Code(err) != codes.Unavailable {
+		t.Fatal("missing storage signer accepted input assignment", err)
+	}
+	bad := a
+	bad.Inputs = []store.JobInputBinding{{Dataset: a.Inputs[0].Dataset, MountPath: "/inputs/other"}}
+	if _, err := acquisitionResponse(store.AcquisitionResult{Assignment: &bad}); status.Code(err) != codes.Internal {
+		t.Fatal("stored binding mismatch became worker authority", err)
 	}
 }

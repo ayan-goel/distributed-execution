@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -73,10 +74,10 @@ func ListAssignments(ctx context.Context, pool *pgxpool.Pool, identity WorkerIde
 	}
 	last := afterJobID
 	bytes := 0
-	// Canonical JSON includes the argv/image bytes repeated on the wire. Budget
-	// half the RPC limit plus envelope headroom. One large item may stand alone;
-	// the RPC adapter additionally checks its exact protobuf size before sending.
-	const specBudget = (4*1024*1024 - 64*1024) / 2
+	// Recovery must leave room for repeated spec fields, manifests, and signed
+	// URLs; an oversized page would otherwise prevent the worker from advancing.
+	// The RPC adapter also checks the exact serialized size after signing.
+	const pageBudget = 4*1024*1024 - 64*1024
 	for _, ref := range references {
 		// These job/attempt/worker locks are already held, so the replay reader
 		// cannot invert lock order while recomputing fresh remaining authority.
@@ -85,8 +86,11 @@ func ListAssignments(ctx context.Context, pool *pgxpool.Pool, identity WorkerIde
 			return AssignmentPage{}, err
 		}
 		if recovered.Assignment != nil {
-			size := len(recovered.Assignment.CanonicalSpec)
-			if len(page.Assignments) > 0 && bytes+size > specBudget {
+			size, err := assignmentBudgetBytes(*recovered.Assignment)
+			if err != nil {
+				return AssignmentPage{}, err
+			}
+			if len(page.Assignments) > 0 && bytes+size > pageBudget {
 				more = true
 				break
 			}
@@ -104,4 +108,18 @@ func ListAssignments(ctx context.Context, pool *pgxpool.Pool, identity WorkerIde
 		return AssignmentPage{}, err
 	}
 	return page, nil
+}
+
+func assignmentBudgetBytes(a WorkAssignment) (int, error) {
+	// The spec is carried as canonical JSON and expanded into argv/image fields.
+	bytes := 2*len(a.CanonicalSpec) + 1024
+	for _, input := range a.Inputs {
+		manifest, err := json.Marshal(input.Dataset.Manifest)
+		if err != nil {
+			return 0, ErrInvalid
+		}
+		// Reserve the RPC's maximum allowed URL plus envelope bytes.
+		bytes += len(manifest) + 64*1024 + 1024
+	}
+	return bytes, nil
 }

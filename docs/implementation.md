@@ -32,7 +32,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D13 loss/retry | D09,D12 | Reaper/reconciliation; recorded retry; backoff/deadlines; nonretryable failure | reaper, server loop, and real two-identity retry on one Docker daemon passed; natural timer and independent-host gates pending |
 | D14 cancellation | D12,D13 | Both completion/cancellation race orders, repeat requests, uncertain cleanup | pending |
 | D15 logs | D08,D11 | Bounded queues/spool, noisy-job truncation, stream cursors, reconnect | catalog, HTTP cursor/tail gaps, binary format, private spool, Rust registration client, journaled delivery, bounded Docker follower, assembler, completion summary, CLI follow, pre-start capture, and live publication passed; reconnect/fault matrix pending |
-| D16 datasets | D11 | Immutable registration/cache; corruption rejection; pin-aware eviction | ownership schema, upload/completion APIs, project-scoped resolution, real CLI registration, isolated worker cache, atomic store admission bindings, durable replay, archive assignment contract, worker validation, and store assignment population passed; signed RPC grants, HTTP submission, agent integration, and mounts pending |
+| D16 datasets | D11 | Immutable registration/cache; corruption rejection; pin-aware eviction | ownership schema, upload/completion APIs, project-scoped resolution, real CLI registration, isolated worker cache, atomic store admission bindings, durable replay, archive assignment contract, worker validation, store assignment population, and signed RPC grants passed; HTTP submission, agent integration, and mounts pending |
 | D17 sweeps/metrics | D05,D13,D16 | Atomic 27-child sweep; 1000 cap; concurrency; fail-fast; finite scalar export | pending |
 | D18 placement | D07,D17 | Project fairness/aging, blockers, two real independent hosts without oversubscription | pending |
 | D19 faults/benchmarks | D14–D18 | Spec §21/22 runtime matrix, 27-job worker kill, stale result, measured benchmarks | pending |
@@ -2418,3 +2418,19 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 - HTTP still returns 501 for input jobs. The worker RPC response has not yet
   populated or signed the input fields, and the Rust execution path still
   rejects inputs; a container cannot launch without them.
+
+### D16v: Sign exact dataset versions in worker assignments
+
+- Acquisition and recovery now translate each durable input binding into the
+  worker's archive contract, including its registered file manifest and mount.
+  After the database transaction commits, the RPC signs a short-lived download
+  grant for that exact object version. An uncertain acquisition reply can replay
+  the same binding with a fresh grant; a missing signer returns an unavailable
+  error rather than an incomplete assignment.
+- Recovery page budgeting now includes manifests and signed URL headroom; the
+  RPC checks exact serialized size after signing. Focused unit tests and an
+  isolated PostgreSQL test verify the pinned version through acquisition replay
+  and recovery. `make test lint smoke` and the full isolated PostgreSQL/worker
+  integration suite passed.
+- HTTP still rejects input jobs, and the Rust agent still rejects input-backed
+  execution. Cache ownership, mounts, and disk-pressure admission remain next.
