@@ -32,7 +32,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D13 loss/retry | D09,D12 | Reaper/reconciliation; recorded retry; backoff/deadlines; nonretryable failure | reaper, server loop, and real two-identity retry on one Docker daemon passed; natural timer and independent-host gates pending |
 | D14 cancellation | D12,D13 | Both completion/cancellation race orders, repeat requests, uncertain cleanup | pending |
 | D15 logs | D08,D11 | Bounded queues/spool, noisy-job truncation, stream cursors, reconnect | catalog, HTTP cursor/tail gaps, binary format, private spool, Rust registration client, journaled delivery, bounded Docker follower, assembler, completion summary, CLI follow, pre-start capture, and live publication passed; reconnect/fault matrix pending |
-| D16 datasets | D11 | Immutable registration/cache; corruption rejection; pin-aware eviction | ownership schema, upload/completion APIs, project-scoped resolution, real CLI registration, worker download-to-staging composition, and cache policy passed; on-disk cache, admission, and mount pending |
+| D16 datasets | D11 | Immutable registration/cache; corruption rejection; pin-aware eviction | ownership schema, upload/completion APIs, project-scoped resolution, real CLI registration, and isolated worker cache passed; agent integration, admission, and mount pending |
 | D17 sweeps/metrics | D05,D13,D16 | Atomic 27-child sweep; 1000 cap; concurrency; fail-fast; finite scalar export | pending |
 | D18 placement | D07,D17 | Project fairness/aging, blockers, two real independent hosts without oversubscription | pending |
 | D19 faults/benchmarks | D14–D18 | Spec §21/22 runtime matrix, 27-job worker kill, stale result, measured benchmarks | pending |
@@ -2317,3 +2317,21 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 - This is a policy component only. The filesystem cache must apply each plan
   and remove an index entry only after safe on-disk deletion; attempt-lifetime
   pins and restart reconciliation are still required.
+
+### D16o: Store verified inputs in a pinned on-disk cache
+
+- The focused worker test first failed because no cache store existed. A
+  process-local `CacheStore` now accepts only an empty worker-owned private
+  root, keys entries by exact object version and typed manifest, and composes
+  download plus staging under a serialized cache operation. Cache hits reuse
+  the sealed tree without a new storage grant.
+- The store holds pins through `CachePin`, applies LRU plans only to unpinned
+  trees, and removes index entries only after on-disk deletion succeeds. A
+  partial deletion poisons the store rather than risking reuse of an incomplete
+  tree. Tests cover reuse, pinned capacity refusal, unpinned eviction, corrupt
+  transfer cleanup, and retry with a valid archive. Local HTTP fixtures are
+  used; native test/lint/smoke passed.
+- This store is not yet part of the agent lifecycle. Startup must reconcile
+  prior mounts before it creates an empty cache root; worker assignment
+  bindings, input mounts, disk-pressure admission, and real storage-backed
+  execution remain open.

@@ -34,9 +34,9 @@ subsequent admission. Cancellations before launch and during finalization are
 also covered. The worker captures bounded logs while jobs run and publishes
 sealed segments during execution for `dispatch logs --follow`; missing data is
 reported as incomplete. The CLI can register immutable datasets from a local
-directory. The worker can now download an exact dataset version and publish
-manifest-verified inputs, but jobs cannot consume datasets until admission, cache,
-and mounts are connected. Strict scratch limits, full retry
+directory. The worker can now download an exact dataset version into a verified,
+pin-aware local cache, but jobs cannot consume datasets until the cache is
+connected to admission and container mounts. Strict scratch limits, full retry
 policy coverage, and other
 v0.1 gates remain. See the
 [implementation ledger](docs/implementation.md) for verified progress and remaining work.

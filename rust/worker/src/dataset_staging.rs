@@ -1,7 +1,7 @@
 //! Verification and atomic publication of a registered dataset archive.
 
 use ring::digest::{Context, SHA256};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::{
     collections::HashSet,
     fmt,
@@ -16,14 +16,14 @@ use std::{
 
 const MAX_ARCHIVE_BYTES: u64 = 64 * 1024 * 1024;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct DatasetManifest {
     pub format: String,
     pub files: Vec<DatasetFile>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DatasetFile {
     pub path: String,
@@ -166,7 +166,7 @@ pub fn stage_archive(
     Ok(())
 }
 
-fn validate_manifest(manifest: &DatasetManifest) -> Result<(), StageError> {
+pub(crate) fn validate_manifest(manifest: &DatasetManifest) -> Result<(), StageError> {
     if manifest.format != "tar.v1" || manifest.files.is_empty() || manifest.files.len() > 1024 {
         return Err(StageError::InvalidManifest);
     }
@@ -222,7 +222,7 @@ fn seal_directories(root: &Path) -> Result<(), StageError> {
     Ok(())
 }
 
-fn reopen_directories(root: &Path) -> std::io::Result<()> {
+pub(crate) fn reopen_directories(root: &Path) -> std::io::Result<()> {
     if !fs::symlink_metadata(root)?.is_dir() {
         return Ok(());
     }

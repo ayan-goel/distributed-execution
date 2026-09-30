@@ -171,7 +171,7 @@ impl DatasetDownloader {
         Ok(())
     }
 
-    fn validate_grant(
+    pub(crate) fn validate_grant(
         &self,
         object: &ObjectVersion,
         raw_url: &str,

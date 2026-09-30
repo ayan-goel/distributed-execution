@@ -50,6 +50,10 @@ impl CacheIndex {
         self.used_bytes
     }
 
+    pub fn contains(&self, key: &str) -> bool {
+        self.entries.contains_key(key)
+    }
+
     pub fn insert(&mut self, key: &str, size_bytes: u64) -> Result<(), CacheError> {
         if key.is_empty() || key.len() > 128 || size_bytes == 0 || self.entries.contains_key(key) {
             return Err(CacheError::InvalidEntry);
