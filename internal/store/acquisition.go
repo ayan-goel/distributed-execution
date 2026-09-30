@@ -23,6 +23,7 @@ type AcquisitionPolicy struct{ AllowSoftScratch bool }
 type WorkAssignment struct {
 	Authority                                 AttemptAuthority
 	Job                                       spec.Job
+	Inputs                                    []JobInputBinding
 	CanonicalSpec                             []byte
 	SpecHash                                  string
 	LeaseExpiresAt, PhaseDeadline, ServerTime time.Time
@@ -207,16 +208,20 @@ func AcquireWork(ctx context.Context, pool *pgxpool.Pool, identity WorkerIdentit
 	result := AcquisitionResult{NoWorkReason: reason}
 	var attemptID *string
 	if reason == "" {
-		if counter >= int64(job.Spec.Retry.MaxAttempts) || len(job.Spec.Inputs) != 0 || !pinnedImage.MatchString(job.Spec.Image) {
+		if counter >= int64(job.Spec.Retry.MaxAttempts) || !pinnedImage.MatchString(job.Spec.Image) {
 			return AcquisitionResult{}, ErrInvalid
 		}
 		canonical, computedHash, err := job.Canonical()
 		if err != nil || computedHash != specHash {
 			return AcquisitionResult{}, ErrInvalid
 		}
+		inputs, err := loadJobInputs(ctx, tx, projectID, jobID, job.Spec.Inputs)
+		if err != nil {
+			return AcquisitionResult{}, err
+		}
 		id := uuid.NewString()
 		attemptID = &id
-		assignment := &WorkAssignment{Authority: AttemptAuthority{JobID: jobID, AttemptID: id, Generation: counter + 1, WorkerID: identity.WorkerID, SessionID: request.SessionID}, Job: job, CanonicalSpec: canonical, SpecHash: specHash, LeaseExpiresAt: now.Add(InitialLease), PhaseDeadline: now.Add(time.Duration(job.Spec.Timeouts.StartupSeconds) * time.Second), ServerTime: now}
+		assignment := &WorkAssignment{Authority: AttemptAuthority{JobID: jobID, AttemptID: id, Generation: counter + 1, WorkerID: identity.WorkerID, SessionID: request.SessionID}, Job: job, Inputs: inputs, CanonicalSpec: canonical, SpecHash: specHash, LeaseExpiresAt: now.Add(InitialLease), PhaseDeadline: now.Add(time.Duration(job.Spec.Timeouts.StartupSeconds) * time.Second), ServerTime: now}
 		if _, err = tx.Exec(ctx, `INSERT INTO attempts(id,job_id,attempt_number,generation,worker_id,session_id,lease_expires_at,phase_deadline) VALUES($1,$2,$3,$3,$4,$5,$6,$7)`, id, jobID, counter+1, identity.WorkerID, request.SessionID, assignment.LeaseExpiresAt, assignment.PhaseDeadline); err != nil {
 			return AcquisitionResult{}, err
 		}
@@ -249,10 +254,11 @@ func AcquireWork(ctx context.Context, pool *pgxpool.Pool, identity WorkerIdentit
 func replayAssignment(ctx context.Context, tx pgx.Tx, identity WorkerIdentity, sessionID, attemptID string) (AcquisitionResult, error) {
 	var assignment WorkAssignment
 	var body []byte
+	var projectID string
 	var current *string
 	var cancelled bool
 	var state string
-	if err := tx.QueryRow(ctx, "SELECT j.id::text,j.current_attempt_id::text,j.cancel_requested,j.spec,j.spec_hash FROM jobs j JOIN attempts a ON a.job_id=j.id WHERE a.id=$1 FOR UPDATE OF j", attemptID).Scan(&assignment.Authority.JobID, &current, &cancelled, &body, &assignment.SpecHash); err != nil {
+	if err := tx.QueryRow(ctx, "SELECT j.id::text,j.project_id::text,j.current_attempt_id::text,j.cancel_requested,j.spec,j.spec_hash FROM jobs j JOIN attempts a ON a.job_id=j.id WHERE a.id=$1 FOR UPDATE OF j", attemptID).Scan(&assignment.Authority.JobID, &projectID, &current, &cancelled, &body, &assignment.SpecHash); err != nil {
 		return AcquisitionResult{}, err
 	}
 	if err := tx.QueryRow(ctx, "SELECT id::text,worker_id::text,session_id::text,generation,state,lease_expires_at,phase_deadline FROM attempts WHERE id=$1 FOR UPDATE", attemptID).Scan(&assignment.Authority.AttemptID, &assignment.Authority.WorkerID, &assignment.Authority.SessionID, &assignment.Authority.Generation, &state, &assignment.LeaseExpiresAt, &assignment.PhaseDeadline); err != nil {
@@ -284,5 +290,9 @@ func replayAssignment(ctx context.Context, tx pgx.Tx, identity WorkerIdentity, s
 		return AcquisitionResult{}, ErrInvalid
 	}
 	assignment.CanonicalSpec = canonical
+	assignment.Inputs, err = loadJobInputs(ctx, tx, projectID, assignment.Authority.JobID, assignment.Job.Spec.Inputs)
+	if err != nil {
+		return AcquisitionResult{}, err
+	}
 	return AcquisitionResult{Assignment: &assignment}, nil
 }

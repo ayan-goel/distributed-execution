@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"dispatch.local/dispatch/internal/objectstore"
 	"dispatch.local/dispatch/internal/spec"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -113,6 +114,55 @@ func TestAcquisitionConcurrentReplayAndCapacity(t *testing.T) {
 	}
 	if err := pool.QueryRow(ctx, "SELECT count(*) FROM job_events WHERE type='ASSIGNED'").Scan(&count); err != nil || count != 2 {
 		t.Fatal("assignment events not atomic", count, err)
+	}
+}
+
+func TestInputAssignmentReplaysTheRegisteredArchiveVersion(t *testing.T) {
+	pool, identity, registration := readyAcquisitionWorker(t)
+	ctx := context.Background()
+	var projectID string
+	if err := pool.QueryRow(ctx, "SELECT id::text FROM projects WHERE name='research'").Scan(&projectID); err != nil {
+		t.Fatal(err)
+	}
+	upload, err := CreateDatasetUpload(ctx, pool, DatasetUploadRequest{ProjectID: projectID,
+		RequestID: uuid.NewString(), Name: "input-v1", SizeBytes: 4096, SHA256: strings.Repeat("a", 64)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	registered, err := RegisterDataset(ctx, pool, DatasetRegistrationRequest{ProjectID: projectID,
+		UploadID: upload.ID, Version: "immutable-v1", Manifest: DatasetManifest{Format: "tar.v1",
+			Files: []DatasetFile{{Path: "data.txt", SizeBytes: 4, SHA256: strings.Repeat("b", 64)}}}},
+		func(context.Context, objectstore.Object) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	bindings, err := ResolveDatasetNames(ctx, pool, projectID, []string{"input-v1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, hash := admittedExample(t)
+	job.Spec.Placement.Labels["architecture"] = "arm64"
+	job.Spec.Inputs = []spec.Input{{Dataset: "input-v1", MountPath: "/inputs/data"}}
+	record, err := SubmitJobResolved(ctx, pool, uuid.NewString(), hash, job, bindings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := AcquisitionRequest{SessionID: registration.SessionID, RequestID: uuid.NewString()}
+	first, err := AcquireWork(ctx, pool, identity, request, AcquisitionPolicy{})
+	if err != nil || first.Assignment == nil || first.Assignment.Authority.JobID != record.ID ||
+		len(first.Assignment.Inputs) != 1 || first.Assignment.Inputs[0].Dataset.ID != registered.ID ||
+		first.Assignment.Inputs[0].Dataset.Object.Version != "immutable-v1" {
+		t.Fatal("acquisition did not carry frozen input", first, err)
+	}
+	replayed, err := AcquireWork(ctx, pool, identity, request, AcquisitionPolicy{})
+	if err != nil || replayed.Assignment == nil || len(replayed.Assignment.Inputs) != 1 ||
+		replayed.Assignment.Inputs[0].Dataset.Object.Version != "immutable-v1" {
+		t.Fatal("request replay lost frozen input", replayed, err)
+	}
+	page, err := ListAssignments(ctx, pool, identity, registration.SessionID, "", 1)
+	if err != nil || len(page.Assignments) != 1 || len(page.Assignments[0].Inputs) != 1 ||
+		page.Assignments[0].Inputs[0].Dataset.Object.Version != "immutable-v1" {
+		t.Fatal("recovery page lost frozen input", page, err)
 	}
 }
 
