@@ -16,6 +16,16 @@ import (
 
 func rollbackJobInputs(t *testing.T, ctx context.Context, tx pgx.Tx) {
 	t.Helper()
+	sweepDown, err := os.ReadFile("../../migrations/0015_sweeps.down.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, string(sweepDown)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, "DELETE FROM schema_migrations WHERE name='0015_sweeps.up.sql'"); err != nil {
+		t.Fatal(err)
+	}
 	down, err := os.ReadFile("../../migrations/0014_job_inputs.down.sql")
 	if err != nil {
 		t.Fatal(err)

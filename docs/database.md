@@ -22,7 +22,7 @@ The database enforces:
 These constraints are a backstop. They do not yet implement authorization, lease
 expiry, placement, sum-of-reservations capacity checks, or allowed transition order.
 Those require the transaction operations and race tests in subsequent slices.
-Artifact and dataset tables appear in later migrations. Sweep tables remain pending.
+Artifact, dataset, and sweep tables appear in later migrations.
 
 ## Verification command
 
@@ -90,10 +90,10 @@ existing job; a different request hash returns `ErrConflict`.
 work, so retrying a lost response need not depend on registry availability. Callers
 must authenticate and authorize the project before using either operation.
 
-Queue insertion currently requires a SHA-256-pinned image and zero unresolved
-dataset references. It does not itself contact registries. The upcoming admission
-and dataset slices will supply verified image/input versions. The public HTTP API
-must not expose this internal precondition as a bypass for external validation.
+Queue insertion requires a SHA-256-pinned image and a registered binding for
+every dataset input. It does not itself contact registries or object storage.
+The HTTP API resolves images and project-owned datasets before calling it; the
+transaction rechecks each dataset's project and name before committing.
 
 The real-database suite sends 100 concurrent same-key submissions and asserts one
 job/key/event, verifies request-vs-execution hashes, and injects a failure at the event
@@ -157,4 +157,13 @@ at the requested version leave the registration table unchanged.
 `ResolveDatasetNames` reads registered names only within the calling project
 and returns pinned versions and manifests in requested order. A missing name
 rejects the complete lookup, including when another project owns that name.
-Admission must still bind these results into the immutable job specification.
+HTTP admission binds these results into the job transaction. The worker later
+receives their exact object versions and signed download grants.
+
+## Sweep ownership foundation (D17a)
+
+Migration 0015 adds project-scoped sweeps with a 1,000-child bound, concurrency
+limit, and failure-policy checks. Each child job carries a sweep ID and stable
+zero-based index. Composite foreign keys and uniqueness reject cross-project
+links, orphan indices, and duplicate child positions. Sweep submission and
+scheduling must still create and enforce these relationships transactionally.
