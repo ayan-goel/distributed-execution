@@ -1,11 +1,14 @@
 #![cfg(unix)]
 
-use dispatch_protocol::v1::ObjectVersion;
+use dispatch_protocol::v1::{Assignment, InputManifest, ObjectVersion, Resources};
 use dispatch_worker::{
+    dataset_assignment::stage_inputs,
     dataset_cache::CacheError,
     dataset_cache_store::{CacheStore, CacheStoreError},
     dataset_download::DatasetDownloader,
     dataset_staging::{DatasetFile, DatasetManifest},
+    execution::ExecutionSpec,
+    runtime::PreparedWorkspace,
 };
 use ring::digest::{digest, SHA256};
 use std::{fs, io::Cursor, os::unix::fs::PermissionsExt, path::PathBuf};
@@ -173,6 +176,88 @@ async fn corrupt_download_does_not_create_a_cache_entry() {
     assert_eq!(fs::read(pin.path().join("input.txt")).unwrap(), b"clean");
     drop(pin);
     for entry in fs::read_dir(&root).unwrap() {
+        fs::set_permissions(entry.unwrap().path(), fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn assignment_preparation_binds_only_verified_cached_bytes() {
+    let root = fixture();
+    let cache_root = root.join("cache");
+    fs::create_dir(&cache_root).unwrap();
+    fs::set_permissions(&cache_root, fs::Permissions::from_mode(0o700)).unwrap();
+    let work = root.join("work");
+    fs::create_dir(&work).unwrap();
+    let work = work.canonicalize().unwrap();
+    for child in ["inputs", "outputs", "scratch"] {
+        fs::create_dir(work.join(child)).unwrap();
+    }
+    let (archive, manifest, bytes) = dataset("bound");
+    let cache = CacheStore::new(&cache_root, archive.size_bytes * 2, archive.size_bytes).unwrap();
+    let downloader = DatasetDownloader::new(true).unwrap();
+    let url = serve("bound", bytes).await;
+    let image = format!("example.org/test@sha256:{}", "a".repeat(64));
+    let raw = serde_json::to_vec(&serde_json::json!({
+        "apiVersion":"dispatch.dev/v1alpha1", "kind":"Job", "metadata":{"name":"test", "project":"research"},
+        "spec":{"image":image,"command":["true"],"resources":{"cpuMillis":1000,"memoryMiB":128,"scratchMiB":64},
+        "placement":{},"inputs":[{"dataset":"bound","mountPath":"/inputs/bound"}],"network":"disabled",
+        "timeouts":{"startupSeconds":30,"executionSeconds":30,"finalizationSeconds":30},
+        "retry":{"maxAttempts":1,"initialBackoffSeconds":1,"maxBackoffSeconds":1},"terminationGraceSeconds":1}
+    })).unwrap();
+    let assignment = Assignment {
+        image_digest: image,
+        argv: vec!["true".into()],
+        resources: Some(Resources {
+            cpu_millis: 1000,
+            memory_bytes: 128 << 20,
+            scratch_bytes: 64 << 20,
+        }),
+        spec_sha256: sha(&raw),
+        canonical_job_spec_json: raw,
+        inputs: vec![InputManifest {
+            dataset_id: "00000000-0000-0000-0000-000000000005".into(),
+            dataset_name: "bound".into(),
+            mount_path: "/inputs/bound".into(),
+            archive: Some(archive),
+            file_manifest_json: serde_json::to_vec(&manifest).unwrap(),
+            download_url: url,
+            expires_unix_ms: expiry(),
+        }],
+        ..Default::default()
+    };
+    let execution = ExecutionSpec::from_assignment(&assignment).unwrap();
+    let mut workspace = PreparedWorkspace::soft_development(&work).unwrap();
+    let pins = stage_inputs(&assignment, &execution, &downloader, &cache, &mut workspace)
+        .await
+        .unwrap();
+    assert_eq!(pins.len(), 1);
+    assert_eq!(
+        fs::read(pins[0].path().join("input.txt")).unwrap(),
+        b"bound"
+    );
+    assert!(work.join("inputs/bound").is_dir());
+    let rejected_work = root.join("rejected");
+    fs::create_dir(&rejected_work).unwrap();
+    let rejected_work = rejected_work.canonicalize().unwrap();
+    for child in ["inputs", "outputs", "scratch"] {
+        fs::create_dir(rejected_work.join(child)).unwrap();
+    }
+    let mut rejected = assignment.clone();
+    rejected.inputs[0].download_url = "http://example.org/other".into();
+    let mut rejected_workspace = PreparedWorkspace::soft_development(&rejected_work).unwrap();
+    assert!(stage_inputs(
+        &rejected,
+        &execution,
+        &downloader,
+        &cache,
+        &mut rejected_workspace
+    )
+    .await
+    .is_err());
+    assert!(!rejected_work.join("inputs/bound").exists());
+    drop(pins);
+    for entry in fs::read_dir(&cache_root).unwrap() {
         fs::set_permissions(entry.unwrap().path(), fs::Permissions::from_mode(0o700)).unwrap();
     }
     fs::remove_dir_all(root).unwrap();

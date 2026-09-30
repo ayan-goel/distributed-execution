@@ -32,7 +32,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D13 loss/retry | D09,D12 | Reaper/reconciliation; recorded retry; backoff/deadlines; nonretryable failure | reaper, server loop, and real two-identity retry on one Docker daemon passed; natural timer and independent-host gates pending |
 | D14 cancellation | D12,D13 | Both completion/cancellation race orders, repeat requests, uncertain cleanup | pending |
 | D15 logs | D08,D11 | Bounded queues/spool, noisy-job truncation, stream cursors, reconnect | catalog, HTTP cursor/tail gaps, binary format, private spool, Rust registration client, journaled delivery, bounded Docker follower, assembler, completion summary, CLI follow, pre-start capture, and live publication passed; reconnect/fault matrix pending |
-| D16 datasets | D11 | Immutable registration/cache; corruption rejection; pin-aware eviction | ownership schema, upload/completion APIs, project-scoped resolution, real CLI registration, isolated worker cache, atomic store admission bindings, durable replay, archive assignment contract, worker validation, store assignment population, signed RPC grants, strict job-to-wire matching, real read-only Docker mount, and startup cache reset passed; HTTP submission and agent integration pending |
+| D16 datasets | D11 | Immutable registration/cache; corruption rejection; pin-aware eviction | ownership schema, upload/completion APIs, project-scoped resolution, real CLI registration, isolated worker cache, atomic store admission bindings, durable replay, archive assignment contract, worker validation, store assignment population, signed RPC grants, strict job-to-wire matching, real read-only Docker mount, startup cache reset, and assignment-to-cache preparation passed; HTTP submission and agent integration pending |
 | D17 sweeps/metrics | D05,D13,D16 | Atomic 27-child sweep; 1000 cap; concurrency; fail-fast; finite scalar export | pending |
 | D18 placement | D07,D17 | Project fairness/aging, blockers, two real independent hosts without oversubscription | pending |
 | D19 faults/benchmarks | D14–D18 | Spec §21/22 runtime matrix, 27-job worker kill, stale result, measured benchmarks | pending |
@@ -2476,3 +2476,16 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 - The agent has not yet constructed `CacheStore` from this root or staged inputs
   into it, so the input admission gate remains closed. `make test lint smoke`
   passed.
+
+### D16z: Compose assignment validation, cache staging, and mount preparation
+
+- `stage_inputs` validates every signed archive against the hashed job's ordered
+  dataset names and mount paths before touching the cache. It prepares each
+  exact object version, binds only the sealed cache directory into the private
+  workspace, and returns the pins for the agent to hold through container
+  cleanup. Errors expose no bearer URLs.
+- A local HTTP test first failed because this composition entry point was
+  absent. It now verifies the downloaded file bytes and workspace mountpoint;
+  a changed download URL is rejected even when the dataset is already cached.
+  The agent still has not called this helper or opened input-backed acquisition.
+  `make test lint smoke` passed.

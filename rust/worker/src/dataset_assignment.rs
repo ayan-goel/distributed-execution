@@ -2,9 +2,11 @@
 
 use crate::{
     control::canonical_uuid,
+    dataset_cache_store::{CachePin, CacheStore, CacheStoreError},
     dataset_download::DatasetDownloader,
     dataset_staging::{validate_manifest, DatasetManifest},
-    execution::Input,
+    execution::{ExecutionSpec, Input},
+    runtime::{PreparedWorkspace, RuntimeError},
 };
 use dispatch_protocol::v1::{Assignment, ObjectVersion};
 use std::fmt;
@@ -22,6 +24,19 @@ impl fmt::Display for InputError {
     }
 }
 impl std::error::Error for InputError {}
+
+#[derive(Debug)]
+pub enum InputStageError {
+    Assignment(InputError),
+    Cache(CacheStoreError),
+    Mount(RuntimeError),
+}
+impl fmt::Display for InputStageError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("dataset input preparation failed")
+    }
+}
+impl std::error::Error for InputStageError {}
 
 pub struct ValidatedInput {
     pub dataset_id: String,
@@ -88,6 +103,37 @@ pub fn validate_inputs(
         });
     }
     Ok(validated)
+}
+
+pub async fn stage_inputs(
+    assignment: &Assignment,
+    execution: &ExecutionSpec,
+    downloader: &DatasetDownloader,
+    cache: &CacheStore,
+    workspace: &mut PreparedWorkspace,
+) -> Result<Vec<CachePin>, InputStageError> {
+    let validated = validate_inputs(assignment, &execution.job().spec.inputs, downloader)
+        .map_err(InputStageError::Assignment)?;
+    let mut pins = Vec::with_capacity(validated.len());
+    for input in validated {
+        let pin = cache
+            .prepare(
+                downloader,
+                &input.archive,
+                &input.download_url,
+                input.expires_unix_ms,
+                &input.manifest,
+            )
+            .await
+            .map_err(InputStageError::Cache)?;
+        // The pin belongs to the caller until physical container cleanup.
+        // Failed later inputs drop earlier pins before a container can launch.
+        workspace
+            .bind_input(&input.mount_path, pin.path())
+            .map_err(InputStageError::Mount)?;
+        pins.push(pin);
+    }
+    Ok(pins)
 }
 
 fn valid_name(name: &str) -> bool {
