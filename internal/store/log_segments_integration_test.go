@@ -121,6 +121,7 @@ func TestLogCatalogMigrationPreservesActiveAttempt(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer rollback(tx)
+	rollbackJobInputs(t, ctx, tx)
 	if _, err := tx.Exec(ctx, string(datasetDown)); err != nil {
 		t.Fatal(err)
 	}

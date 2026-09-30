@@ -469,6 +469,7 @@ func TestCompletionMigrationPreservesVerifiedArtifact(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer rollback(tx)
+	rollbackJobInputs(t, ctx, tx)
 	datasetDown, err := os.ReadFile("../../migrations/0013_datasets.down.sql")
 	if err != nil {
 		t.Fatal(err)

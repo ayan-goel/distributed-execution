@@ -32,7 +32,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D13 loss/retry | D09,D12 | Reaper/reconciliation; recorded retry; backoff/deadlines; nonretryable failure | reaper, server loop, and real two-identity retry on one Docker daemon passed; natural timer and independent-host gates pending |
 | D14 cancellation | D12,D13 | Both completion/cancellation race orders, repeat requests, uncertain cleanup | pending |
 | D15 logs | D08,D11 | Bounded queues/spool, noisy-job truncation, stream cursors, reconnect | catalog, HTTP cursor/tail gaps, binary format, private spool, Rust registration client, journaled delivery, bounded Docker follower, assembler, completion summary, CLI follow, pre-start capture, and live publication passed; reconnect/fault matrix pending |
-| D16 datasets | D11 | Immutable registration/cache; corruption rejection; pin-aware eviction | ownership schema, upload/completion APIs, project-scoped resolution, real CLI registration, and isolated worker cache passed; agent integration, admission, and mount pending |
+| D16 datasets | D11 | Immutable registration/cache; corruption rejection; pin-aware eviction | ownership schema, upload/completion APIs, project-scoped resolution, real CLI registration, isolated worker cache, and durable job-input binding schema passed; agent integration, admission writes, and mount pending |
 | D17 sweeps/metrics | D05,D13,D16 | Atomic 27-child sweep; 1000 cap; concurrency; fail-fast; finite scalar export | pending |
 | D18 placement | D07,D17 | Project fairness/aging, blockers, two real independent hosts without oversubscription | pending |
 | D19 faults/benchmarks | D14–D18 | Spec §21/22 runtime matrix, 27-job worker kill, stale result, measured benchmarks | pending |
@@ -2335,3 +2335,18 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   prior mounts before it creates an empty cache root; worker assignment
   bindings, input mounts, disk-pressure admission, and real storage-backed
   execution remain open.
+
+### D16p: Add immutable project-scoped job input bindings
+
+- The PostgreSQL test first failed because `job_inputs` did not exist.
+  Migration 0014 records each input's ordered mount path and dataset ID with
+  composite foreign keys tying both the job and dataset to the same project.
+  Bindings reject later updates or deletion, so retries cannot silently switch
+  to a different registered dataset version.
+- Tests reject cross-project bindings and mutation. Older-schema rollback
+  fixtures now remove 0014 before 0013, and the migration-count check reflects
+  fourteen applied migrations. Fresh apply/rollback/reapply, the full isolated
+  store/worker integration suite, and native test/lint/smoke passed.
+- Submission does not write `job_inputs` yet, and acquisition still rejects
+  nonempty inputs. The schema is a durability boundary for the next admission
+  slice, not an enabled input-backed execution path.
