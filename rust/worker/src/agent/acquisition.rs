@@ -2,6 +2,9 @@
 use super::{workspace::prepare_attempt_workspace, *};
 use crate::{
     control::{GrantedAssignment, WorkOutcome},
+    dataset_assignment::stage_inputs,
+    dataset_cache_store::CacheStore,
+    dataset_download::DatasetDownloader,
     finalization::{
         prepare_cancelled_completion, prepare_completion, publish_finished_logs, FinalizationError,
     },
@@ -20,6 +23,11 @@ pub(super) struct ExecutionContext<'a> {
     pub journal: &'a AsyncJournal,
 }
 
+struct InputServices<'a> {
+    downloader: &'a DatasetDownloader,
+    cache: &'a CacheStore,
+}
+
 pub(super) async fn acquire_and_run(
     context: ExecutionContext<'_>,
     client: &mut ControlClient,
@@ -31,6 +39,17 @@ pub(super) async fn acquire_and_run(
         session_id: context.session_id.to_owned(),
     };
     let transfers = TransferClient::new(true).map_err(|_| AgentError::Configuration)?;
+    let downloader = DatasetDownloader::new(true).map_err(|_| AgentError::Configuration)?;
+    while !*ready.borrow_and_update() {
+        ready.changed().await.map_err(|_| AgentError::Task)?;
+    }
+    // The health loop creates this empty root only after predecessor containers
+    // are gone. No cache entry may be reused across an unreconciled incarnation.
+    let cache = CacheStore::new(
+        &context.root.join(".dataset-cache"),
+        context.config.dataset_cache_high_mib << 20,
+        context.config.dataset_cache_low_mib << 20,
+    )?;
     loop {
         while !*ready.borrow_and_update() {
             ready.changed().await.map_err(|_| AgentError::Task)?;
@@ -70,8 +89,19 @@ pub(super) async fn acquire_and_run(
             tokio::spawn(async move { renewal_client.maintain_leases(vec![controller]).await });
         // Do not admit another job until the container and workspace are gone.
         // On uncertain cleanup, exit and let a new fenced incarnation reconcile.
-        let result =
-            run_assignment(&context, client, &transfers, &session, &grant, authority).await;
+        let result = run_assignment(
+            &context,
+            client,
+            &transfers,
+            &InputServices {
+                downloader: &downloader,
+                cache: &cache,
+            },
+            &session,
+            &grant,
+            authority,
+        )
+        .await;
         active.send_replace(None);
         let renewed = renewal.await.map_err(|_| AgentError::Task)?;
         result?;
@@ -88,6 +118,7 @@ async fn run_assignment(
     context: &ExecutionContext<'_>,
     client: &mut ControlClient,
     transfers: &TransferClient,
+    inputs: &InputServices<'_>,
     session: &WorkerSession,
     grant: &GrantedAssignment,
     mut authority: SupervisedAuthority,
@@ -118,7 +149,7 @@ async fn run_assignment(
     }
     let mut preparation =
         tokio::task::spawn_blocking(move || prepare_attempt_workspace(&root, &attempt_id, scratch));
-    let workspace = match authority.while_live(&mut preparation).await {
+    let mut workspace = match authority.while_live(&mut preparation).await {
         Ok(result) => result.map_err(|_| AgentError::Task)??,
         Err(reason) => {
             // Dropping a blocking task does not stop its filesystem writes.
@@ -130,6 +161,33 @@ async fn run_assignment(
             }
             remove_workspace(path).await?;
             return Err(AgentError::Task);
+        }
+    };
+    let _pins = if grant.assignment().inputs.is_empty() {
+        Vec::new()
+    } else {
+        match authority
+            .while_live(stage_inputs(
+                grant.assignment(),
+                grant.execution(),
+                inputs.downloader,
+                inputs.cache,
+                &mut workspace,
+            ))
+            .await
+        {
+            Ok(Ok(pins)) => pins,
+            Ok(Err(error)) => {
+                remove_workspace(path).await?;
+                return Err(error.into());
+            }
+            Err(StopReason::Rejected(Decision::StopRequested)) => {
+                return acknowledge_unlaunched(context, client, identity, Some(path)).await;
+            }
+            Err(_) => {
+                remove_workspace(path).await?;
+                return Err(AgentError::Task);
+            }
         }
     };
     let outcome = execute_with_logs(

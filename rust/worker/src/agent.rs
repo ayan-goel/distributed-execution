@@ -2,6 +2,8 @@
 use crate::{
     completion::{deliver_pending, DeliveryError},
     control::{canonical_uuid, ClientError, ControlClient},
+    dataset_assignment::InputStageError,
+    dataset_cache_store::CacheStoreError,
     finalization::FinalizationError,
     journal::{new_uuid, AsyncJournal, Journal, JournalError, JournalLimits},
     launch::ExecutionError,
@@ -36,6 +38,8 @@ pub enum AgentError {
     Runtime(RuntimeError),
     Execution(ExecutionError),
     Finalization(FinalizationError),
+    Cache(CacheStoreError),
+    Input(InputStageError),
 }
 impl fmt::Display for AgentError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -48,6 +52,8 @@ impl fmt::Display for AgentError {
             Self::Runtime(e) => e.fmt(f),
             Self::Execution(e) => e.fmt(f),
             Self::Finalization(e) => e.fmt(f),
+            Self::Cache(e) => e.fmt(f),
+            Self::Input(e) => e.fmt(f),
         }
     }
 }
@@ -77,6 +83,16 @@ impl From<FinalizationError> for AgentError {
         Self::Finalization(e)
     }
 }
+impl From<CacheStoreError> for AgentError {
+    fn from(e: CacheStoreError) -> Self {
+        Self::Cache(e)
+    }
+}
+impl From<InputStageError> for AgentError {
+    fn from(e: InputStageError) -> Self {
+        Self::Input(e)
+    }
+}
 impl From<DeliveryError> for AgentError {
     fn from(e: DeliveryError) -> Self {
         match e {
@@ -100,6 +116,10 @@ pub struct AgentConfig {
     cpu_millis: u32,
     memory_mib: u64,
     scratch_mib: u64,
+    #[serde(default = "default_cache_high_mib")]
+    dataset_cache_high_mib: u64,
+    #[serde(default = "default_cache_low_mib")]
+    dataset_cache_low_mib: u64,
     execution_slots: u32,
     #[serde(deserialize_with = "crate::execution::unique_map")]
     labels: BTreeMap<String, String>,
@@ -118,6 +138,9 @@ impl AgentConfig {
             || !(1..=1_024_000).contains(&config.cpu_millis)
             || !(1..=16_777_216).contains(&config.memory_mib)
             || !(1..=1_073_741_824).contains(&config.scratch_mib)
+            || !(64..=65_536).contains(&config.dataset_cache_high_mib)
+            || config.dataset_cache_low_mib == 0
+            || config.dataset_cache_low_mib >= config.dataset_cache_high_mib
             || !(1..=1000).contains(&config.execution_slots)
             || [
                 &config.ca_cert,
@@ -157,6 +180,14 @@ impl AgentConfig {
             ..Default::default()
         }
     }
+}
+
+fn default_cache_high_mib() -> u64 {
+    512
+}
+
+fn default_cache_low_mib() -> u64 {
+    384
 }
 
 fn read_file(path: &Path, limit: usize, private: bool) -> Result<Vec<u8>, AgentError> {

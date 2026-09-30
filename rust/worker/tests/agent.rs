@@ -16,6 +16,12 @@ fn config() -> serde_json::Value {
 #[test]
 fn worker_configuration_is_bounded_strict_and_has_explicit_local_paths() {
     assert!(AgentConfig::decode(&serde_json::to_vec(&config()).unwrap()).is_ok());
+    let mut cache = config();
+    cache["dataset_cache_high_mib"] = serde_json::json!(256);
+    cache["dataset_cache_low_mib"] = serde_json::json!(192);
+    assert!(AgentConfig::decode(&serde_json::to_vec(&cache).unwrap()).is_ok());
+    cache["dataset_cache_low_mib"] = serde_json::json!(256);
+    assert!(AgentConfig::decode(&serde_json::to_vec(&cache).unwrap()).is_err());
     for (key, value) in [
         ("worker_id", serde_json::json!("bad")),
         ("server_url", serde_json::json!("http://localhost:8444")),
@@ -24,6 +30,8 @@ fn worker_configuration_is_bounded_strict_and_has_explicit_local_paths() {
         ("execution_slots", serde_json::json!(1001)),
         ("client_key", serde_json::json!("relative.pem")),
         ("extra", serde_json::json!(true)),
+        ("dataset_cache_high_mib", serde_json::json!(63)),
+        ("dataset_cache_low_mib", serde_json::json!(0)),
     ] {
         let mut bad = config();
         bad[key] = value;

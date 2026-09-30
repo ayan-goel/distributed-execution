@@ -40,6 +40,8 @@ worker's values):
   "cpu_millis": 2000,
   "memory_mib": 1024,
   "scratch_mib": 4096,
+  "dataset_cache_high_mib": 512,
+  "dataset_cache_low_mib": 384,
   "execution_slots": 2,
   "labels": { "os": "linux", "architecture": "arm64" }
 }
@@ -57,6 +59,9 @@ registration. Credential files are bounded to 1 MiB, regular files, and not syml
 leaves. The private key additionally requires effective-user ownership, no group or
 other permission bits, and one hard link. File/parser diagnostics omit contents and
 paths. TLS uses only the explicitly configured server CA and client identity.
+The cache watermarks are optional and default to 512/384 MiB. The high watermark
+must be 64–65,536 MiB; the low watermark must be positive and below it. The
+agent opens the empty cache root only after reconciliation establishes readiness.
 
 Labels must exactly match enrollment. Resources and slots cannot exceed enrollment
 ceilings. Docker's actual architecture, CPU count, and total memory also bound the
