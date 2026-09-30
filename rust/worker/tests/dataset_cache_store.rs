@@ -11,7 +11,13 @@ use dispatch_worker::{
     runtime::PreparedWorkspace,
 };
 use ring::digest::{digest, SHA256};
-use std::{fs, io::Cursor, os::unix::fs::PermissionsExt, path::PathBuf};
+use std::{
+    fs,
+    io::Cursor,
+    os::unix::fs::PermissionsExt,
+    path::PathBuf,
+    sync::atomic::{AtomicU64, Ordering},
+};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpListener,
@@ -26,13 +32,15 @@ fn sha(bytes: &[u8]) -> String {
 }
 
 fn fixture() -> PathBuf {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
     let root = std::env::temp_dir().join(format!(
-        "dispatch-cache-{}-{}",
+        "dispatch-cache-{}-{}-{}",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
-            .as_nanos()
+            .as_nanos(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
     ));
     fs::create_dir(&root).unwrap();
     fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();

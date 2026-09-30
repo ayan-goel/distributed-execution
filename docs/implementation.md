@@ -32,7 +32,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D13 loss/retry | D09,D12 | Reaper/reconciliation; recorded retry; backoff/deadlines; nonretryable failure | reaper, server loop, and real two-identity retry on one Docker daemon passed; natural timer and independent-host gates pending |
 | D14 cancellation | D12,D13 | Both completion/cancellation race orders, repeat requests, uncertain cleanup | pending |
 | D15 logs | D08,D11 | Bounded queues/spool, noisy-job truncation, stream cursors, reconnect | catalog, HTTP cursor/tail gaps, binary format, private spool, Rust registration client, journaled delivery, bounded Docker follower, assembler, completion summary, CLI follow, pre-start capture, and live publication passed; reconnect/fault matrix pending |
-| D16 datasets | D11 | Immutable registration/cache; corruption rejection; pin-aware eviction | ownership schema, upload/completion APIs, project-scoped resolution, real CLI registration, isolated worker cache, atomic store admission bindings, durable replay, archive assignment contract, worker validation, store assignment population, signed RPC grants, strict job-to-wire matching, real read-only Docker mount, startup cache reset, assignment-to-cache preparation, agent cache initialization, and unlaunched transfer-failure completion passed; HTTP submission and input admission still pending |
+| D16 datasets | D11 | Immutable registration/cache; corruption rejection; pin-aware eviction | ownership schema, upload/completion APIs, project-scoped resolution, real CLI registration, isolated worker cache, atomic store admission bindings, durable replay, archive assignment contract, worker validation, store assignment population, signed RPC grants, strict job-to-wire matching, real read-only Docker mount, startup cache reset, assignment-to-cache preparation, agent cache initialization, unlaunched transfer-failure completion, and replay-binding validation passed; HTTP submission and input admission still pending |
 | D17 sweeps/metrics | D05,D13,D16 | Atomic 27-child sweep; 1000 cap; concurrency; fail-fast; finite scalar export | pending |
 | D18 placement | D07,D17 | Project fairness/aging, blockers, two real independent hosts without oversubscription | pending |
 | D19 faults/benchmarks | D14–D18 | Spec §21/22 runtime matrix, 27-job worker kill, stale result, measured benchmarks | pending |
@@ -2518,3 +2518,18 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   validation/cache/mount errors still stop the agent; grant refresh and the
   input admission gate remain unfinished. `make test lint smoke` and the full
   isolated PostgreSQL/worker integration suite passed.
+
+### D16ac: Reject dataset substitution during grant refresh
+
+- `validate_replayed_input` compares a replayed assignment with the original
+  durable assignment, ignoring only freshly computed authority time and signed
+  URL/expiry fields. It then revalidates the full input manifest and the
+  selected grant. A changed archive version, dataset ID, or job hash is never
+  accepted as a refresh.
+- The focused Rust test first failed because this comparison did not exist;
+  it now passes positive refresh and substitution cases. The agent does not
+  request per-input refresh yet. A parallel cache test exposed a collision in
+  its timestamp-based temporary directory names; adding a process-local nonce
+  fixed that fixture. The journal suite also exposed a lock-order deadlock in
+  this test's second fixture; acquiring both fixtures before the async work
+  resolved it. `make test lint smoke` passed with localhost socket access.

@@ -105,6 +105,39 @@ pub fn validate_inputs(
     Ok(validated)
 }
 
+pub fn validate_replayed_input(
+    original: &Assignment,
+    replay: &Assignment,
+    expected: &[Input],
+    index: usize,
+    downloader: &DatasetDownloader,
+) -> Result<ValidatedInput, InputError> {
+    if index >= expected.len()
+        || original.inputs.len() != expected.len()
+        || stable_assignment(original) != stable_assignment(replay)
+    {
+        return Err(InputError::SpecMismatch);
+    }
+    validate_inputs(replay, expected, downloader)?
+        .into_iter()
+        .nth(index)
+        .ok_or(InputError::Invalid)
+}
+
+fn stable_assignment(assignment: &Assignment) -> Assignment {
+    let mut stable = assignment.clone();
+    // Replay may recompute remaining authority and mint fresh capabilities,
+    // but it must not substitute a different dataset or execution identity.
+    stable.lease_duration_ms = 0;
+    stable.phase_remaining_ms = 0;
+    stable.server_time_unix_ms = 0;
+    for input in &mut stable.inputs {
+        input.download_url.clear();
+        input.expires_unix_ms = 0;
+    }
+    stable
+}
+
 pub async fn stage_inputs(
     assignment: &Assignment,
     execution: &ExecutionSpec,

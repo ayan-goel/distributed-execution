@@ -2,7 +2,9 @@
 
 use dispatch_protocol::v1::{Assignment, InputManifest, ObjectVersion};
 use dispatch_worker::{
-    dataset_assignment::validate_inputs, dataset_download::DatasetDownloader, execution::Input,
+    dataset_assignment::{validate_inputs, validate_replayed_input},
+    dataset_download::DatasetDownloader,
+    execution::Input,
 };
 use ring::digest::{digest, SHA256};
 
@@ -80,5 +82,28 @@ fn rejects_mismatched_identity_manifest_and_grant() {
         let mut changed = original.clone();
         mutate(&mut changed);
         assert!(validate_inputs(&changed, &expected, &downloader).is_err());
+    }
+}
+
+#[test]
+fn replay_refreshes_only_the_capability_not_the_frozen_binding() {
+    let downloader = DatasetDownloader::new(true).unwrap();
+    let (original, expected) = assignment();
+    let mut replay = original.clone();
+    replay.inputs[0].download_url =
+        "http://127.0.0.1:2/projects/p/datasets/data?versionId=v1".into();
+    replay.inputs[0].expires_unix_ms = expiry();
+    replay.lease_duration_ms = 25_000;
+    replay.phase_remaining_ms = 50_000;
+    replay.server_time_unix_ms = 1234;
+    assert!(validate_replayed_input(&original, &replay, &expected, 0, &downloader).is_ok());
+    for changed in [
+        |a: &mut Assignment| a.inputs[0].archive.as_mut().unwrap().version_id = "v2".into(),
+        |a: &mut Assignment| a.inputs[0].dataset_id = "00000000-0000-0000-0000-000000000006".into(),
+        |a: &mut Assignment| a.spec_sha256 = "other".into(),
+    ] {
+        let mut forged = replay.clone();
+        changed(&mut forged);
+        assert!(validate_replayed_input(&original, &forged, &expected, 0, &downloader).is_err());
     }
 }

@@ -183,6 +183,7 @@ async fn confirmed_stop_seals_one_replayable_cancellation_completion() {
 #[tokio::test]
 async fn input_staging_failure_seals_one_stopped_transfer_result() {
     let fixture = Fixture::new();
+    let occupied_fixture = Fixture::new();
     let journal = AsyncJournal::new(fixture.open());
     let identity = assignment().authority.unwrap();
     journal.persist_assignment(assignment()).await.unwrap();
@@ -214,7 +215,6 @@ async fn input_staging_failure_seals_one_stopped_transfer_result() {
     assert_eq!(cancelled.reason, FailureReason::UserCancelled as i32);
     assert!(cancelled.stopped);
 
-    let occupied_fixture = Fixture::new();
     let occupied = AsyncJournal::new(occupied_fixture.open());
     occupied.persist_assignment(assignment()).await.unwrap();
     occupied
