@@ -1,5 +1,6 @@
 //! Private per-attempt mount preparation for the explicit soft-scratch profile.
 use super::*;
+use crate::dataset_staging::reopen_directories;
 use crate::runtime::PreparedWorkspace;
 use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
 
@@ -41,6 +42,17 @@ pub(super) fn clear_abandoned_attempts(root: &Path) -> Result<(), AgentError> {
         let entry = entry.map_err(|_| AgentError::File)?;
         let name = entry.file_name();
         let name = name.to_str().ok_or(AgentError::File)?;
+        if name == ".dataset-cache" {
+            if !entry.file_type().map_err(|_| AgentError::File)?.is_dir() {
+                return Err(AgentError::File);
+            }
+            // The old incarnation's containers are absent before this call.
+            // Reopen sealed trees only now; clearing them earlier could remove
+            // bytes still mounted into a predecessor's running container.
+            reopen_directories(&entry.path()).map_err(|_| AgentError::File)?;
+            std::fs::remove_dir_all(entry.path()).map_err(|_| AgentError::File)?;
+            continue;
+        }
         // INVARIANT: only attempt UUID directories live under this private root.
         // Reject aliases and unknown files rather than following an unsafe path
         // or announcing readiness with unaccounted prior workspace state.
@@ -49,6 +61,13 @@ pub(super) fn clear_abandoned_attempts(root: &Path) -> Result<(), AgentError> {
         }
         std::fs::remove_dir_all(entry.path()).map_err(|_| AgentError::File)?;
     }
+    let cache = root.join(".dataset-cache");
+    std::fs::DirBuilder::new()
+        .mode(0o700)
+        .create(&cache)
+        .map_err(|_| AgentError::File)?;
+    std::fs::set_permissions(&cache, std::fs::Permissions::from_mode(0o700))
+        .map_err(|_| AgentError::File)?;
     Ok(())
 }
 
@@ -99,5 +118,47 @@ mod tests {
         clear_abandoned_attempts(&root).unwrap();
         assert!(!prepared.root().exists());
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn reconciled_startup_replaces_sealed_cache_without_following_aliases() {
+        let root = std::env::temp_dir().join(format!(
+            "dispatch-agent-cache-{}-{}",
+            std::process::id(),
+            new_uuid().unwrap()
+        ));
+        std::fs::DirBuilder::new()
+            .mode(0o700)
+            .create(&root)
+            .unwrap();
+        let root = root.canonicalize().unwrap();
+        let cache = root.join(".dataset-cache");
+        std::fs::DirBuilder::new()
+            .mode(0o700)
+            .create(&cache)
+            .unwrap();
+        let entry = cache.join("old-version");
+        std::fs::create_dir(&entry).unwrap();
+        std::fs::write(entry.join("input.txt"), b"old").unwrap();
+        std::fs::set_permissions(&entry, std::fs::Permissions::from_mode(0o555)).unwrap();
+        clear_abandoned_attempts(&root).unwrap();
+        assert!(cache.is_dir());
+        assert_eq!(std::fs::read_dir(&cache).unwrap().count(), 0);
+        assert_eq!(
+            std::fs::metadata(&cache).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        std::fs::remove_dir(&cache).unwrap();
+        let outside = root.parent().unwrap().join(format!(
+            "dispatch-agent-cache-outside-{}",
+            new_uuid().unwrap()
+        ));
+        std::fs::create_dir(&outside).unwrap();
+        std::os::unix::fs::symlink(&outside, &cache).unwrap();
+        assert!(clear_abandoned_attempts(&root).is_err());
+        assert!(outside.is_dir());
+        std::fs::remove_file(cache).unwrap();
+        std::fs::remove_dir(root).unwrap();
+        std::fs::remove_dir(outside).unwrap();
     }
 }

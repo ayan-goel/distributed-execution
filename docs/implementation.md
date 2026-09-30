@@ -32,7 +32,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D13 loss/retry | D09,D12 | Reaper/reconciliation; recorded retry; backoff/deadlines; nonretryable failure | reaper, server loop, and real two-identity retry on one Docker daemon passed; natural timer and independent-host gates pending |
 | D14 cancellation | D12,D13 | Both completion/cancellation race orders, repeat requests, uncertain cleanup | pending |
 | D15 logs | D08,D11 | Bounded queues/spool, noisy-job truncation, stream cursors, reconnect | catalog, HTTP cursor/tail gaps, binary format, private spool, Rust registration client, journaled delivery, bounded Docker follower, assembler, completion summary, CLI follow, pre-start capture, and live publication passed; reconnect/fault matrix pending |
-| D16 datasets | D11 | Immutable registration/cache; corruption rejection; pin-aware eviction | ownership schema, upload/completion APIs, project-scoped resolution, real CLI registration, isolated worker cache, atomic store admission bindings, durable replay, archive assignment contract, worker validation, store assignment population, signed RPC grants, strict job-to-wire matching, and real read-only Docker mount passed; HTTP submission and agent integration pending |
+| D16 datasets | D11 | Immutable registration/cache; corruption rejection; pin-aware eviction | ownership schema, upload/completion APIs, project-scoped resolution, real CLI registration, isolated worker cache, atomic store admission bindings, durable replay, archive assignment contract, worker validation, store assignment population, signed RPC grants, strict job-to-wire matching, real read-only Docker mount, and startup cache reset passed; HTTP submission and agent integration pending |
 | D17 sweeps/metrics | D05,D13,D16 | Atomic 27-child sweep; 1000 cap; concurrency; fail-fast; finite scalar export | pending |
 | D18 placement | D07,D17 | Project fairness/aging, blockers, two real independent hosts without oversubscription | pending |
 | D19 faults/benchmarks | D14–D18 | Spec §21/22 runtime matrix, 27-job worker kill, stale result, measured benchmarks | pending |
@@ -2464,3 +2464,15 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   agent must own cache pins across container cleanup and handle staging failure
   before that gate can open. Native tests and the real Docker suite passed; the
   first full gate stopped on test-module placement, then `make lint smoke` passed.
+
+### D16y: Reconcile the cache root before worker readiness
+
+- Once Docker inventory proves old containers absent, startup now reopens and
+  removes the previous incarnation's sealed `.dataset-cache` tree, then creates
+  a fresh empty 0700 cache root. A symlink in place of the reserved root stops
+  readiness; it is never followed. A focused test first failed under the old
+  unknown-directory guard, then passed for sealed contents, permissions, and
+  alias rejection.
+- The agent has not yet constructed `CacheStore` from this root or staged inputs
+  into it, so the input admission gate remains closed. `make test lint smoke`
+  passed.

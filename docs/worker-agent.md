@@ -82,8 +82,10 @@ mandatory. This explicit policy has no scratch quota guarantee.
    Remove at most one previous-session container per iteration, with identity
    revalidation. Keep health reports interleaved during cleanup.
 6. After fresh inventory proves no containers remain, remove abandoned attempt
-   directories under the private workspace root. Unknown filenames or symlinks
-   stop startup rather than being followed or ignored.
+   directories and the previous incarnation's sealed dataset cache under the
+   private workspace root. Create a fresh empty `.dataset-cache` directory with
+   mode 0700. Unknown filenames or symlinks stop startup rather than being
+   followed or ignored.
 7. Send a new healthy, reconciled report. Announce `ready` only when the server
    also confirms no reconciliation/stop instructions and no drain request. An
    owned live container remains reconciled through its exact authority identity.
