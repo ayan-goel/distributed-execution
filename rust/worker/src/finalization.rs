@@ -208,6 +208,44 @@ impl From<JournalError> for FinalizationError {
     }
 }
 
+/// Seal an input transfer failure before any container exists, preserving one
+/// replayable completion identity across uncertain delivery.
+pub async fn prepare_unlaunched_transfer_failure(
+    journal: &AsyncJournal,
+    identity: &AttemptAuthority,
+) -> Result<CompleteAttemptRequest, FinalizationError> {
+    let saved = journal
+        .load_attempt(identity.attempt_id.clone())
+        .await?
+        .ok_or(FinalizationError::Identity)?;
+    if saved.assignment().authority.as_ref() != Some(identity) {
+        return Err(FinalizationError::Identity);
+    }
+    // INVARIANT: a transfer failure may release capacity immediately only
+    // when no container or exit observation exists for this attempt.
+    if saved.container_id().is_some() || saved.exit().is_some() {
+        return Err(FinalizationError::StopUnconfirmed);
+    }
+    if let Some(request) = saved.completion() {
+        return if request.reason == FailureReason::TransferFailed as i32 && request.stopped {
+            Ok(request.clone())
+        } else {
+            Err(FinalizationError::Identity)
+        };
+    }
+    let mut request = CompleteAttemptRequest {
+        authority: Some(identity.clone()),
+        completion_id: new_uuid()?,
+        reason: FailureReason::TransferFailed as i32,
+        stopped: true,
+        logs_complete: false,
+        ..Default::default()
+    };
+    request.payload_sha256 = completion_digest(&request).map_err(FinalizationError::Payload)?;
+    journal.persist_completion(request.clone()).await?;
+    Ok(request)
+}
+
 /// Seal a cancellation acknowledgement only after the executor confirmed that
 /// its container stopped or was never created. The journal binds this evidence
 /// to one attempt so a lost reply cannot invent a second completion identity.

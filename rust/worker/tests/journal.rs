@@ -6,7 +6,9 @@ use dispatch_protocol::v1::{
 };
 use dispatch_protocol::v1::{RegisterWorkerRequest, RegisterWorkerResponse, WorkerSession};
 use dispatch_worker::control::completion_digest;
-use dispatch_worker::finalization::prepare_cancelled_completion;
+use dispatch_worker::finalization::{
+    prepare_cancelled_completion, prepare_unlaunched_transfer_failure,
+};
 use dispatch_worker::journal::{AsyncJournal, Journal, JournalError, JournalLimits};
 use dispatch_worker::launch::CleanupEvidence;
 use ring::digest::{digest, SHA256};
@@ -176,6 +178,56 @@ async fn confirmed_stop_seals_one_replayable_cancellation_completion() {
     assert_eq!(first, replay);
     let saved = journal.load_attempt(ATTEMPT.into()).await.unwrap().unwrap();
     assert_eq!(saved.completion(), Some(&first));
+}
+
+#[tokio::test]
+async fn input_staging_failure_seals_one_stopped_transfer_result() {
+    let fixture = Fixture::new();
+    let journal = AsyncJournal::new(fixture.open());
+    let identity = assignment().authority.unwrap();
+    journal.persist_assignment(assignment()).await.unwrap();
+    let first = prepare_unlaunched_transfer_failure(&journal, &identity)
+        .await
+        .unwrap();
+    assert_eq!(first.reason, FailureReason::TransferFailed as i32);
+    assert!(first.stopped);
+    assert_eq!(first.exit_code, None);
+    assert_eq!(first.payload_sha256, completion_digest(&first).unwrap());
+    assert_eq!(
+        prepare_unlaunched_transfer_failure(&journal, &identity)
+            .await
+            .unwrap(),
+        first
+    );
+    let saved = journal.load_attempt(ATTEMPT.into()).await.unwrap().unwrap();
+    assert_eq!(saved.completion(), Some(&first));
+    journal
+        .record_completion_response(
+            first,
+            completion_reply(Decision::StopRequested, AttemptState::Assigned),
+        )
+        .await
+        .unwrap();
+    let cancelled = prepare_cancelled_completion(&journal, &identity, CleanupEvidence::NotCreated)
+        .await
+        .unwrap();
+    assert_eq!(cancelled.reason, FailureReason::UserCancelled as i32);
+    assert!(cancelled.stopped);
+
+    let occupied_fixture = Fixture::new();
+    let occupied = AsyncJournal::new(occupied_fixture.open());
+    occupied.persist_assignment(assignment()).await.unwrap();
+    occupied
+        .prepare_phase(ATTEMPT.into(), AttemptState::Starting)
+        .await
+        .unwrap();
+    occupied
+        .bind_container(ATTEMPT.into(), "a".repeat(64))
+        .await
+        .unwrap();
+    assert!(prepare_unlaunched_transfer_failure(&occupied, &identity)
+        .await
+        .is_err());
 }
 
 #[tokio::test]

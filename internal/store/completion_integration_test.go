@@ -252,6 +252,70 @@ func TestFailureCompletionRetriesAndQuarantinesUncertainStop(t *testing.T) {
 	}
 }
 
+func TestUnlaunchedInputTransferFailureReleasesCapacityAndRetries(t *testing.T) {
+	pool, worker, session := readyAcquisitionWorker(t)
+	ctx := context.Background()
+	job := queueAcquisitionJob(t, pool, func(job *spec.Job) {
+		job.Spec.Retry.MaxAttempts = 2
+		job.Spec.Retry.On = []string{"TRANSFER_FAILED"}
+	})
+	assigned, err := AcquireWork(ctx, pool, worker, AcquisitionRequest{SessionID: session.SessionID, RequestID: uuid.NewString()}, AcquisitionPolicy{})
+	if err != nil || assigned.Assignment == nil {
+		t.Fatal(assigned, err)
+	}
+	r := completionRequest()
+	r.Authority = assigned.Assignment.Authority
+	r.ExitCode = nil
+	r.Reason = "TRANSFER_FAILED"
+	r.Outputs = nil
+	r.LogsComplete = false
+	signCompletion(t, &r)
+	result, err := CompleteAttempt(ctx, pool, worker, r)
+	if err != nil || result.Decision != "ACCEPTED" || result.State != "FAILED" {
+		t.Fatal(result, err)
+	}
+	if replay, err := CompleteAttempt(ctx, pool, worker, r); err != nil || replay.Decision != result.Decision || replay.State != result.State || len(replay.Manifest) != 0 {
+		t.Fatal("sealed transfer failure did not replay", replay, err)
+	}
+	var jobState, reservation string
+	var cleanup bool
+	if err := pool.QueryRow(ctx, `SELECT j.state,r.state,a.cleanup_pending FROM jobs j
+		JOIN attempts a ON a.job_id=j.id JOIN reservations r ON r.attempt_id=a.id
+		WHERE j.id=$1`, job.ID).Scan(&jobState, &reservation, &cleanup); err != nil ||
+		jobState != "RETRY_WAIT" || reservation != "released" || cleanup {
+		t.Fatal("unlaunched transfer failure retained capacity", jobState, reservation, cleanup, err)
+	}
+}
+
+func TestUnlaunchedTransferFailureDefersToCancellation(t *testing.T) {
+	pool, worker, session := readyAcquisitionWorker(t)
+	ctx := context.Background()
+	job := queueAcquisitionJob(t, pool, nil)
+	assigned, err := AcquireWork(ctx, pool, worker, AcquisitionRequest{SessionID: session.SessionID, RequestID: uuid.NewString()}, AcquisitionPolicy{})
+	if err != nil || assigned.Assignment == nil {
+		t.Fatal(assigned, err)
+	}
+	if _, err := RequestCancellation(ctx, pool, job.ProjectID, job.ID); err != nil {
+		t.Fatal(err)
+	}
+	r := completionRequest()
+	r.Authority = assigned.Assignment.Authority
+	r.ExitCode = nil
+	r.Reason = "TRANSFER_FAILED"
+	r.Outputs = nil
+	r.LogsComplete = false
+	signCompletion(t, &r)
+	if rejected, err := CompleteAttempt(ctx, pool, worker, r); err != nil || rejected.Decision != "STOP_REQUESTED" {
+		t.Fatal("transfer failure overtook cancellation", rejected, err)
+	}
+	r.CompletionID = uuid.NewString()
+	r.Reason = "USER_CANCELLED"
+	signCompletion(t, &r)
+	if cancelled, err := CompleteAttempt(ctx, pool, worker, r); err != nil || cancelled.Decision != "ACCEPTED" || cancelled.State != "CANCELLED" {
+		t.Fatal("unlaunched cancellation was not acknowledged", cancelled, err)
+	}
+}
+
 func TestCompletionReplaySurvivesLeaseExpiryAndSessionReplacement(t *testing.T) {
 	pool, id, r := completedOutputFixture(t)
 	ctx := context.Background()

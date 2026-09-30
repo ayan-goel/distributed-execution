@@ -2,11 +2,12 @@
 use super::{workspace::prepare_attempt_workspace, *};
 use crate::{
     control::{GrantedAssignment, WorkOutcome},
-    dataset_assignment::stage_inputs,
-    dataset_cache_store::CacheStore,
+    dataset_assignment::{stage_inputs, InputStageError},
+    dataset_cache_store::{CacheStore, CacheStoreError},
     dataset_download::DatasetDownloader,
     finalization::{
-        prepare_cancelled_completion, prepare_completion, publish_finished_logs, FinalizationError,
+        prepare_cancelled_completion, prepare_completion, prepare_unlaunched_transfer_failure,
+        publish_finished_logs, FinalizationError,
     },
     launch::{execute_with_logs, CleanupEvidence, ExecutionError, LaunchCause},
     runtime::Runtime,
@@ -177,6 +178,9 @@ async fn run_assignment(
             .await
         {
             Ok(Ok(pins)) => pins,
+            Ok(Err(InputStageError::Cache(CacheStoreError::Preparation(_)))) => {
+                return complete_unlaunched_transfer_failure(context, client, identity, path).await;
+            }
             Ok(Err(error)) => {
                 remove_workspace(path).await?;
                 return Err(error.into());
@@ -307,6 +311,29 @@ async fn run_assignment(
     context.runtime.remove(finalizing.handle()).await?;
     drop(finalizing);
     remove_workspace(path).await
+}
+
+async fn complete_unlaunched_transfer_failure(
+    context: &ExecutionContext<'_>,
+    client: &mut ControlClient,
+    identity: &dispatch_protocol::v1::AttemptAuthority,
+    workspace: std::path::PathBuf,
+) -> Result<(), AgentError> {
+    prepare_unlaunched_transfer_failure(context.journal, identity).await?;
+    let reply = deliver_terminal(context.journal, client, &identity.attempt_id).await?;
+    if reply.decision == Decision::StopRequested as i32 {
+        // Cancellation won after transfer failure was sealed; preserve the
+        // rejected result before recording the confirmed unlaunched stop.
+        prepare_cancelled_completion(context.journal, identity, CleanupEvidence::NotCreated)
+            .await?;
+        let cancelled = deliver_terminal(context.journal, client, &identity.attempt_id).await?;
+        if !terminal_decision(&cancelled) {
+            return Err(AgentError::Task);
+        }
+    } else if !terminal_decision(&reply) {
+        return Err(AgentError::Task);
+    }
+    remove_workspace(workspace).await
 }
 
 async fn acknowledge_unlaunched(

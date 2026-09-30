@@ -32,7 +32,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D13 loss/retry | D09,D12 | Reaper/reconciliation; recorded retry; backoff/deadlines; nonretryable failure | reaper, server loop, and real two-identity retry on one Docker daemon passed; natural timer and independent-host gates pending |
 | D14 cancellation | D12,D13 | Both completion/cancellation race orders, repeat requests, uncertain cleanup | pending |
 | D15 logs | D08,D11 | Bounded queues/spool, noisy-job truncation, stream cursors, reconnect | catalog, HTTP cursor/tail gaps, binary format, private spool, Rust registration client, journaled delivery, bounded Docker follower, assembler, completion summary, CLI follow, pre-start capture, and live publication passed; reconnect/fault matrix pending |
-| D16 datasets | D11 | Immutable registration/cache; corruption rejection; pin-aware eviction | ownership schema, upload/completion APIs, project-scoped resolution, real CLI registration, isolated worker cache, atomic store admission bindings, durable replay, archive assignment contract, worker validation, store assignment population, signed RPC grants, strict job-to-wire matching, real read-only Docker mount, startup cache reset, assignment-to-cache preparation, and agent cache initialization passed; HTTP submission and input admission still pending |
+| D16 datasets | D11 | Immutable registration/cache; corruption rejection; pin-aware eviction | ownership schema, upload/completion APIs, project-scoped resolution, real CLI registration, isolated worker cache, atomic store admission bindings, durable replay, archive assignment contract, worker validation, store assignment population, signed RPC grants, strict job-to-wire matching, real read-only Docker mount, startup cache reset, assignment-to-cache preparation, agent cache initialization, and unlaunched transfer-failure completion passed; HTTP submission and input admission still pending |
 | D17 sweeps/metrics | D05,D13,D16 | Atomic 27-child sweep; 1000 cap; concurrency; fail-fast; finite scalar export | pending |
 | D18 placement | D07,D17 | Project fairness/aging, blockers, two real independent hosts without oversubscription | pending |
 | D19 faults/benchmarks | D14–D18 | Spec §21/22 runtime matrix, 27-job worker kill, stale result, measured benchmarks | pending |
@@ -2503,3 +2503,18 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   passed, along with `make test lint smoke` and the full isolated PostgreSQL and
   worker integration suite. The first native gate stopped at Clippy's argument
   limit; grouping cache and downloader dependencies fixed that before rerun.
+
+### D16ab: Complete unlaunched dataset transfer failures
+
+- A failed input download or archive staging now seals a stopped
+  `TRANSFER_FAILED` completion only when the journal has no container or exit
+  observation. The worker delivers that exact request before removing its
+  private workspace, allowing the server to release capacity and schedule the
+  job's declared retry. If cancellation wins, the rejected transfer result is
+  durably superseded by an unlaunched cancellation acknowledgement.
+- Focused Rust journal tests prove replay and cancellation supersession.
+  Isolated PostgreSQL tests prove an ASSIGNED attempt becomes FAILED/RETRY_WAIT
+  with its reservation released, and prove the cancellation order. Other input
+  validation/cache/mount errors still stop the agent; grant refresh and the
+  input admission gate remain unfinished. `make test lint smoke` and the full
+  isolated PostgreSQL/worker integration suite passed.
