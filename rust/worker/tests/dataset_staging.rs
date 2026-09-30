@@ -4,6 +4,8 @@ use dispatch_worker::dataset_staging::{stage_archive, DatasetFile, DatasetManife
 use ring::digest::{digest, SHA256};
 use std::{fs, os::unix::fs::PermissionsExt, path::PathBuf};
 
+static NEXT_FIXTURE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 fn sha(bytes: &[u8]) -> String {
     digest(&SHA256, bytes)
         .as_ref()
@@ -12,10 +14,21 @@ fn sha(bytes: &[u8]) -> String {
         .collect()
 }
 
+#[test]
+fn decodes_registered_manifest_field_names() {
+    let json = format!(
+        "{{\"format\":\"tar.v1\",\"files\":[{{\"path\":\"input.txt\",\"sizeBytes\":2,\"sha256\":\"{}\"}}]}}",
+        sha(b"ok")
+    );
+    let manifest: DatasetManifest = serde_json::from_str(&json).unwrap();
+    assert_eq!(manifest.files[0].size_bytes, 2);
+}
+
 fn fixture() -> (PathBuf, PathBuf) {
     let root = std::env::temp_dir().join(format!(
-        "dispatch-stage-{}-{}",
+        "dispatch-stage-{}-{}-{}",
         std::process::id(),
+        NEXT_FIXTURE.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()

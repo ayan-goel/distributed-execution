@@ -4,6 +4,8 @@ pub mod agent;
 pub mod completion;
 pub mod control;
 #[cfg(unix)]
+pub mod dataset_download;
+#[cfg(unix)]
 pub mod dataset_staging;
 pub mod execution;
 #[cfg(unix)]

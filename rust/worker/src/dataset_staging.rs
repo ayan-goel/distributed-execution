@@ -24,7 +24,7 @@ pub struct DatasetManifest {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DatasetFile {
     pub path: String,
     pub size_bytes: u64,
@@ -245,7 +245,7 @@ fn hex_sha(bytes: &[u8]) -> String {
     result
 }
 
-fn rename_noreplace(source: &Path, destination: &Path) -> Result<(), StageError> {
+pub(crate) fn rename_noreplace(source: &Path, destination: &Path) -> Result<(), StageError> {
     let from = std::ffi::CString::new(source.as_os_str().as_bytes())
         .map_err(|_| StageError::InvalidWorkspace)?;
     let to = std::ffi::CString::new(destination.as_os_str().as_bytes())
