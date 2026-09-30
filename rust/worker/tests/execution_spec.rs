@@ -1,4 +1,4 @@
-use dispatch_protocol::v1::{Assignment, Resources};
+use dispatch_protocol::v1::{Assignment, InputManifest, Resources};
 use dispatch_worker::execution::ExecutionSpec;
 use ring::digest::{digest, SHA256};
 use serde_json::{json, Value};
@@ -133,4 +133,52 @@ fn rejects_ambiguous_json_and_unimplemented_mounts() {
         assert!(ExecutionSpec::from_assignment(&assignment(bad.into_bytes())).is_err());
     }
     assert!(ExecutionSpec::from_assignment(&assignment(vec![b' '; 2 * 1024 * 1024 + 1])).is_err());
+}
+
+#[test]
+fn binds_declared_inputs_to_exact_wire_names_and_mounts() {
+    let mut doc = document();
+    doc["spec"]["inputs"] = json!([
+        {"dataset":"data-a","mountPath":"/inputs/data-a"},
+        {"dataset":"data-b","mountPath":"/inputs/data-b"}
+    ]);
+    let mut a = assignment(serde_json::to_vec(&doc).unwrap());
+    a.inputs = [("data-a", "/inputs/data-a"), ("data-b", "/inputs/data-b")]
+        .into_iter()
+        .map(|(dataset_name, mount_path)| InputManifest {
+            dataset_name: dataset_name.into(),
+            mount_path: mount_path.into(),
+            ..Default::default()
+        })
+        .collect();
+    assert!(ExecutionSpec::from_assignment(&a).is_ok());
+    a.inputs[1].mount_path = "/inputs/other".into();
+    assert!(ExecutionSpec::from_assignment(&a).is_err());
+    a.inputs[1].mount_path = "/inputs/data-b".into();
+    a.inputs.pop();
+    assert!(ExecutionSpec::from_assignment(&a).is_err());
+
+    for inputs in [
+        json!([{"dataset":"data","mountPath":"/inputs/../escape"}]),
+        json!([{"dataset":"bad/name","mountPath":"/inputs/data"}]),
+        json!([
+            {"dataset":"data-a","mountPath":"/inputs/data"},
+            {"dataset":"data-b","mountPath":"/inputs/data/nested"}
+        ]),
+    ] {
+        let mut doc = document();
+        doc["spec"]["inputs"] = inputs;
+        let mut a = assignment(serde_json::to_vec(&doc).unwrap());
+        a.inputs = doc["spec"]["inputs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|input| InputManifest {
+                dataset_name: input["dataset"].as_str().unwrap().into(),
+                mount_path: input["mountPath"].as_str().unwrap().into(),
+                ..Default::default()
+            })
+            .collect();
+        assert!(ExecutionSpec::from_assignment(&a).is_err());
+    }
 }

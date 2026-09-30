@@ -15,7 +15,6 @@ pub enum SpecError {
     Document,
     Checksum,
     WireMismatch,
-    InputsUnsupported,
 }
 impl fmt::Display for SpecError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -25,7 +24,6 @@ impl fmt::Display for SpecError {
             Self::Document => "invalid execution specification",
             Self::Checksum => "execution specification checksum mismatch",
             Self::WireMismatch => "execution specification disagrees with assignment",
-            Self::InputsUnsupported => "input staging is not yet supported",
         })
     }
 }
@@ -52,10 +50,17 @@ impl ExecutionSpec {
         // the shape preflight's Value representation before strict decoding.
         let job: Job = serde_json::from_slice(raw).map_err(|_| SpecError::Document)?;
         job.validate()?;
-        if !job.spec.inputs.is_empty() || !assignment.inputs.is_empty() {
-            return Err(SpecError::InputsUnsupported);
-        }
         let s = &job.spec;
+        if s.inputs.len() != assignment.inputs.len()
+            || s.inputs
+                .iter()
+                .zip(&assignment.inputs)
+                .any(|(declared, wire)| {
+                    declared.dataset != wire.dataset_name || declared.mount_path != wire.mount_path
+                })
+        {
+            return Err(SpecError::WireMismatch);
+        }
         let resources = assignment
             .resources
             .as_ref()
@@ -236,6 +241,16 @@ impl Job {
                 return Err(SpecError::Document);
             }
         }
+        for (i, input) in s.inputs.iter().enumerate() {
+            if !identifier(&input.dataset, false)
+                || !input_path(&input.mount_path)
+                || s.inputs[..i]
+                    .iter()
+                    .any(|previous| overlaps(&previous.mount_path, &input.mount_path))
+            {
+                return Err(SpecError::Document);
+            }
+        }
         Ok(())
     }
 }
@@ -269,6 +284,15 @@ fn valid_map(map: &BTreeMap<String, String>, environment: bool) -> bool {
 fn output_path(value: &str) -> bool {
     value.len() <= 4096
         && value.starts_with("/outputs/")
+        && !value.contains(['\\', '\0'])
+        && value[1..]
+            .split('/')
+            .all(|part| !matches!(part, "" | "." | ".."))
+}
+
+fn input_path(value: &str) -> bool {
+    value.len() <= 4096
+        && value.starts_with("/inputs/")
         && !value.contains(['\\', '\0'])
         && value[1..]
             .split('/')
