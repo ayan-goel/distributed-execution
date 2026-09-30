@@ -1,4 +1,4 @@
-use dispatch_protocol::v1::{Assignment, AttemptAuthority, Resources};
+use dispatch_protocol::v1::{Assignment, AttemptAuthority, InputManifest, Resources};
 use dispatch_worker::{
     execution::ExecutionSpec,
     lease::{AuthorityWindow, MonoTime},
@@ -53,6 +53,83 @@ fn authority() -> AttemptAuthority {
 fn lease() -> AuthorityWindow {
     let now = MonoTime::now().unwrap();
     AuthorityWindow::from_grant(now, now, 30_000, 30_000).unwrap()
+}
+
+#[tokio::test]
+#[ignore = "requires scripts/test-runtime.sh and its isolated Docker fixture"]
+async fn real_dataset_mount_is_exact_and_read_only() {
+    use std::{fs, os::unix::fs::PermissionsExt};
+    let base = std::path::PathBuf::from(std::env::var("DISPATCH_TEST_WORKSPACE").unwrap());
+    let work = base.join("dataset-attempt");
+    fs::create_dir(&work).unwrap();
+    for name in ["inputs", "outputs", "scratch"] {
+        fs::create_dir(work.join(name)).unwrap();
+    }
+    let cache = base.join("dataset-cache");
+    fs::create_dir(&cache).unwrap();
+    let source = cache.join("verified-version");
+    fs::create_dir(&source).unwrap();
+    fs::write(source.join("input.txt"), b"verified").unwrap();
+    fs::set_permissions(source.join("input.txt"), fs::Permissions::from_mode(0o444)).unwrap();
+    fs::set_permissions(&source, fs::Permissions::from_mode(0o555)).unwrap();
+    let mut workspace = PreparedWorkspace::soft_development(&work).unwrap();
+    workspace.bind_input("/inputs/data", &source).unwrap();
+    let image = std::env::var("DISPATCH_TEST_IMAGE").unwrap();
+    let command = ["/bin/sh", "-c", "test \"$(cat /inputs/data/input.txt)\" = verified; case \"$(awk '$2==\"/inputs/data\" {print $4}' /proc/mounts)\" in ro,*) ;; *) exit 23;; esac"];
+    let raw = serde_json::to_vec(&serde_json::json!({
+        "apiVersion":"dispatch.dev/v1alpha1", "kind":"Job", "metadata":{"name":"dataset-test", "project":"research"},
+        "spec":{"image":image,"command":command,"resources":{"cpuMillis":1000,"memoryMiB":128,"scratchMiB":64},
+        "placement":{},"inputs":[{"dataset":"data","mountPath":"/inputs/data"}],"network":"disabled",
+        "timeouts":{"startupSeconds":30,"executionSeconds":30,"finalizationSeconds":30},
+        "retry":{"maxAttempts":1,"initialBackoffSeconds":1,"maxBackoffSeconds":1},"terminationGraceSeconds":1}
+    })).unwrap();
+    let assignment = Assignment {
+        image_digest: image,
+        argv: command.iter().map(|value| (*value).into()).collect(),
+        resources: Some(Resources {
+            cpu_millis: 1000,
+            memory_bytes: 128 << 20,
+            scratch_bytes: 64 << 20,
+        }),
+        spec_sha256: digest(&SHA256, &raw)
+            .as_ref()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect(),
+        canonical_job_spec_json: raw,
+        inputs: vec![InputManifest {
+            dataset_name: "data".into(),
+            mount_path: "/inputs/data".into(),
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    let spec = ExecutionSpec::from_assignment(&assignment).unwrap();
+    let runtime = DockerRuntime::connect(&std::env::var("DISPATCH_TEST_DOCKER_SOCKET").unwrap())
+        .await
+        .unwrap();
+    let mut identity = authority();
+    identity.attempt_id.replace_range(24..36, "0000000000bb");
+    let handle = runtime
+        .create(&identity, &spec, &workspace, &lease())
+        .await
+        .unwrap();
+    if let Err(error) = runtime.start(&handle, &lease()).await {
+        let output = std::process::Command::new("docker")
+            .args(["start", handle.id()])
+            .output()
+            .unwrap();
+        panic!(
+            "{error}; daemon: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let exit = runtime.wait(&handle).await.unwrap();
+    assert_eq!(exit.exit_code, Some(0));
+    runtime.remove(&handle).await.unwrap();
+    fs::set_permissions(&source, fs::Permissions::from_mode(0o700)).unwrap();
+    fs::remove_dir_all(work).unwrap();
+    fs::remove_dir_all(cache).unwrap();
 }
 
 #[tokio::test]

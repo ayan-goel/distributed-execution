@@ -19,6 +19,14 @@ pub(super) fn build(
         return Err(RuntimeError::Identity);
     }
     let s = &execution.job().spec;
+    if s.inputs.len() != workspace.inputs.len()
+        || s.inputs
+            .iter()
+            .zip(&workspace.inputs)
+            .any(|(requested, prepared)| requested.mount_path != prepared.target)
+    {
+        return Err(RuntimeError::Configuration);
+    }
     let labels = HashMap::from([
         ("dev.dispatch.worker".into(), identity.worker_id.clone()),
         ("dev.dispatch.session".into(), identity.session_id.clone()),
@@ -42,7 +50,7 @@ pub(super) fn build(
         format!("DISPATCH_SESSION_ID={}", identity.session_id),
         format!("DISPATCH_GENERATION={}", identity.generation),
     ]);
-    let mounts = ["inputs", "outputs", "scratch"]
+    let mut mounts: Vec<_> = ["inputs", "outputs", "scratch"]
         .iter()
         .map(|name| Mount {
             target: Some(format!("/{name}")),
@@ -52,6 +60,21 @@ pub(super) fn build(
             ..Default::default()
         })
         .collect();
+    for input in &workspace.inputs {
+        mounts.push(Mount {
+            target: Some(input.target.clone()),
+            source: Some(
+                input
+                    .source
+                    .to_str()
+                    .ok_or(RuntimeError::Configuration)?
+                    .to_owned(),
+            ),
+            typ: Some(MountType::BIND),
+            read_only: Some(true),
+            ..Default::default()
+        });
+    }
     // Linux CFS has a minimum 1-ms quota. A 1-second period represents sub-10
     // milliCPU jobs exactly instead of rounding above the admitted reservation.
     let period = if s.resources.cpu_millis < 10 {
@@ -229,4 +252,94 @@ fn uuid(value: &str) -> bool {
                 b.is_ascii_digit() || (b'a'..=b'f').contains(&b)
             }
         })
+}
+
+#[cfg(test)]
+mod input_tests {
+    use super::*;
+    use dispatch_protocol::v1::{Assignment, InputManifest, Resources};
+    use ring::digest::{digest, SHA256};
+    use std::{
+        fs,
+        os::unix::fs::{DirBuilderExt, PermissionsExt},
+    };
+
+    #[test]
+    fn declared_input_requires_exact_sealed_read_only_bind() {
+        let root = std::env::temp_dir().join(format!(
+            "dispatch-runtime-input-{}",
+            crate::journal::new_uuid().unwrap()
+        ));
+        fs::DirBuilder::new().mode(0o700).create(&root).unwrap();
+        let root = root.canonicalize().unwrap();
+        let work = root.join("attempt");
+        fs::DirBuilder::new().mode(0o700).create(&work).unwrap();
+        for name in ["inputs", "outputs", "scratch"] {
+            fs::create_dir(work.join(name)).unwrap();
+        }
+        let cache = root.join("cache");
+        fs::DirBuilder::new().mode(0o700).create(&cache).unwrap();
+        let source = cache.join("version");
+        fs::create_dir(&source).unwrap();
+        fs::set_permissions(&source, fs::Permissions::from_mode(0o555)).unwrap();
+        let image = format!("example.org/test@sha256:{}", "a".repeat(64));
+        let raw = serde_json::to_vec(&serde_json::json!({
+            "apiVersion":"dispatch.dev/v1alpha1", "kind":"Job", "metadata":{"name":"test", "project":"research"},
+            "spec":{"image":image,"command":["true"],"resources":{"cpuMillis":1000,"memoryMiB":128,"scratchMiB":64},
+            "placement":{},"inputs":[{"dataset":"data","mountPath":"/inputs/data"}],"network":"disabled",
+            "timeouts":{"startupSeconds":30,"executionSeconds":30,"finalizationSeconds":30},
+            "retry":{"maxAttempts":1,"initialBackoffSeconds":1,"maxBackoffSeconds":1},"terminationGraceSeconds":1}
+        })).unwrap();
+        let assignment = Assignment {
+            image_digest: image,
+            argv: vec!["true".into()],
+            resources: Some(Resources {
+                cpu_millis: 1000,
+                memory_bytes: 128 << 20,
+                scratch_bytes: 64 << 20,
+            }),
+            spec_sha256: digest(&SHA256, &raw)
+                .as_ref()
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect(),
+            canonical_job_spec_json: raw,
+            inputs: vec![InputManifest {
+                dataset_name: "data".into(),
+                mount_path: "/inputs/data".into(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let execution = ExecutionSpec::from_assignment(&assignment).unwrap();
+        let identity = AttemptAuthority {
+            worker_id: "00000000-0000-0000-0000-000000000001".into(),
+            session_id: "00000000-0000-0000-0000-000000000002".into(),
+            job_id: "00000000-0000-0000-0000-000000000003".into(),
+            attempt_id: "00000000-0000-0000-0000-000000000004".into(),
+            generation: 1,
+        };
+        let mut workspace = PreparedWorkspace::soft_development(&work).unwrap();
+        assert!(build(&identity, &execution, &workspace).is_err());
+        assert!(workspace.bind_input("/inputs/data", &source).is_ok());
+        assert!(work.join("inputs/data").is_dir());
+        let config = build(&identity, &execution, &workspace).unwrap();
+        let mounts = config.host_config.unwrap().mounts.unwrap();
+        assert!(mounts
+            .iter()
+            .any(|mount| mount.target.as_deref() == Some("/inputs/data")
+                && mount.source.as_deref() == source.to_str()
+                && mount.read_only == Some(true)));
+        assert!(workspace
+            .bind_input("/inputs/data/nested", &source)
+            .is_err());
+        assert!(workspace.bind_input("/inputs/../escape", &source).is_err());
+        let alias = cache.join("alias");
+        std::os::unix::fs::symlink(&source, &alias).unwrap();
+        let mut another = PreparedWorkspace::soft_development(&work).unwrap();
+        assert!(another.bind_input("/inputs/data", &alias).is_err());
+        fs::remove_file(alias).unwrap();
+        fs::set_permissions(&source, fs::Permissions::from_mode(0o700)).unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
 }

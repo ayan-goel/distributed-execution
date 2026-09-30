@@ -59,18 +59,88 @@ impl From<DockerError> for RuntimeError {
 #[derive(Debug)]
 pub struct PreparedWorkspace {
     root: PathBuf,
+    inputs: Vec<InputMount>,
+}
+
+#[derive(Debug)]
+struct InputMount {
+    target: String,
+    source: PathBuf,
 }
 impl PreparedWorkspace {
     /// Explicit development profile: these bind mounts do not enforce a scratch quota.
     pub fn soft_development(root: impl AsRef<Path>) -> Result<Self, RuntimeError> {
         let workspace = Self {
             root: root.as_ref().to_owned(),
+            inputs: Vec::new(),
         };
         workspace.validate()?;
         Ok(workspace)
     }
     pub fn root(&self) -> &Path {
         &self.root
+    }
+    pub fn bind_input(&mut self, target: &str, source: &Path) -> Result<(), RuntimeError> {
+        if self.inputs.len() >= 64
+            || target.len() > 4096
+            || !target.starts_with("/inputs/")
+            || target.contains(['\\', '\0'])
+            || target[1..]
+                .split('/')
+                .any(|part| matches!(part, "" | "." | ".."))
+            || self.inputs.iter().any(|previous| {
+                previous.target == target
+                    || previous
+                        .target
+                        .strip_prefix(target)
+                        .is_some_and(|tail| tail.starts_with('/'))
+                    || target
+                        .strip_prefix(&previous.target)
+                        .is_some_and(|tail| tail.starts_with('/'))
+            })
+            || !source.is_absolute()
+            || source.starts_with(&self.root)
+            || std::fs::canonicalize(source).ok().as_deref() != Some(source)
+        {
+            return Err(RuntimeError::Configuration);
+        }
+        let metadata =
+            std::fs::symlink_metadata(source).map_err(|_| RuntimeError::Configuration)?;
+        // INVARIANT: only a sealed worker-owned cache tree can enter Docker's
+        // host mount list; job documents supply targets, never host paths.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            if !metadata.is_dir()
+                || metadata.file_type().is_symlink()
+                || metadata.uid() != unsafe { libc::geteuid() }
+                || metadata.mode() & 0o777 != 0o555
+            {
+                return Err(RuntimeError::Configuration);
+            }
+        }
+        // Docker cannot create a nested mountpoint after /inputs is mounted
+        // read-only. Precreate only validated components in this private tree.
+        let mut mountpoint = self.root.join("inputs");
+        for part in target.trim_start_matches("/inputs/").split('/') {
+            mountpoint.push(part);
+            match std::fs::create_dir(&mountpoint) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                    let existing = std::fs::symlink_metadata(&mountpoint)
+                        .map_err(|_| RuntimeError::Configuration)?;
+                    if !existing.is_dir() || existing.file_type().is_symlink() {
+                        return Err(RuntimeError::Configuration);
+                    }
+                }
+                Err(_) => return Err(RuntimeError::Configuration),
+            }
+        }
+        self.inputs.push(InputMount {
+            target: target.to_owned(),
+            source: source.to_owned(),
+        });
+        Ok(())
     }
     fn validate(&self) -> Result<(), RuntimeError> {
         // The agent, not the job document, supplies an already prepared private

@@ -14,6 +14,9 @@ cleanup() {
     for id in $(docker ps -aq --filter "label=dev.dispatch.job=$DISPATCH_TEST_JOB_ID"); do
         docker rm -f "$id" >/dev/null
     done
+    # Staged cache directories are sealed read-only; reopen only this isolated
+    # test root after its containers are gone so cleanup never leaves artifacts.
+    find "$workspace" -type d -exec chmod u+w {} +
     rm -rf "$workspace"
 }
 trap cleanup EXIT INT TERM

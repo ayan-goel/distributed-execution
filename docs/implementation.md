@@ -32,7 +32,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D13 loss/retry | D09,D12 | Reaper/reconciliation; recorded retry; backoff/deadlines; nonretryable failure | reaper, server loop, and real two-identity retry on one Docker daemon passed; natural timer and independent-host gates pending |
 | D14 cancellation | D12,D13 | Both completion/cancellation race orders, repeat requests, uncertain cleanup | pending |
 | D15 logs | D08,D11 | Bounded queues/spool, noisy-job truncation, stream cursors, reconnect | catalog, HTTP cursor/tail gaps, binary format, private spool, Rust registration client, journaled delivery, bounded Docker follower, assembler, completion summary, CLI follow, pre-start capture, and live publication passed; reconnect/fault matrix pending |
-| D16 datasets | D11 | Immutable registration/cache; corruption rejection; pin-aware eviction | ownership schema, upload/completion APIs, project-scoped resolution, real CLI registration, isolated worker cache, atomic store admission bindings, durable replay, archive assignment contract, worker validation, store assignment population, signed RPC grants, and strict job-to-wire input matching passed; HTTP submission, agent integration, and mounts pending |
+| D16 datasets | D11 | Immutable registration/cache; corruption rejection; pin-aware eviction | ownership schema, upload/completion APIs, project-scoped resolution, real CLI registration, isolated worker cache, atomic store admission bindings, durable replay, archive assignment contract, worker validation, store assignment population, signed RPC grants, strict job-to-wire matching, and real read-only Docker mount passed; HTTP submission and agent integration pending |
 | D17 sweeps/metrics | D05,D13,D16 | Atomic 27-child sweep; 1000 cap; concurrency; fail-fast; finite scalar export | pending |
 | D18 placement | D07,D17 | Project fairness/aging, blockers, two real independent hosts without oversubscription | pending |
 | D19 faults/benchmarks | D14–D18 | Spec §21/22 runtime matrix, 27-job worker kill, stale result, measured benchmarks | pending |
@@ -2446,3 +2446,21 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   execution closed until validated cache pins and read-only Docker mounts are
   connected. The focused Rust test and native tests passed; the first full gate
   stopped at formatting, then `make lint smoke` passed after formatting.
+
+### D16x: Mount verified input trees read-only in Docker
+
+- A container now requires exactly one prepared source for each declared input,
+  in job order. Workspace preparation rejects aliases, overlapping or escaping
+  mount targets, and sources that are not sealed worker-owned directories. The
+  Docker adapter adds those binds read-only and includes them in inspection
+  checks, so a replayed container with different mounts cannot be adopted.
+- The first real Docker test exposed a nested-mount failure: Docker could not
+  create `/inputs/data` after mounting `/inputs` read-only. Preparation now
+  creates validated mountpoint directories in the private workspace first.
+  The rerun passed with the container reading verified bytes from the exact
+  mount and observing that mount as read-only. The runtime fixture also reopens
+  sealed test directories only after removing its isolated containers.
+- The worker client and HTTP submission still reject input-backed jobs. The
+  agent must own cache pins across container cleanup and handle staging failure
+  before that gate can open. Native tests and the real Docker suite passed; the
+  first full gate stopped on test-module placement, then `make lint smoke` passed.
