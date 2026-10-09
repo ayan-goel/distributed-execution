@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"dispatch.local/dispatch/internal/cli"
 	"dispatch.local/dispatch/internal/client"
 	"dispatch.local/dispatch/internal/spec"
 	"dispatch.local/dispatch/internal/store"
@@ -84,6 +85,16 @@ func TestHTTPSweepInspectionScopesProgressAndCursors(t *testing.T) {
 	clientPage, err = c.GetSweep(ctx, created.ID, clientPage.NextCursor, 2)
 	if err != nil || len(clientPage.Children) != 1 || clientPage.Children[0].ID != created.ChildIDs[2] || clientPage.HasMore {
 		t.Fatal("client rejected real HTTP continuation", clientPage, err)
+	}
+	var stdout, stderr bytes.Buffer
+	env := func(key string) string {
+		return map[string]string{"DISPATCH_URL": server.URL, "DISPATCH_TOKEN": reader, "DISPATCH_DEV_INSECURE": "1"}[key]
+	}
+	if code := cli.Run(ctx, []string{"sweep", "get", created.ID, "--limit", "2", "--json"}, env, &stdout, &stderr); code != 0 {
+		t.Fatal("CLI inspection failed against real HTTP/database", code, stderr.String())
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &clientPage); err != nil || clientPage.Sweep.ID != created.ID || clientPage.Sweep.Progress.Cancelled != 1 || len(clientPage.Children) != 2 || !clientPage.HasMore {
+		t.Fatal("CLI returned incorrect real sweep progress", stdout.String(), err)
 	}
 	for _, tc := range []struct {
 		path, token string

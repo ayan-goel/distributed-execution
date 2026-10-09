@@ -20,6 +20,7 @@ const usage = `usage:
   dispatch submit FILE [--idempotency-key KEY] [--json]
   dispatch sweep validate FILE [--json]
   dispatch sweep submit FILE [--idempotency-key KEY] [--json]
+  dispatch sweep get SWEEP_ID [--limit 1..100] [--cursor CURSOR] [--json]
   dispatch jobs get JOB_ID [--json]
   dispatch cancel JOB_ID [--json]
   dispatch logs JOB_ID [--follow] [--stream stdout|stderr]

@@ -9,8 +9,7 @@ events, and idempotency claim in one transaction. The limit is 1,000 children.
 API. Admission freezes its resolved image and project-owned datasets before
 expansion. Identical idempotency-key retries return the same children even when
 the image registry is unavailable. See [HTTP admission](http-api.md#sweep-admission).
-HTTP progress inspection is available; CLI inspection and result export remain
-under development.
+CLI/HTTP progress inspection is available; result export remains under development.
 
 ## CLI submission
 
@@ -57,7 +56,20 @@ they retain stable membership and index order. Use `limit` and the returned
 The Go client exposes `GetSweep(ctx, id, cursor, limit)`. It checks summary counts,
 ordered child identities, pagination, and accepted-only finite scalar metrics
 before returning a typed page. Decimal metric tokens retain their precision.
-CLI inspection and CSV/JSON export remain under development.
+CSV/JSON export remains under development.
+
+Inspect one page from the terminal:
+
+```sh
+bin/dispatch sweep get SWEEP_ID
+bin/dispatch sweep get SWEEP_ID --limit 100 --json
+bin/dispatch sweep get SWEEP_ID --cursor PREVIOUS_NEXT_CURSOR --json
+```
+
+Text output shows sweep-wide counts, each returned child's parameters/metrics,
+and a `nextCursor` when more children remain. JSON returns the full HTTP page.
+The default limit is 50; use 1–100 and pass the previous cursor unchanged. The
+command reads one page per invocation. Parameters are escaped for terminal safety.
 
 ## Scheduling and failure policy
 

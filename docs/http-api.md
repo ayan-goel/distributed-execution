@@ -77,8 +77,8 @@ position only; project authorization is checked on every request.
 
 Unknown/repeated query parameters and malformed, empty, out-of-range, or
 wrong-sweep cursors return 400. Invalid/unknown/foreign sweep IDs return 404.
-Read and submit tokens can inspect their project's sweeps. CLI inspection and
-result export remain under development.
+Read and submit tokens can inspect their project's sweeps. `dispatch sweep get`
+uses this endpoint. Result export remains under development.
 
 ## Accepted result inspection (D11i)
 

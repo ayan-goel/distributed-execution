@@ -16,6 +16,9 @@ import (
 )
 
 func runSweep(ctx context.Context, args []string, getenv func(string) string, out, errout io.Writer) error {
+	if len(args) >= 3 && args[1] == "get" {
+		return getSweep(ctx, args, getenv, out)
+	}
 	if len(args) < 3 || (args[1] != "submit" && args[1] != "validate") {
 		return errors.New(usage)
 	}
