@@ -154,3 +154,9 @@ both failure policies, retry preservation, reaping, session recovery, completion
 replay, sibling event rollback, stop acknowledgement, and observed job-lock ordering.
 Progress tests cover accepted-only numeric precision, byte/row pagination, and
 cancellation between snapshot reads. Real multi-host sweep execution remains open.
+
+The real-stack 27-child test runs three enrolled native worker processes sharing
+Docker Desktop, with a sweep cap of two. It checks same-key replay, successful
+execution, released reservations, exact accepted metrics, CLI pagination,
+matching JSON/CSV exports, and the downloaded metric artifact. Independent Linux
+hosts and live sweep failure demonstrations remain separate release gates.

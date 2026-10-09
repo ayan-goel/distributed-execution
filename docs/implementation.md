@@ -33,7 +33,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D14 cancellation | D12,D13 | Both completion/cancellation race orders, repeat requests, uncertain cleanup | pending |
 | D15 logs | D08,D11 | Bounded queues/spool, noisy-job truncation, stream cursors, reconnect | catalog, HTTP cursor/tail gaps, binary format, private spool, Rust registration client, journaled delivery, bounded Docker follower, assembler, completion summary, CLI follow, pre-start capture, and live publication passed; reconnect/fault matrix pending |
 | D16 datasets | D11 | Immutable registration/cache; corruption rejection; pin-aware eviction | ownership schema, upload/completion APIs, project-scoped resolution, real CLI registration, isolated worker cache, atomic store admission bindings, durable replay, archive assignment contract, worker validation, store assignment population, signed RPC grants, strict job-to-wire matching, real read-only Docker mount, startup cache reset, assignment-to-cache preparation, agent cache initialization, unlaunched transfer-failure completion, replay-binding validation, worker input acquisition path, HTTP submission, and one live dataset-to-output Docker job passed; dataset fault matrix still pending |
-| D17 sweeps/metrics | D05,D13,D16 | Atomic 27-child sweep; 1000 cap; concurrency; fail-fast; finite scalar export | deterministic expansion, schema constraints, HTTP/CLI submission/replay, scheduler cap/terminal release, fail-fast, bounded CLI/HTTP progress/accepted metrics, CSV/JSON export, and real worker metric ingestion passed; live sweep gates pending |
+| D17 sweeps/metrics | D05,D13,D16 | Atomic 27-child sweep; 1000 cap; concurrency; fail-fast; finite scalar export | deterministic expansion, schema constraints, HTTP/CLI submission/replay, scheduler cap/terminal release, fail-fast, bounded CLI/HTTP progress/accepted metrics, CSV/JSON export, real worker metric ingestion, and local 27-child sweep passed; live failure/independent-host gates pending |
 | D18 placement | D07,D17 | Project fairness/aging, blockers, two real independent hosts without oversubscription | pending |
 | D19 faults/benchmarks | D14–D18 | Spec §21/22 runtime matrix, 27-job worker kill, stale result, measured benchmarks | pending |
 | D20 release | D19 | TLS/auth/permissions, retention, migrations/backups, packaging, tutorial, actual research run | pending |
@@ -2802,3 +2802,25 @@ This recorded gap is resolved by D17l/D17m below; the live sweep gate remains op
   in a fresh container, and the controlled retry passed. Separate model review
   found no blockers and clarified diagnostic retention's declared-size boundary.
   Live 27-child sweep execution and failure demonstrations remain required.
+
+### D17n: Execute and export a real 27-child sweep locally
+
+- Added a CLI-to-HTTP-to-PostgreSQL-to-worker/Docker/S3 integration test for a
+  3 algorithm × 3 rate × 3 seed matrix. Same-key submission recovers the same
+  27 immutable child IDs. Three separately enrolled native worker processes
+  share Docker Desktop; the sweep allows two active attempts.
+- All 27 children succeeded with one attempt each, across three local worker
+  identities. The acquisition probe observed a peak of two attempts across
+  ASSIGNED through FINALIZING, and all terminal reservations were released.
+  This live observation supplements the store's transactional concurrency tests.
+- JSON export retains child order, parameters, accepted attempts, and exact
+  large-integer/numeric metrics. CSV rows and seven-child inspection pages agree
+  with JSON. CLI artifact download preserves the original metric source bytes.
+- The focused race-enabled real-stack gate passed in 65 seconds. These are
+  native macOS worker processes running Linux containers on one Docker daemon,
+  using development soft scratch and a fixture image resolver. This does not
+  establish independent Linux-host execution, strict scratch enforcement, or
+  registry availability. Worker-loss/fail-fast sweep demonstrations remain open.
+- `make test lint smoke` and the complete combined PostgreSQL/Docker/object-store
+  suite passed, including the new sweep test. Separate model review found no
+  required code or documentation changes.
