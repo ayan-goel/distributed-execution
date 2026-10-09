@@ -158,5 +158,12 @@ cancellation between snapshot reads. Real multi-host sweep execution remains ope
 The real-stack 27-child test runs three enrolled native worker processes sharing
 Docker Desktop, with a sweep cap of two. It checks same-key replay, successful
 execution, released reservations, exact accepted metrics, CLI pagination,
-matching JSON/CSV exports, and the downloaded metric artifact. Independent Linux
-hosts and live sweep failure demonstrations remain separate release gates.
+matching JSON/CSV exports, and the downloaded metric artifact.
+
+Live fail-fast tests accept a permanent application failure after another child
+has reported RUNNING. The default policy lets that sibling finish and cancels 25
+queued children; `cancelRunningOnFailure` stops it and cancels all 26 siblings.
+Both cases lose the committed failure's reply and verify exact accepted replay,
+one event per cancelled sibling, released reservations, exclusion of diagnostic
+metrics from exports, and physical container cleanup before fixture teardown.
+Independent Linux hosts and sweep worker-loss recovery remain separate gates.

@@ -291,8 +291,9 @@ are separate work.
 
 A 27-child sweep also completes across three enrolled native worker processes
 sharing Docker Desktop, with two active attempts observed and exact metrics,
-pagination, JSON/CSV exports, and artifact downloads verified. Independent Linux
-hosts and live sweep failure demonstrations remain open.
+pagination, JSON/CSV exports, and artifact downloads verified. Live fail-fast
+tests also verify queued-only and running-sibling cancellation after a permanent
+failure. Independent Linux hosts and sweep worker-loss recovery remain open.
 
 Worker command integration verifies enrollment/takeover/revocation, then starts
 both actual listeners, registers and reconciles a host over mTLS, restarts the

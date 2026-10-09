@@ -33,7 +33,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D14 cancellation | D12,D13 | Both completion/cancellation race orders, repeat requests, uncertain cleanup | pending |
 | D15 logs | D08,D11 | Bounded queues/spool, noisy-job truncation, stream cursors, reconnect | catalog, HTTP cursor/tail gaps, binary format, private spool, Rust registration client, journaled delivery, bounded Docker follower, assembler, completion summary, CLI follow, pre-start capture, and live publication passed; reconnect/fault matrix pending |
 | D16 datasets | D11 | Immutable registration/cache; corruption rejection; pin-aware eviction | ownership schema, upload/completion APIs, project-scoped resolution, real CLI registration, isolated worker cache, atomic store admission bindings, durable replay, archive assignment contract, worker validation, store assignment population, signed RPC grants, strict job-to-wire matching, real read-only Docker mount, startup cache reset, assignment-to-cache preparation, agent cache initialization, unlaunched transfer-failure completion, replay-binding validation, worker input acquisition path, HTTP submission, and one live dataset-to-output Docker job passed; dataset fault matrix still pending |
-| D17 sweeps/metrics | D05,D13,D16 | Atomic 27-child sweep; 1000 cap; concurrency; fail-fast; finite scalar export | deterministic expansion, schema constraints, HTTP/CLI submission/replay, scheduler cap/terminal release, fail-fast, bounded CLI/HTTP progress/accepted metrics, CSV/JSON export, real worker metric ingestion, and local 27-child sweep passed; live failure/independent-host gates pending |
+| D17 sweeps/metrics | D05,D13,D16 | Atomic 27-child sweep; 1000 cap; concurrency; fail-fast; finite scalar export | deterministic expansion, schema constraints, HTTP/CLI submission/replay, scheduler cap/terminal release, fail-fast, bounded CLI/HTTP progress/accepted metrics, CSV/JSON export, real worker metric ingestion, and local 27-child success/fail-fast sweeps passed; sweep worker-loss/independent-host gates pending |
 | D18 placement | D07,D17 | Project fairness/aging, blockers, two real independent hosts without oversubscription | pending |
 | D19 faults/benchmarks | D14–D18 | Spec §21/22 runtime matrix, 27-job worker kill, stale result, measured benchmarks | pending |
 | D20 release | D19 | TLS/auth/permissions, retention, migrations/backups, packaging, tutorial, actual research run | pending |
@@ -2847,3 +2847,29 @@ This recorded gap is resolved by D17l/D17m below; the live sweep gate remains op
 - The focused real-stack 27-child gate and `make test lint smoke` passed after
   extraction. Separate model review found no blockers. No production behavior or
   additional failure coverage is claimed by this refactor.
+
+### D17p: Verify both fail-fast policies with live Docker siblings
+
+- Added two real-stack 27-child scenarios: one child exits 7 with valid diagnostic
+  metrics while another runs. A test-only RPC barrier waits for the sibling's
+  accepted RUNNING report before committing the permanent application failure.
+  A post-failure snapshot verifies 25 queued children are cancelled, only two
+  attempts exist, and sibling capacity remains active until terminal acknowledgement.
+- The default policy preserves the physically running sibling and its accepted
+  exact metrics, ending with one failure, one success, and 25 cancellations.
+  Running-sibling cancellation ends with one failure and 26 cancellations, with
+  a confirmed `USER_CANCELLED` completion. Both release reservations and remove
+  their real containers before fixture cleanup can hide a leak.
+- The server commits the failure then drops its first reply. The worker replays
+  the same sealed request and receives accepted FAILED again; each affected
+  sibling retains one correctly linked fail-fast event. Failed/cancelled source
+  metrics are absent from canonical JSON/CSV results despite their presence in
+  the failed attempt's diagnostic completion evidence.
+- Focused race-enabled real-stack tests passed for both policies. Review found
+  and corrected a test observation race: replay progress is now published after
+  evidence comparison under the same mutex. This gate uses local native workers
+  and one Docker daemon; independent Linux hosts and sweep worker-loss recovery
+  remain required.
+- The final focused cases, `make test lint smoke`, and the complete combined
+  PostgreSQL/Docker/object-store suite passed. Final separate model review found
+  no remaining blockers; README and operator/sweep guides reflect this evidence.

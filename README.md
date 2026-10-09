@@ -40,8 +40,8 @@ The real worker and Docker integration test reads an uploaded dataset and
 publishes its output. Sweeps now support CLI and HTTP submission, concurrency
 limits, cancellation after permanent failure, CLI/HTTP progress inspection, and
 CSV/JSON result export. A local 27-job sweep is verified across three worker
-processes sharing Docker, including metrics and exports. Independent Linux-host
-sweep and failure demonstrations remain to be verified.
+processes sharing Docker, including metrics, exports, and both fail-fast policies.
+Independent Linux-host execution and sweep worker-loss recovery remain to be verified.
 Declared metric outputs are collected into source-bound completion reports.
 Strict scratch limits, full retry policy coverage, and
 other v0.1 gates remain. See the
