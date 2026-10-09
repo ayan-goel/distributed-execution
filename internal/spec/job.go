@@ -53,6 +53,7 @@ type Retry struct {
 	MaxBackoffSeconds     int64    `json:"maxBackoffSeconds"`
 }
 type JobSpec struct {
+	Priority                int               `json:"priority,omitempty"`
 	Image                   string            `json:"image"`
 	Command                 []string          `json:"command"`
 	Args                    []string          `json:"args,omitempty"`
@@ -95,6 +96,11 @@ func (j Job) Validate() error {
 		return err
 	}
 	s := j.Spec
+	// Bound scheduler hints to the database's four priority levels. Priority
+	// changes queue order within a project; it never bypasses resource admission.
+	if s.Priority < 0 || s.Priority > 3 {
+		return fmt.Errorf("priority must be between 0 and 3")
+	}
 	if !textWithin(s.Image, 1024) || strings.ContainsAny(s.Image, " \t\r\n") {
 		return fmt.Errorf("invalid image reference")
 	}

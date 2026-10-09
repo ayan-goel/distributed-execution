@@ -91,6 +91,7 @@ func TestWorkerDaemonAcquiresExecutesAndPublishes(t *testing.T) {
 	job.Spec.Image = image
 	job.Spec.Command = []string{"sh", "-c", "cat /inputs/data/input.txt > /outputs/result; printf 'run out'; head -c 3300000 /dev/zero; printf 'run err' >&2; sleep 15; exit 0"}
 	job.Spec.Retry.MaxAttempts = 1
+	job.Spec.Priority = 3
 	job.Spec.Outputs = []spec.Output{{Name: "result", Path: "/outputs/result", Required: true, MaxBytes: 3}}
 	job.Spec.Args = nil
 	job.Spec.Resources = resources
@@ -131,6 +132,10 @@ func TestWorkerDaemonAcquiresExecutesAndPublishes(t *testing.T) {
 	var submitted store.JobRecord
 	if err := json.Unmarshal(cliRun("submit", jobFile, "--idempotency-key", "agent-execution", "--json"), &submitted); err != nil || submitted.State != "QUEUED" {
 		t.Fatal("CLI submission did not queue the job", err, submitted.State)
+	}
+	var priority int
+	if err := pool.QueryRow(ctx, "SELECT priority FROM jobs WHERE id=$1", submitted.ID).Scan(&priority); err != nil || priority != 3 {
+		t.Fatal("CLI admission lost job priority", priority, err)
 	}
 	certificate, err := tls.LoadX509KeyPair(pki.serverCert, pki.serverKey)
 	if err != nil {

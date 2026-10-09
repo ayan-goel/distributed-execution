@@ -71,6 +71,34 @@ fn binds_exact_bytes_and_preserves_execution_settings() {
 }
 
 #[test]
+fn accepts_bounded_optional_job_priority() {
+    for priority in 0..=3 {
+        let mut doc = document();
+        doc["spec"]["priority"] = json!(priority);
+        let checked =
+            ExecutionSpec::from_assignment(&assignment(serde_json::to_vec(&doc).unwrap())).unwrap();
+        assert_eq!(checked.job().spec.priority, priority);
+    }
+    for invalid in [
+        json!(-1),
+        json!(4),
+        json!(256),
+        json!(0.5),
+        json!("3"),
+        Value::Null,
+        json!(true),
+        json!([]),
+        json!({}),
+    ] {
+        let mut doc = document();
+        doc["spec"]["priority"] = invalid;
+        assert!(
+            ExecutionSpec::from_assignment(&assignment(serde_json::to_vec(&doc).unwrap())).is_err()
+        );
+    }
+}
+
+#[test]
 fn rejects_unsafe_or_unsupported_settings_even_with_matching_hash() {
     for (pointer, invalid) in [
         ("/spec/network", json!("host")),

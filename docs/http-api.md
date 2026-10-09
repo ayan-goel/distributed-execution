@@ -22,6 +22,12 @@ Send `Authorization: Bearer <project-token>`. Submission requires `Idempotency-K
 with the existing job; changed payloads return 409. The request hash is checked
 before contacting the registry, allowing lost-response recovery during an outage.
 
+Job documents accept optional `spec.priority` (integer 0–3, default 0). Sweep
+children inherit `spec.jobTemplate.spec.priority`. Nonzero changes are part of the
+request hash; changing priority with the same key returns 409. Invalid priorities
+return 422 before creating jobs or keys. Priority orders jobs within an eligible
+project and never bypasses admission limits. See the [priority contract](contracts.md#job-priority-d18b).
+
 Project mismatches return 403 for submission; looking up another project's UUID
 returns 404. Read-only tokens cannot submit. Registry resolution happens outside
 database transactions. Unavailable dependencies return retryable 503 responses

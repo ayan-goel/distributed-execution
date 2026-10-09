@@ -132,9 +132,9 @@ func SubmitSweepResolved(ctx context.Context, pool *pgxpool.Pool, key, requestHa
 			return SweepRecord{}, ErrInvalid
 		}
 		var childID string
-		err = tx.QueryRow(ctx, `INSERT INTO jobs(project_id,spec,spec_hash,cpu_millis,memory_mib,scratch_mib,sweep_id,sweep_index,event_sequence)
-			VALUES($1,$2,$3,$4,$5,$6,$7,$8,1) RETURNING id::text`, projectID, body, childHash,
-			child.Spec.Resources.CPUMillis, child.Spec.Resources.MemoryMiB, child.Spec.Resources.ScratchMiB,
+		err = tx.QueryRow(ctx, `INSERT INTO jobs(project_id,spec,spec_hash,cpu_millis,memory_mib,scratch_mib,priority,sweep_id,sweep_index,event_sequence)
+			VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,1) RETURNING id::text`, projectID, body, childHash,
+			child.Spec.Resources.CPUMillis, child.Spec.Resources.MemoryMiB, child.Spec.Resources.ScratchMiB, child.Spec.Priority,
 			result.ID, index).Scan(&childID)
 		if err != nil {
 			return SweepRecord{}, err

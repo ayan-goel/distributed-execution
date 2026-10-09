@@ -41,12 +41,9 @@ func TestProjectRoundRobinOverridesCrossProjectPriority(t *testing.T) {
 	pool, worker, registration := readyAcquisitionWorker(t)
 	addSchedulerProject(t, pool, worker)
 	low := queueAcquisitionJob(t, pool, nil)
-	first := queueAcquisitionJob(t, pool, nil)
-	next := queueAcquisitionJob(t, pool, nil)
+	first := queueAcquisitionJob(t, pool, func(job *spec.Job) { job.Spec.Priority = 3 })
+	next := queueAcquisitionJob(t, pool, func(job *spec.Job) { job.Spec.Priority = 3 })
 	ctx := context.Background()
-	if _, err := pool.Exec(ctx, "UPDATE jobs SET priority=3 WHERE id IN ($1,$2)", first.ID, next.ID); err != nil {
-		t.Fatal(err)
-	}
 	second := queueAcquisitionJob(t, pool, func(job *spec.Job) { job.Metadata.Project = "second" })
 	secondNext := queueAcquisitionJob(t, pool, func(job *spec.Job) { job.Metadata.Project = "second" })
 	request := AcquisitionRequest{SessionID: registration.SessionID, RequestID: uuid.NewString()}

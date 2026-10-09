@@ -143,9 +143,9 @@ func SubmitJobResolved(ctx context.Context, pool *pgxpool.Pool, key, requestHash
 	}
 	// Admission transitions a new immutable job into QUEUED. The submission key,
 	// job, and first event commit together so a lost reply can be recovered safely.
-	err = tx.QueryRow(ctx, `INSERT INTO jobs(id,project_id,spec,spec_hash,cpu_millis,memory_mib,scratch_mib,event_sequence)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,1) RETURNING id::text,project_id::text,state,spec,spec_hash,created_at`, id, projectID, canonical, executionHash,
-		job.Spec.Resources.CPUMillis, job.Spec.Resources.MemoryMiB, job.Spec.Resources.ScratchMiB).Scan(
+	err = tx.QueryRow(ctx, `INSERT INTO jobs(id,project_id,spec,spec_hash,cpu_millis,memory_mib,scratch_mib,priority,event_sequence)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,1) RETURNING id::text,project_id::text,state,spec,spec_hash,created_at`, id, projectID, canonical, executionHash,
+		job.Spec.Resources.CPUMillis, job.Spec.Resources.MemoryMiB, job.Spec.Resources.ScratchMiB, job.Spec.Priority).Scan(
 		&result.ID, &result.ProjectID, &result.State, &result.Spec, &result.SpecHash, &result.CreatedAt)
 	if err != nil {
 		return result, err

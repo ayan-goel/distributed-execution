@@ -24,6 +24,7 @@ project quotas and eligible worker capacity can be much smaller.
 
 | Field | Accepted range |
 | --- | --- |
+| Priority | integer 0–3; optional, defaults to 0 |
 | CPU millis | 1–1,024,000 |
 | Memory MiB | 1–16,777,216 |
 | Scratch MiB | 1–1,073,741,824 |
@@ -40,6 +41,24 @@ of `/outputs`. Overlapping paths and duplicate output names fail validation. The
 lexical checks complement, but do not replace, runtime symlink-safe file collection.
 Only `disabled` workload networking is currently admitted. Omission defaults to
 disabled. Other resource/time/retry fields are explicit rather than guessed.
+
+### Job priority (D18b)
+
+Set `spec.priority` in a Job document, including a sweep's embedded or local job
+template. Larger values run first within the next eligible project selected by
+round-robin. Priority does not bypass project access, quotas, placement, backoff,
+resource fit, or sweep concurrency, and does not preempt running jobs. Aging is
+not implemented yet.
+
+Priority is stored in the frozen job specification and scheduler column. Sweep
+children inherit their template's value; failed/cancelled-only retries copy their
+source values. Nonzero priority changes request identity, so changing it under an
+existing idempotency key conflicts. Omitted and explicit-zero priority normalize
+to the same bytes and hash as existing default jobs.
+
+Go and Rust validate the range. Use updated server and worker binaries together
+for nonzero priorities: an older strict worker decoder rejects the new field.
+Documents without it remain valid; this is not a rolling-upgrade compatibility claim.
 
 ### Canonical identity
 

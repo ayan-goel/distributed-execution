@@ -56,6 +56,7 @@ func TestHTTPSweepSubmissionIsAtomicScopedAndReplayable(t *testing.T) {
 		t.Fatal(err)
 	}
 	job.Spec.Inputs = []spec.Input{{Dataset: "sweep-data", MountPath: "/inputs/data"}}
+	job.Spec.Priority = 2
 	sweep := spec.Sweep{APIVersion: spec.APIVersion, Kind: "Sweep", Metadata: spec.Metadata{Name: "grid", Project: "research"},
 		Spec: spec.SweepSpec{JobTemplate: job, Matrix: map[string][]string{
 			"METHOD": {"random", "contact", "knn"}, "RATE": {"0.0001", "0.0003", "0.001"}, "SEED": {"1", "2", "3"}}, MaxConcurrent: 6}}
@@ -112,6 +113,10 @@ func TestHTTPSweepSubmissionIsAtomicScopedAndReplayable(t *testing.T) {
 	var resolved spec.Sweep
 	if err := json.Unmarshal(first.Spec, &resolved); err != nil || resolved.Spec.JobTemplate.Spec.Image != "registry.example.org/eval@sha256:"+strings.Repeat("a", 64) {
 		t.Fatal("template image was not pinned", resolved, err)
+	}
+	var prioritized int
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM jobs WHERE sweep_id=$1 AND priority=2 AND spec->'spec'->>'priority'='2'", first.ID).Scan(&prioritized); err != nil || prioritized != 27 || resolved.Spec.JobTemplate.Spec.Priority != 2 {
+		t.Fatal("HTTP sweep lost template priority", prioritized, err)
 	}
 	var children, bindings int
 	if err := pool.QueryRow(ctx, `SELECT count(*),count(i.dataset_id) FROM jobs j LEFT JOIN job_inputs i ON i.job_id=j.id AND i.dataset_id=$2 WHERE j.sweep_id=$1`, first.ID, dataset.ID).Scan(&children, &bindings); err != nil || children != 27 || bindings != 27 {

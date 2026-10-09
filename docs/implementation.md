@@ -34,7 +34,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D15 logs | D08,D11 | Bounded queues/spool, noisy-job truncation, stream cursors, reconnect | catalog, HTTP cursor/tail gaps, binary format, private spool, Rust registration client, journaled delivery, bounded Docker follower, assembler, completion summary, CLI follow, pre-start capture, and live publication passed; reconnect/fault matrix pending |
 | D16 datasets | D11 | Immutable registration/cache; corruption rejection; pin-aware eviction | ownership schema, upload/completion APIs, project-scoped resolution, real CLI registration, isolated worker cache, atomic store admission bindings, durable replay, archive assignment contract, worker validation, store assignment population, signed RPC grants, strict job-to-wire matching, real read-only Docker mount, startup cache reset, assignment-to-cache preparation, agent cache initialization, unlaunched transfer-failure completion, replay-binding validation, worker input acquisition path, HTTP submission, and one live dataset-to-output Docker job passed; dataset fault matrix still pending |
 | D17 sweeps/metrics | D05,D13,D16 | Atomic 27-child sweep; 1000 cap; concurrency; fail-fast; finite scalar export | deterministic expansion, schema constraints, HTTP/CLI submission/replay, scheduler cap/terminal release, fail-fast, bounded CLI/HTTP progress/accepted metrics, CSV/JSON export, real worker metric ingestion, local 27-child success/fail-fast/worker-loss sweeps, immutable project-scoped retry lineage, atomic failed/cancelled-only store/HTTP/client/CLI retry, and local dataset-backed retry execution passed; independent-host gates pending |
-| D18 placement | D07,D17 | Project fairness/aging, blockers, two real independent hosts without oversubscription | durable project round-robin store/concurrency/replay/migration checks passed; aging, blocker history, and independent hosts pending |
+| D18 placement | D07,D17 | Project fairness/aging, blockers, two real independent hosts without oversubscription | durable project round-robin and public 0–3 job priority contract/admission checks passed; aging, blocker history, and independent hosts pending |
 | D19 faults/benchmarks | D14–D18 | Spec §21/22 runtime matrix, 27-job worker kill, stale result, measured benchmarks | local 27-child worker kill/natural lease recovery and real delayed completion rejection after replacement passed; independent-host evidence, broader fault matrix, and published measurements pending |
 | D20 release | D19 | TLS/auth/permissions, retention, migrations/backups, packaging, tutorial, actual research run | pending |
 
@@ -3085,3 +3085,47 @@ This recorded gap is resolved by D17l/D17m below; the live sweep gate remains op
 - `make test lint smoke` and the full combined PostgreSQL/Docker/S3-compatible
   storage suite passed (store: 45.244 seconds; server: 494.871 seconds). Final
   documentation review and `git diff --check` found no remaining blockers.
+
+### D18b: Admit bounded public job priorities
+
+- Found a prerequisite to useful priority aging: only the database exposed
+  priority; public job documents could not set it. Go and Rust regressions first
+  rejected valid priority-bearing documents. Added optional `spec.priority`, an
+  integer from 0–3 with default 0. Nonzero priority is part of canonical identity;
+  omission/explicit zero preserve existing default documents and hashes.
+- Real PostgreSQL regressions then exposed admission dropping the decoded value.
+  Job and sweep insertion now populate the scheduler column. Children inherit the
+  template value, and linked failed/cancelled-only retries retain frozen priority.
+  Updated fairness/retry tests to use public submission fields rather than direct
+  SQL priority edits. Store/scheduling focused checks passed (3.408 seconds).
+- CLI/HTTP tests cover all four levels, exact replay, changed-priority conflicts,
+  explicit-default normalization, invalid types/ranges, and no leaked rows/keys.
+  The 27-child HTTP sweep check verifies every child's scheduler and frozen spec
+  priority. Initial focused API checks passed (1.998 seconds); later additions are
+  included in the full verification gate.
+- Updated real worker job and failed/cancelled retry fixtures to use priority 3,
+  checking stored/frozen values. Their full runtime gate passed on the final rerun.
+  Separate-model code review found no blockers. Documented coordinated binary
+  upgrades: older strict workers reject the new nonzero field; default documents
+  remain compatible. No rolling-upgrade support is claimed.
+- Priority remains subordinate to project rotation and all eligibility checks.
+  Aging, blocker history, and independent-host execution remain pending.
+- `make test lint smoke` passed. The initial combined run passed the PostgreSQL
+  packages but failed two unchanged default-priority worker-loss gates: a retry
+  also lost its lease, and the recovery sweep recorded a second lost attempt
+  (server package: 499.301 seconds). macOS power logs show repeated sleep/dark-wake
+  intervals during this run, consistent with the extra losses; cleaned-up fixtures
+  prevent retrospective correlation of every loss with its exact lease deadline.
+  Started focused reruns with temporary idle-sleep inhibition and unchanged lease
+  limits/assertions. Documented awake-host verification separately from deployment.
+- Both failed scenarios passed on focused rerun (156.850 seconds): natural retry
+  completed once, and the sweep had exactly 28 attempts/one loss/27 accepted results.
+  Its intended loss was detected 1.521 seconds after expiry. The earlier extra
+  sweep loss was logged at 11:49:40, after power logs show sleep from 11:47:10
+  through 11:49:31. This supports host suspension as the explanation without
+  replacing the original lease assertions. Full rerun retains verbose evidence.
+- The complete combined PostgreSQL/Docker/S3-compatible rerun passed with temporary
+  idle-sleep inhibition (store: 42.401 seconds; server: 495.624 seconds), including
+  the real priority-bearing job and linked sweep retries. Verbose evidence is kept
+  locally under ignored `.local/verification/priority-full.log`. Separate-model
+  review and `git diff --check` found no blockers. The next slice is priority aging.

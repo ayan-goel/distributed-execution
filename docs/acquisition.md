@@ -25,6 +25,8 @@ Fitting candidates precede blocked jobs, permitting backfill. Selection rotates
 among eligible projects in ascending UUID order after the last selected project,
 wrapping at the end. Within the selected project, priority descends, then creation
 time and job UUID ascend. Priority does not let one project monopolize admission.
+Users set the optional [job priority](contracts.md#job-priority-d18b) from 0–3 in
+`spec.priority`; larger values run first, and omission defaults to 0.
 Sweep concurrency is part of eligibility. A no-work result reports the first
 blocked candidate's reason under that ordering, or QUEUE_EMPTY when no visible
 queued candidate has reached its eligibility time.

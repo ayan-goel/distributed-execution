@@ -106,6 +106,8 @@ pub struct Metadata {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct JobSettings {
+    #[serde(default)]
+    pub priority: u8,
     pub image: String,
     pub command: Vec<String>,
     #[serde(default)]
@@ -186,7 +188,7 @@ impl Job {
                     .bytes()
                     .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
         });
-        // Bound resource arithmetic and all runtime deadlines before constructing
+        // Bound priority, resource arithmetic and runtime deadlines before constructing
         // settings. Admission quotas and actual host capability are separate gates.
         if self.api_version != "dispatch.dev/v1alpha1"
             || self.kind != "Job"
@@ -195,6 +197,7 @@ impl Job {
             || !valid_map(&self.metadata.labels, false)
             || !valid_map(&s.env, true)
             || !valid_map(&s.placement.labels, false)
+            || s.priority > 3
             || !pinned
             || s.image.len() > 1024
             || s.image.chars().any(|c| c.is_whitespace() || c.is_control())

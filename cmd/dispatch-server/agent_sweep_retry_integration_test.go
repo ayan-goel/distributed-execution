@@ -42,6 +42,7 @@ func TestWorkerDaemonsExecuteFailedCancelledSweepRetry(t *testing.T) {
 		t.Fatal(err)
 	}
 	job := f.job
+	job.Spec.Priority = 3
 	job.Spec.Inputs = []spec.Input{{Dataset: dataset.Name, MountPath: "/inputs/data"}}
 	job.Spec.Outputs = append(job.Spec.Outputs, spec.Output{Name: "result", Path: "/outputs/result.txt", Required: true, MaxBytes: 256})
 	// Keep the victim running long enough to kill its agent. The same immutable
@@ -184,6 +185,7 @@ func TestWorkerDaemonsExecuteFailedCancelledSweepRetry(t *testing.T) {
 		parent := source.ChildIDs[index*2]
 		var frozen bool
 		err := f.pool.QueryRow(f.ctx, `SELECT n.parent_job_id=p.id AND n.spec=p.spec AND n.spec_hash=p.spec_hash
+			AND n.priority=p.priority AND n.priority=3 AND n.spec->'spec'->>'priority'='3'
 			AND i.dataset_id=pi.dataset_id AND i.dataset_id=$3 AND i.mount_path=pi.mount_path
 			FROM jobs n JOIN jobs p ON p.id=$2 JOIN job_inputs i ON i.job_id=n.id JOIN job_inputs pi ON pi.job_id=p.id WHERE n.id=$1`, child.ID, parent, dataset.DatasetID).Scan(&frozen)
 		if err != nil || !frozen || child.Index != index || child.ParentJobID != parent || child.ID == parent {

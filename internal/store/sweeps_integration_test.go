@@ -24,6 +24,7 @@ func TestSweepSubmissionCommitsStableChildrenAndReplaysOneIdentity(t *testing.T)
 		t.Fatal(err)
 	}
 	job, _ := admittedExample(t)
+	job.Spec.Priority = 2
 	sweep := spec.Sweep{APIVersion: spec.APIVersion, Kind: "Sweep",
 		Metadata: spec.Metadata{Name: "grid", Project: "research"},
 		Spec: spec.SweepSpec{JobTemplate: job, Matrix: map[string][]string{
@@ -76,11 +77,15 @@ func TestSweepSubmissionCommitsStableChildrenAndReplaysOneIdentity(t *testing.T)
 	for i, id := range first.ChildIDs {
 		var child spec.Job
 		var body []byte
-		if err := pool.QueryRow(ctx, "SELECT spec FROM jobs WHERE id=$1 AND sweep_index=$2", id, i).Scan(&body); err != nil {
+		var priority int
+		if err := pool.QueryRow(ctx, "SELECT spec,priority FROM jobs WHERE id=$1 AND sweep_index=$2", id, i).Scan(&body, &priority); err != nil {
 			t.Fatal(err)
 		}
 		if err := json.Unmarshal(body, &child); err != nil {
 			t.Fatal(err)
+		}
+		if priority != 2 || child.Spec.Priority != priority {
+			t.Fatal("sweep lost template priority", priority, child.Spec.Priority)
 		}
 		if child.Spec.Env["METHOD"] != sweep.Spec.Matrix["METHOD"][i/9] ||
 			child.Spec.Env["RATE"] != sweep.Spec.Matrix["RATE"][(i/3)%3] ||

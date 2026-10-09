@@ -25,6 +25,7 @@ func TestSweepRetryPreservesNondefaultPolicyAndPriority(t *testing.T) {
 		t.Fatal(err)
 	}
 	sweep.Spec.MaxConcurrent, sweep.Spec.FailFast, sweep.Spec.CancelRunningOnFailure = 7, true, true
+	sweep.Spec.JobTemplate.Spec.Priority = 3
 	source, err := SubmitSweepResolved(ctx, pool, uuid.NewString(), strings.Repeat("e", 64), sweep, []DatasetBinding{inputs[0].Dataset})
 	if err != nil {
 		t.Fatal(err)
@@ -33,9 +34,6 @@ func TestSweepRetryPreservesNondefaultPolicyAndPriority(t *testing.T) {
 		if _, err := RequestCancellation(ctx, pool, source.ProjectID, id); err != nil {
 			t.Fatal(err)
 		}
-	}
-	if _, err := pool.Exec(ctx, "UPDATE jobs SET priority=3 WHERE sweep_id=$1", source.ID); err != nil {
-		t.Fatal(err)
 	}
 	retried, err := RetrySweep(ctx, pool, source.ProjectID, source.ID, "policy-retry")
 	if err != nil || len(retried.Children) != 4 || retried.MaxConcurrent != 7 {
@@ -46,7 +44,7 @@ func TestSweepRetryPreservesNondefaultPolicyAndPriority(t *testing.T) {
 		t.Fatal("retry changed inherited failure policy", page.Sweep, err)
 	}
 	var priorities int
-	if err := pool.QueryRow(ctx, "SELECT count(*) FROM jobs WHERE sweep_id=$1 AND priority=3", retried.ID).Scan(&priorities); err != nil || priorities != 4 {
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM jobs WHERE sweep_id=$1 AND priority=3 AND spec->'spec'->>'priority'='3'", retried.ID).Scan(&priorities); err != nil || priorities != 4 {
 		t.Fatal("retry discarded effective source priorities", priorities, err)
 	}
 }

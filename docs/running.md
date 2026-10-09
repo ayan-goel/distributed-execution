@@ -326,3 +326,19 @@ both actual listeners, registers and reconciles a host over mTLS, restarts the
 command, recovers the same session, and observes revocation on an existing channel.
 Bad worker TLS fails before either listener is announced. A blocked-request test
 verifies that HTTP-only forced shutdown closes requests within its supplied budget.
+
+### Local test host power state
+
+Keep the development host awake during lease-sensitive runtime tests. On macOS,
+the command below temporarily prevents idle sleep for the test command's lifetime;
+it does not prevent lid-close or manually requested sleep:
+
+```sh
+caffeinate -i sh scripts/test-objectstore.sh sh scripts/test-store.sh
+```
+
+Suspending the host can stop every native worker while database wall time advances,
+causing additional legitimate lease losses. Tests that deliberately kill one worker
+and assert exactly one loss then fail for a different scenario. Check sleep/wake
+history before classifying such a failure; keep lease deadlines and assertions
+intact. These local tests still do not prove independent Linux-host behavior.

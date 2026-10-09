@@ -49,7 +49,8 @@ failed/cancelled children while keeping successful results and the original hist
 A local dataset-backed test verifies those retry jobs execute and publish outputs
 across the remaining workers after a worker loss.
 The scheduler now rotates among eligible projects with a durable database cursor;
-priority aging and per-job blocker history remain pending.
+jobs accept priorities from 0–3 within each project. Priority aging and per-job
+blocker history remain pending.
 Declared metric outputs are collected into source-bound completion reports.
 Strict scratch limits, full retry policy coverage, and
 other v0.1 gates remain. See the
