@@ -2824,3 +2824,16 @@ This recorded gap is resolved by D17l/D17m below; the live sweep gate remains op
 - `make test lint smoke` and the complete combined PostgreSQL/Docker/object-store
   suite passed, including the new sweep test. Separate model review found no
   required code or documentation changes.
+
+### Operator guide: Reconcile dataset and sweep instructions
+
+- Removed obsolete input-free-only and HTTP 501 statements from `running.md`.
+  The guide now describes project-owned immutable dataset admission, verified
+  staging/read-only mounts, and current sweep inspection/export commands.
+- Checked the instructions against HTTP admission, CLI command parsing, worker
+  configuration, and the passing dataset-backed and 27-child real-stack tests.
+  Cached-image, soft-scratch, independent-host, and failure-demo limits remain
+  explicit. This documentation change does not add runtime behavior.
+- Binary help confirms the documented command syntax, relative guide links
+  resolve, and `git diff --check` passed. Separate model review found no blockers
+  and clarified that the JSON-output paragraph describes job commands.

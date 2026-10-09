@@ -1,11 +1,12 @@
 # Running the current control plane
 
-The control plane can admit and inspect queued jobs, and the CLI can retrieve
-verified outputs. The [worker agent](worker-agent.md) now acquires and executes
-input-free jobs with cached images under the explicit soft-scratch development
-policy. The server command defaults to strict scratch; opt into the local development
-profile with `--worker-dev-soft-scratch` on loopback listeners. Hard scratch quotas
-and the independent Linux release profile remain pending.
+The control plane admits jobs and parameter sweeps, exposes progress and logs,
+and serves verified output downloads. The [worker agent](worker-agent.md) executes
+jobs, including registered dataset inputs, with cached images under the explicit
+soft-scratch development policy. The server command defaults to strict scratch;
+opt into the local development profile with `--worker-dev-soft-scratch` on loopback
+listeners. Hard scratch quotas and the independent Linux release profile remain
+pending.
 
 ## Prerequisites
 
@@ -91,7 +92,7 @@ to; workers verify it against their configured server CA. The worker listener al
 requires mTLS, including when HTTP uses `--dev-insecure` on loopback. Partial worker
 TLS options are rejected. Omitting all worker options runs HTTP only.
 
-To let the current agent acquire input-free jobs on one development machine, start
+To let the current agent acquire jobs on one development machine, start
 both listeners on literal loopback IPs, use `--dev-insecure` for HTTP, and add
 `--worker-dev-soft-scratch` to the worker listener options above. The switch is
 rejected without this exact local setup; it permits soft scratch without a hard
@@ -205,13 +206,25 @@ template and validates the expanded sweep offline. `dispatch sweep submit FILE
 --idempotency-key KEY --json` submits all children together. Relative
 `jobTemplateFile` references resolve beside the sweep file and never reach the
 server. The [sweep guide](sweeps.md) includes the 27-child example, recovery rules,
-concurrency cap, and failure policy.
+concurrency cap, failure policy, and declared metric outputs. Inspect and export
+results with:
+
+```sh
+bin/dispatch sweep get SWEEP_UUID --limit 50 --json
+bin/dispatch sweep export SWEEP_UUID > results.json
+bin/dispatch sweep export SWEEP_UUID --format csv > results.csv
+```
+
+Inspection returns one page; pass its `nextCursor` with `--cursor` to continue.
+Export follows every page. Export after the sweep is terminal for final comparison;
+running sweeps can still contain unfinished children.
 
 Options follow the file or job ID. Successful commands exit 0; validation, API,
-configuration, transport, and output errors exit 2. `--json` writes one job object
-to stdout for submit/get/cancel, or `{valid,specHash}` for validation; diagnostics stay on
-stderr. Human submit/get/cancel output includes the job UUID and quoted state. Wait,
-list and dataset-backed job execution will be added in their slices. Use `bin/dispatch logs JOB_UUID`
+configuration, transport, and output errors exit 2. For job commands, `--json`
+writes one job object to stdout for submit/get/cancel, or `{valid,specHash}` for
+validation; diagnostics stay on stderr. Human submit/get/cancel output includes
+the job UUID and quoted state. Wait
+and list commands remain to be implemented. Use `bin/dispatch logs JOB_UUID`
 to inspect verified segments, or `bin/dispatch logs JOB_UUID --follow` to poll
 for new segments while the job runs.
 
@@ -227,8 +240,20 @@ as each becomes available. If completion returns an uncertain error after the
 version was printed, rerun with the same directory and name plus
 `--request-id UUID --resume-version VERSION`. This completes the previously
 uploaded version without another PUT. Keep those recovery values private.
-Dataset references in job submissions still return 501 until worker staging is
-implemented.
+Reference a registered name in the job's `spec.inputs`:
+
+```yaml
+inputs:
+  - dataset: data-v1
+    mountPath: /inputs/data
+```
+
+The name must belong to the submitting project; missing or cross-project names
+return 404. Admission pins the immutable dataset version. The worker downloads and
+verifies it into its private cache, refreshes signed grants before staging, and
+mounts the declared path read-only. Configure versioned object storage for both
+registration and execution. See [HTTP dataset admission](http-api.md) and
+[worker cache configuration](worker-agent.md).
 
 For a successfully completed job with an accepted output named `result`:
 
@@ -248,19 +273,26 @@ no signed URL or storage credential is printed. See
 PostgreSQL and a local registry: migrate, create project, issue token, submit, stop,
 restart, replay while the registry is offline, and revoke the token. This verifies
 durable queued-job recovery; the active-worker fault matrix has additional release gates.
+The command test checks the stored image digest/spec hash and retries the original
+key after restart during the registry outage. CLI unit tests cover offline commands,
+invalid usage, terminal-safe errors, and separation of recovery diagnostics from
+JSON output. Binary smoke tests validate the checked-in CPU example through the
+actual `dispatch` executable.
+
 One active-job recovery gate now kills an agent-owned Docker job, approves a named
 replacement session, and verifies fencing and physical cleanup before readiness.
-The actual worker daemon also acquires an input-free job through the real gRPC
-service, runs Docker, publishes an exact-version output to local SeaweedFS, and
-cleans up after completion. CLI submission and verified download cover both ends
-of the path. The fixture uses explicit soft-scratch acquisition policy and a fixed
+The actual worker daemon also acquires a dataset-backed job through the real gRPC
+service, reads its verified read-only input in Docker, publishes an exact-version
+output to local SeaweedFS, and cleans up after completion. CLI submission and
+verified download cover both ends of the path. The fixture uses explicit
+soft-scratch acquisition policy and a fixed
 resolver for an already cached digest; external registry access and image pulling
 are separate work.
-The same test now exercises CLI submission and inspection, checks the stored image
-digest/spec hash, and retries with the original key after restart during the registry
-outage. CLI unit tests cover offline commands, invalid usage, terminal-safe errors,
-and separation of recovery diagnostics from JSON output. Binary smoke tests validate
-the checked-in CPU example through the actual `dispatch` executable.
+
+A 27-child sweep also completes across three enrolled native worker processes
+sharing Docker Desktop, with two active attempts observed and exact metrics,
+pagination, JSON/CSV exports, and artifact downloads verified. Independent Linux
+hosts and live sweep failure demonstrations remain open.
 
 Worker command integration verifies enrollment/takeover/revocation, then starts
 both actual listeners, registers and reconciles a host over mTLS, restarts the
