@@ -2837,3 +2837,13 @@ This recorded gap is resolved by D17l/D17m below; the live sweep gate remains op
 - Binary help confirms the documented command syntax, relative guide links
   resolve, and `git diff --check` passed. Separate model review found no blockers
   and clarified that the JSON-output paragraph describes job commands.
+
+### D17o: Share real sweep fixture setup before failure scenarios
+
+- Extracted isolated storage/database, CLI submission, and three enrolled daemon
+  setup from the 27-child test. Its execution/export assertions remain unchanged.
+  Workers stop before fixture-owned containers are removed, and the service stops
+  before its pool closes. Context cancellation is registered with fixture cleanup.
+- The focused real-stack 27-child gate and `make test lint smoke` passed after
+  extraction. Separate model review found no blockers. No production behavior or
+  additional failure coverage is claimed by this refactor.
