@@ -54,6 +54,11 @@ cover the entire sweep. Separate page requests may observe later child states;
 they retain stable membership and index order. Use `limit` and the returned
 `nextCursor` for continuation; see [HTTP inspection](http-api.md#sweep-inspection).
 
+The Go client exposes `GetSweep(ctx, id, cursor, limit)`. It checks summary counts,
+ordered child identities, pagination, and accepted-only finite scalar metrics
+before returning a typed page. Decimal metric tokens retain their precision.
+CLI inspection and CSV/JSON export remain under development.
+
 ## Scheduling and failure policy
 
 `maxConcurrent` counts child attempts from ASSIGNED through FINALIZING. The

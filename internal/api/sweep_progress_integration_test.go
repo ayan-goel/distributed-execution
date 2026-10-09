@@ -6,10 +6,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
 
+	"dispatch.local/dispatch/internal/client"
 	"dispatch.local/dispatch/internal/spec"
 	"dispatch.local/dispatch/internal/store"
 	"github.com/google/uuid"
@@ -68,6 +70,20 @@ func TestHTTPSweepInspectionScopesProgressAndCursors(t *testing.T) {
 	}
 	if err := json.Unmarshal(second.Body.Bytes(), &page); err != nil || page.Sweep.Progress.Cancelled != 1 || len(page.Children) != 1 || page.Children[0].ID != created.ChildIDs[2] || page.Children[0].State != "CANCELLED" || page.HasMore || page.NextCursor != "" {
 		t.Fatal("incorrect continuation page", page, err)
+	}
+	server := httptest.NewServer(h)
+	defer server.Close()
+	c, err := client.New(server.URL, reader, true, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientPage, err := c.GetSweep(ctx, created.ID, "", 2)
+	if err != nil || len(clientPage.Children) != 2 || !clientPage.HasMore {
+		t.Fatal("client rejected real HTTP first page", clientPage, err)
+	}
+	clientPage, err = c.GetSweep(ctx, created.ID, clientPage.NextCursor, 2)
+	if err != nil || len(clientPage.Children) != 1 || clientPage.Children[0].ID != created.ChildIDs[2] || clientPage.HasMore {
+		t.Fatal("client rejected real HTTP continuation", clientPage, err)
 	}
 	for _, tc := range []struct {
 		path, token string

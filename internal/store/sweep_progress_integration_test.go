@@ -9,9 +9,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"dispatch.local/dispatch/internal/client"
 	"dispatch.local/dispatch/internal/spec"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -36,7 +39,7 @@ func TestSweepProgressPagesExposeOnlyAcceptedMetrics(t *testing.T) {
 		if err != nil || acquired.Assignment == nil {
 			t.Fatal(acquired, err)
 		}
-		completeSweepMetric(t, pool, id, acquired.Assignment.Authority, reason)
+		completeSweepMetric(t, pool, id, acquired.Assignment.Authority, reason, []byte(`{"score":9007199254740993}`))
 	}
 	if _, err := RequestCancellation(ctx, pool, created.ProjectID, created.ChildIDs[2]); err != nil {
 		t.Fatal(err)
@@ -128,11 +131,54 @@ func TestSweepProgressPagesRespectByteAndRowBounds(t *testing.T) {
 	}
 }
 
-func completeSweepMetric(t *testing.T, pool *pgxpool.Pool, id WorkerIdentity, a AttemptAuthority, reason string) {
+func TestSweepProgressClientAcceptsDatabaseNormalizedNumbers(t *testing.T) {
+	pool, id, registration := readyAcquisitionWorker(t)
+	ctx := context.Background()
+	job, _ := admittedExample(t)
+	job.Spec.Placement.Labels["architecture"] = "arm64"
+	job.Spec.Outputs = []spec.Output{{Name: "metrics", Path: "/outputs/metrics.json", MaxBytes: MaxCompletionMetricsBytes, Required: true}}
+	sweep := spec.Sweep{APIVersion: spec.APIVersion, Kind: "Sweep", Metadata: spec.Metadata{Name: "normalized-metric", Project: "research"},
+		Spec: spec.SweepSpec{JobTemplate: job, Matrix: map[string][]string{"SEED": {"1"}}, MaxConcurrent: 1}}
+	created, err := SubmitSweepResolved(ctx, pool, uuid.NewString(), strings.Repeat("f", 64), sweep, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	acquired, err := AcquireWork(ctx, pool, id, AcquisitionRequest{SessionID: registration.SessionID, RequestID: uuid.NewString()}, AcquisitionPolicy{})
+	if err != nil || acquired.Assignment == nil {
+		t.Fatal(acquired, err)
+	}
+	completeSweepMetric(t, pool, id, acquired.Assignment.Authority, "", []byte(`{"score":1.`+strings.Repeat("1", 990)+`e-100}`))
+	page, err := GetSweep(ctx, pool, created.ProjectID, created.ID, -1, 100)
+	if err != nil || len(page.Children) != 1 {
+		t.Fatal(page, err)
+	}
+	normalized := page.Children[0].Metrics["score"]
+	if len(normalized) <= 1024 {
+		t.Fatal("fixture did not expand its exponent", len(normalized))
+	}
+	// Exercise the database's real numeric representation through the public
+	// page shape, rather than assuming exponent tokens survive JSONB conversion.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(struct {
+			SweepPage
+			NextCursor string `json:"nextCursor"`
+		}{SweepPage: page})
+	}))
+	defer server.Close()
+	c, err := client.New(server.URL, "private", true, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := c.GetSweep(ctx, created.ID, "", 100)
+	if err != nil || got.Children[0].Metrics["score"] != normalized {
+		t.Fatal("client rejected or changed database-normalized metric", err)
+	}
+}
+
+func completeSweepMetric(t *testing.T, pool *pgxpool.Pool, id WorkerIdentity, a AttemptAuthority, reason string, body []byte) {
 	t.Helper()
 	ctx := context.Background()
 	finalizeUploadFixture(t, pool, id, a)
-	body := []byte(`{"score":9007199254740993}`)
 	hash := sha256.Sum256(body)
 	upload := uploadRequest()
 	upload.Authority, upload.LogicalName, upload.SizeBytes, upload.SHA256 = a, "metrics", int64(len(body)), hex.EncodeToString(hash[:])

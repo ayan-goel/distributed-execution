@@ -2701,3 +2701,19 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   Follow-up review confirmed no remaining blockers.
 - [HTTP inspection](http-api.md#sweep-inspection) defines the response and cursor
   semantics. CLI inspection, result export, and live sweep gates remain required.
+
+### D17i: Validate typed sweep inspection pages in the Go client
+
+- `GetSweep` sends bounded cursor requests and returns typed summary, parameters,
+  and accepted metrics. It rejects inconsistent progress, child identity/order,
+  premature end of results, missing/reused cursors, unaccepted metrics, quoted
+  numbers, and nonfinite/underflowing numbers while retaining decimal precision.
+- Contract tests first failed for the missing client method. Focused client tests
+  now pass, and a real HTTP/PostgreSQL test verifies first and continuation pages
+  through this client. `make test lint smoke` passed. Separate model review found
+  PostgreSQL's exponent expansion could exceed the original numeric-token limit;
+  a real accepted-metric regression reproduced the rejection. The client now
+  allows bounded normalized decimals. Focused store/API and native client/CLI
+  tests plus affected-package vet passed after the fix; follow-up review found
+  no remaining blockers.
+- CLI inspection, CSV/JSON export, and live sweep execution remain required.
