@@ -339,12 +339,19 @@ pub async fn prepare_completion<H>(
             // Hashing must not block lease timers. Cancellation can leave this
             // bounded read running, but it performs no uploads or journal mutations.
             let outputs = tokio::task::spawn_blocking(move || {
-                collect_outputs(&workspace, &execution, CollectionLimits::default())
+                let mut outputs = collect_outputs(&workspace, &execution, CollectionLimits::default())?;
+                let metrics = outputs
+                    .iter_mut()
+                    .find(|output| output.name() == "metrics")
+                    .map(|output| output.read_metrics())
+                    .transpose()?
+                    .flatten();
+                Ok((outputs, metrics))
             })
             .await
             .map_err(|_| FinalizationError::Collection(CollectionError::Unsafe))?;
             let mut failure = FailureReason::Unspecified;
-            let outputs = match outputs {
+            let (outputs, mut metrics) = match outputs {
                 Ok(outputs) => outputs,
                 Err(CollectionError::Configuration) => {
                     return Err(FinalizationError::Collection(
@@ -355,10 +362,16 @@ pub async fn prepare_completion<H>(
                     // Missing, unreadable, unsafe, changing, or oversized declared
                     // files cannot yield success even when the process exited zero.
                     failure = FailureReason::OutputInvalid;
-                    Vec::new()
+                    (Vec::new(), None)
                 }
             };
+            if outputs.iter().any(|output| output.name() == "metrics") && metrics.is_none() {
+                // Invalid metric content cannot yield success. Retain its uploaded
+                // source as a diagnostic without claiming canonical metric values.
+                failure = FailureReason::OutputInvalid;
+            }
             let mut references = Vec::with_capacity(outputs.len());
+            let mut metrics_json = Vec::new();
             for output in outputs {
                 let name = output.name().to_owned();
                 journal
@@ -404,7 +417,11 @@ pub async fn prepare_completion<H>(
                                 tokio::time::sleep(Duration::from_secs(1)).await;
                                 continue;
                             }
-                            failure = reason;
+                            // A storage outage must not turn known invalid output
+                            // into a transfer-retryable workload failure.
+                            if failure != FailureReason::OutputInvalid {
+                                failure = reason;
+                            }
                             break None;
                         }
                     }
@@ -412,6 +429,14 @@ pub async fn prepare_completion<H>(
                 let Some(reply) = reply else {
                     break;
                 };
+                if name == "metrics" {
+                    let Some(source) = metrics.take() else {
+                        // The artifact catalog retains invalid source bytes, but
+                        // completion metric references require a validated payload.
+                        continue;
+                    };
+                    metrics_json = source;
+                }
                 references.push(OutputReference {
                     name,
                     artifact_id: reply.artifact_id,
@@ -434,6 +459,7 @@ pub async fn prepare_completion<H>(
                 outputs: references,
                 logs_complete: logs.complete,
                 gaps: logs.gaps,
+                metrics_json,
                 ..Default::default()
             };
             request.payload_sha256 =

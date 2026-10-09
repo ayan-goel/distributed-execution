@@ -33,7 +33,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D14 cancellation | D12,D13 | Both completion/cancellation race orders, repeat requests, uncertain cleanup | pending |
 | D15 logs | D08,D11 | Bounded queues/spool, noisy-job truncation, stream cursors, reconnect | catalog, HTTP cursor/tail gaps, binary format, private spool, Rust registration client, journaled delivery, bounded Docker follower, assembler, completion summary, CLI follow, pre-start capture, and live publication passed; reconnect/fault matrix pending |
 | D16 datasets | D11 | Immutable registration/cache; corruption rejection; pin-aware eviction | ownership schema, upload/completion APIs, project-scoped resolution, real CLI registration, isolated worker cache, atomic store admission bindings, durable replay, archive assignment contract, worker validation, store assignment population, signed RPC grants, strict job-to-wire matching, real read-only Docker mount, startup cache reset, assignment-to-cache preparation, agent cache initialization, unlaunched transfer-failure completion, replay-binding validation, worker input acquisition path, HTTP submission, and one live dataset-to-output Docker job passed; dataset fault matrix still pending |
-| D17 sweeps/metrics | D05,D13,D16 | Atomic 27-child sweep; 1000 cap; concurrency; fail-fast; finite scalar export | deterministic expansion, schema constraints, HTTP/CLI submission/replay, scheduler cap/terminal release, fail-fast, bounded CLI/HTTP progress/accepted metrics, and CSV/JSON export passed; live sweep gates pending |
+| D17 sweeps/metrics | D05,D13,D16 | Atomic 27-child sweep; 1000 cap; concurrency; fail-fast; finite scalar export | deterministic expansion, schema constraints, HTTP/CLI submission/replay, scheduler cap/terminal release, fail-fast, bounded CLI/HTTP progress/accepted metrics, CSV/JSON export, and real worker metric ingestion passed; live sweep gates pending |
 | D18 placement | D07,D17 | Project fairness/aging, blockers, two real independent hosts without oversubscription | pending |
 | D19 faults/benchmarks | D14–D18 | Spec §21/22 runtime matrix, 27-job worker kill, stale result, measured benchmarks | pending |
 | D20 release | D19 | TLS/auth/permissions, retention, migrations/backups, packaging, tutorial, actual research run | pending |
@@ -2754,6 +2754,8 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 
 ### D17 next gate: Connect real worker metric ingestion before live sweeps
 
+This recorded gap is resolved by D17l/D17m below; the live sweep gate remains open.
+
 - Inspection while preparing the real 27-child Docker gate found
   `prepare_completion` leaves `metrics_json` at its default. The existing server
   acceptance/store/client/export tests establish the downstream contract, but
@@ -2778,3 +2780,25 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   model review found no blockers. `make test lint smoke` and the Linux worker
   suite passed, including every new file-reader regression on both platforms.
   Daemon finalization wiring and live sweep execution remain required.
+
+### D17m: Bind real worker metric output to durable completion
+
+- Finalization reads the collected metric source on the blocking I/O task and
+  attaches exact validated bytes only after artifact upload is acknowledged.
+  Invalid/oversized metrics force `OUTPUT_INVALID` while preserving an uploaded
+  diagnostic source in the attempt catalog, without canonical metric references.
+  Later transfer failures retain this classification; execution failures keep
+  their existing precedence. Completion is sealed through the existing journal.
+- A real daemon/Docker/PostgreSQL/S3 regression first reproduced an uploaded metric
+  artifact followed by rejected completion and an ACTIVE job. After wiring, valid
+  large integer/exponent/whitespace metrics become accepted results. Malformed and
+  oversized files fail without canonical values, retaining verified source
+  artifacts. A storage-outage case verifies invalid metrics do not become a
+  transfer-retryable failure. Lost upload/artifact/completion replies replay exact
+  evidence and preserve the raw source bytes.
+- Focused real-stack cases, `make test lint smoke`, the Linux worker suite, and
+  the complete combined PostgreSQL/Docker/object-store suite passed. One Linux
+  fixture run failed compiler lookup; the configured compiler executed directly
+  in a fresh container, and the controlled retry passed. Separate model review
+  found no blockers and clarified diagnostic retention's declared-size boundary.
+  Live 27-child sweep execution and failure demonstrations remain required.

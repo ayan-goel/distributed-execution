@@ -96,9 +96,32 @@ Pages can observe different points in time while jobs run, so an active export
 can contain unfinished children. Export after the sweep is terminal for final
 comparison. Failed-attempt diagnostics never enter canonical metric columns.
 
-The server and client metric path is verified with accepted completion fixtures.
-The worker daemon does not yet attach declared `metrics.json` bytes to its
-completion request, so automatic metric ingestion from real jobs remains open.
+Declare an output named `metrics` to ingest numeric results automatically:
+
+```yaml
+outputs:
+  - name: metrics
+    path: /outputs/metrics.json
+    required: true
+    maxBytes: 65536
+```
+
+The logical name selects ingestion; another declared path under `/outputs` is
+also supported. The worker reads at most 64 KiB from the collected file handle,
+checks its size/checksum, and attaches the original bytes only after artifact
+publication succeeds. Completion and uncertain retries bind those same bytes.
+The payload must be an object of finite numeric scalars with at most 256 bounded
+names. Duplicate names, nonnumeric values, nonfinite values, and nonzero numeric
+underflow are rejected.
+
+Invalid or oversized metric content fails the job with `OUTPUT_INVALID` after a
+zero exit. When the source passes declared output-size/safety limits and storage
+is available, the original remains in the attempt's diagnostic artifact catalog,
+excluded from canonical metric references. A file exceeding its declared
+`maxBytes` is rejected during collection before upload. Existing
+execution failures retain precedence, and a later storage outage cannot turn
+known invalid metrics into a transfer-retryable failure. An undeclared file is
+never read just because its filename is `metrics.json`.
 
 ## Scheduling and failure policy
 
