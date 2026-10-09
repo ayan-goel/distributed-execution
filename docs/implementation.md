@@ -2751,3 +2751,14 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   CLI export passed. Separate model review found no blockers. The collection
   fixture also verifies legitimate state/count advancement between pages.
   Live 27-child execution and sweep failure demonstrations remain required.
+
+### D17 next gate: Connect real worker metric ingestion before live sweeps
+
+- Inspection while preparing the real 27-child Docker gate found
+  `prepare_completion` leaves `metrics_json` at its default. The existing server
+  acceptance/store/client/export tests establish the downstream contract, but
+  do not prove automatic ingestion from a real workload's `metrics.json`.
+- The next atomic slice must bind bounded metric bytes to the declared, verified
+  output artifact and durable completion, retaining the source file. It needs
+  malformed/oversized/changing-file coverage before live sweep/export evidence.
+  No live 27-child success or independent multi-host result is claimed.

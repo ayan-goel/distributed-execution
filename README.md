@@ -40,6 +40,7 @@ The real worker and Docker integration test reads an uploaded dataset and
 publishes its output. Sweeps now support CLI and HTTP submission, concurrency
 limits, cancellation after permanent failure, CLI/HTTP progress inspection, and
 CSV/JSON result export. Live sweep and failure demonstrations remain to be verified.
+Worker collection of `metrics.json` into completion reports remains unfinished.
 Strict scratch limits, full retry policy coverage, and
 other v0.1 gates remain. See the
 [implementation ledger](docs/implementation.md) for verified progress and remaining work.

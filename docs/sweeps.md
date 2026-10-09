@@ -96,6 +96,10 @@ Pages can observe different points in time while jobs run, so an active export
 can contain unfinished children. Export after the sweep is terminal for final
 comparison. Failed-attempt diagnostics never enter canonical metric columns.
 
+The server and client metric path is verified with accepted completion fixtures.
+The worker daemon does not yet attach declared `metrics.json` bytes to its
+completion request, so automatic metric ingestion from real jobs remains open.
+
 ## Scheduling and failure policy
 
 `maxConcurrent` counts child attempts from ASSIGNED through FINALIZING. The
