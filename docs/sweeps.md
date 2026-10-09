@@ -146,6 +146,10 @@ failed job ID, and previous/new states. Accepted completion replay does not repe
 these events. Failure paths lock all affected jobs in UUID order before attempts
 so independent batch renewals cannot invert the lock order.
 
+A command to retry a failed sweep as new jobs linked to the originals is still
+required for v0.1. Current retry policies replace eligible attempts within their
+existing child jobs; they do not provide that separate sweep retry operation.
+
 ## Verification
 
 Race-enabled PostgreSQL tests cover CLI admission replay, concurrent submission,
@@ -166,4 +170,15 @@ queued children; `cancelRunningOnFailure` stops it and cancels all 26 siblings.
 Both cases lose the committed failure's reply and verify exact accepted replay,
 one event per cancelled sibling, released reservations, exclusion of diagnostic
 metrics from exports, and physical container cleanup before fixture teardown.
-Independent Linux hosts and sweep worker-loss recovery remain separate gates.
+
+A worker-loss scenario kills a native worker while its designated child's Docker
+container is still running. The production lease detector waits for the issued
+lease to expire, then another worker accepts a fresh attempt. All 27 children
+succeed with 28 attempts, one LOST record, and 27 accepted completions. Even with
+both fail-fast flags enabled, this retry-eligible loss cancels no siblings. The
+lost reservation stays quarantined; its container is removed by fixture teardown,
+not claimed as reconciled by this test. Export and CLI download verify the
+replacement's accepted metrics and immutable artifact.
+
+These scenarios share one Docker daemon. Independent Linux hosts, delayed old
+completion after replacement, and the broader fault matrix remain separate gates.

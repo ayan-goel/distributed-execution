@@ -25,17 +25,17 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D06 worker identities | D03,D04 | Authenticated registration, session takeover/recovery; stale-session rejection | control-plane, Rust client, and worker startup/health loop gates passed; active-job supervision pending |
 | D07 acquisition | D03,D06 | Atomic assignment/reservations; concurrent quota/capacity races; acquisition replay | store, RPC, Rust client, sequential agent loop, and local operator policy switch passed; broader scheduler pending |
 | D08 Docker adapter | D04 | Real bounded create/start/inspect/stop; ambiguous create reconciles one identity | cached launch, RUNNING/FINALIZING coordination, phase store/RPC/client, and actual daemon execution passed; staging and strict workspaces pending |
-| D09 leases | D06,D07 | Fresh DB-time expiry checks; delayed grants; local monotonic deadline enforcement | deadline, store/RPC/client, watchdog, periodic renewal, and daemon execution passed; reaper pending |
+| D09 leases | D06,D07 | Fresh DB-time expiry checks; delayed grants; local monotonic deadline enforcement | deadline, store/RPC/client, watchdog, periodic renewal, daemon execution, and production lease reaper passed; control-channel partition gate pending |
 | D10 worker recovery | D08,D09 | Durable journal; agent kill/restart stops old containers before new capacity | agent-owned job kill/restart, fencing, container/workspace cleanup, and reservation release passed; broader recovery matrix pending |
 | D11 artifacts | D03,D04 | Scoped grants; verified exact versions; stale publication rejection | grants, verification, completion, public metadata, and verified CLI download gates passed; Rust transfers and multipart support pending |
 | D12 first real job | D05–D11 | CLI submit → gRPC → Docker → verified output → CLI download | full component chain passed with cached digest and fixed fixture resolver; external registry and image pull pending |
-| D13 loss/retry | D09,D12 | Reaper/reconciliation; recorded retry; backoff/deadlines; nonretryable failure | reaper, server loop, and real two-identity retry on one Docker daemon passed; natural timer and independent-host gates pending |
+| D13 loss/retry | D09,D12 | Reaper/reconciliation; recorded retry; backoff/deadlines; nonretryable failure | reaper, server loop, natural lease expiry, and real worker-loss retry on one Docker daemon passed; independent hosts and broader retry matrix pending |
 | D14 cancellation | D12,D13 | Both completion/cancellation race orders, repeat requests, uncertain cleanup | pending |
 | D15 logs | D08,D11 | Bounded queues/spool, noisy-job truncation, stream cursors, reconnect | catalog, HTTP cursor/tail gaps, binary format, private spool, Rust registration client, journaled delivery, bounded Docker follower, assembler, completion summary, CLI follow, pre-start capture, and live publication passed; reconnect/fault matrix pending |
 | D16 datasets | D11 | Immutable registration/cache; corruption rejection; pin-aware eviction | ownership schema, upload/completion APIs, project-scoped resolution, real CLI registration, isolated worker cache, atomic store admission bindings, durable replay, archive assignment contract, worker validation, store assignment population, signed RPC grants, strict job-to-wire matching, real read-only Docker mount, startup cache reset, assignment-to-cache preparation, agent cache initialization, unlaunched transfer-failure completion, replay-binding validation, worker input acquisition path, HTTP submission, and one live dataset-to-output Docker job passed; dataset fault matrix still pending |
-| D17 sweeps/metrics | D05,D13,D16 | Atomic 27-child sweep; 1000 cap; concurrency; fail-fast; finite scalar export | deterministic expansion, schema constraints, HTTP/CLI submission/replay, scheduler cap/terminal release, fail-fast, bounded CLI/HTTP progress/accepted metrics, CSV/JSON export, real worker metric ingestion, and local 27-child success/fail-fast sweeps passed; sweep worker-loss/independent-host gates pending |
+| D17 sweeps/metrics | D05,D13,D16 | Atomic 27-child sweep; 1000 cap; concurrency; fail-fast; finite scalar export | deterministic expansion, schema constraints, HTTP/CLI submission/replay, scheduler cap/terminal release, fail-fast, bounded CLI/HTTP progress/accepted metrics, CSV/JSON export, real worker metric ingestion, and local 27-child success/fail-fast/worker-loss sweeps passed; failed-sweep retry links and independent-host gates pending |
 | D18 placement | D07,D17 | Project fairness/aging, blockers, two real independent hosts without oversubscription | pending |
-| D19 faults/benchmarks | D14–D18 | Spec §21/22 runtime matrix, 27-job worker kill, stale result, measured benchmarks | pending |
+| D19 faults/benchmarks | D14–D18 | Spec §21/22 runtime matrix, 27-job worker kill, stale result, measured benchmarks | local 27-child worker kill and natural lease recovery passed; delayed real completion, broader fault matrix, and published measurements pending |
 | D20 release | D19 | TLS/auth/permissions, retention, migrations/backups, packaging, tutorial, actual research run | pending |
 
 ## Release audit (all required)
@@ -2873,3 +2873,31 @@ This recorded gap is resolved by D17l/D17m below; the live sweep gate remains op
 - The final focused cases, `make test lint smoke`, and the complete combined
   PostgreSQL/Docker/object-store suite passed. Final separate model review found
   no remaining blockers; README and operator/sweep guides reflect this evidence.
+
+### D19a: Recover a real 27-child sweep after killing a running worker
+
+- Added a real CLI/worker/Docker/PostgreSQL/S3 scenario using the production
+  two-second lease detector. It kills the daemon owning a designated RUNNING
+  child and observes that child's container still running afterward. Lease
+  timestamps are never advanced or rewritten by the fixture.
+- All 27 children succeed with 28 historical attempts: one LOST and 27 accepted
+  successful completions. The original lease expiry remains unchanged; loss is
+  recorded after that expiry. The replacement has a higher generation on another
+  worker, while the lost reservation stays quarantined. Retryable loss triggers
+  no fail-fast events even with both failure flags enabled.
+- Submission replay preserves ordered membership during recovery. The sweep cap
+  is observed at two attempts; exports retain accepted numeric metrics and a CLI
+  download verifies the replacement's exact metric-source bytes. The lost
+  container remains fixture-owned cleanup, not evidence of worker reconciliation.
+- The initial focused run passed and recorded loss 1.556337 seconds after the
+  issued lease expired. Review requested a wider kill window; the designated
+  child now sleeps ten seconds, while other children remain short. Fixture process
+  stops are idempotent so test-triggered termination and cleanup share one wait.
+  These remain native workers sharing Docker Desktop with soft scratch and a
+  fixture image resolver; independent Linux hosts, delayed real old completion,
+  and the broader fault/benchmark gates remain open. The sweep retry operation
+  creating new jobs linked to failed originals is also still required by §5.
+- The revised focused race-enabled run passed in 101.70 seconds, recording loss
+  1.576592 seconds after natural expiry. `make test lint smoke`, final lint, and
+  the complete combined PostgreSQL/Docker/object-store suite passed (server
+  package: 416.750 seconds). Final separate model review found no blockers.

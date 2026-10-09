@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -119,7 +120,12 @@ func (f *sweepDaemonFixture) submit(t *testing.T, sweep spec.Sweep) store.SweepR
 	return submitted
 }
 
-func (f *sweepDaemonFixture) startWorkers(t *testing.T, service pb.WorkerServiceServer) {
+type sweepTestDaemon struct {
+	workerID string
+	stop     func()
+}
+
+func (f *sweepDaemonFixture) startWorkers(t *testing.T, service pb.WorkerServiceServer) []sweepTestDaemon {
 	t.Helper()
 	pkis := []workerPKI{testWorkerPKI(t), testWorkerPKI(t), testWorkerPKI(t)}
 	roots := x509.NewCertPool()
@@ -149,6 +155,7 @@ func (f *sweepDaemonFixture) startWorkers(t *testing.T, service pb.WorkerService
 		t.Fatal(err)
 	}
 	logs := make([]*lockedBuffer, 0, len(pkis))
+	daemons := make([]sweepTestDaemon, 0, len(pkis))
 	for index, pki := range pkis {
 		worker, err := store.ProvisionWorker(f.ctx, f.pool, store.WorkerProvision{Name: fmt.Sprintf("sweep-worker-%d", index), CertificateSHA256: sha256.Sum256(pki.client.Certificate[0]), Resources: f.job.Spec.Resources, Slots: 1, Labels: f.labels, Projects: []string{"research"}})
 		if err != nil {
@@ -182,7 +189,10 @@ func (f *sweepDaemonFixture) startWorkers(t *testing.T, service pb.WorkerService
 		if err := command.Start(); err != nil {
 			t.Fatal(err)
 		}
-		t.Cleanup(func() { _ = command.Process.Kill(); _ = command.Wait() })
+		var stopped sync.Once
+		stop := func() { stopped.Do(func() { _ = command.Process.Kill(); _ = command.Wait() }) }
+		t.Cleanup(stop)
+		daemons = append(daemons, sweepTestDaemon{workerID: worker.WorkerID, stop: stop})
 	}
 	t.Cleanup(func() {
 		if t.Failed() {
@@ -191,4 +201,5 @@ func (f *sweepDaemonFixture) startWorkers(t *testing.T, service pb.WorkerService
 			}
 		}
 	})
+	return daemons
 }
