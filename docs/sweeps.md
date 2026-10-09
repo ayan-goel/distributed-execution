@@ -9,7 +9,29 @@ events, and idempotency claim in one transaction. The limit is 1,000 children.
 API. Admission freezes its resolved image and project-owned datasets before
 expansion. Identical idempotency-key retries return the same children even when
 the image registry is unavailable. See [HTTP admission](http-api.md#sweep-admission).
-CLI sweep commands, progress, and result export remain under development.
+Progress inspection and result export remain under development.
+
+## CLI submission
+
+```sh
+bin/dispatch sweep validate schema/examples/sweep.yaml --json
+bin/dispatch sweep submit schema/examples/sweep.yaml --idempotency-key masking-grid-1 --json
+```
+
+Validation is offline. Submission uses the standard `DISPATCH_URL` and
+`DISPATCH_TOKEN` settings. Adapt the example's job template to an approved image
+and register its named datasets before submitting it.
+
+Local files accept either an embedded `spec.jobTemplate` or `spec.jobTemplateFile`,
+never both. Relative paths resolve beside the sweep file; absolute paths are also
+supported. Each document is parsed strictly and limited to 1 MiB. The resolved
+request must also fit 1 MiB. Only the embedded template is transmitted.
+
+The CLI records the idempotency key on stderr before sending the request. Reuse
+that key and unchanged files after an uncertain response. JSON results stay on
+stdout; the text form prints the sweep ID and number of children. The client
+checks the resolved template, spec hash, child count, unique child IDs, and cap
+before reporting success. Admission does not mean the children have finished.
 
 ## Scheduling and failure policy
 
@@ -36,7 +58,7 @@ so independent batch renewals cannot invert the lock order.
 
 ## Verification
 
-Race-enabled PostgreSQL tests cover concurrent submission replay, ordered children,
+Race-enabled PostgreSQL tests cover CLI admission replay, concurrent submission replay, ordered children,
 quota rollback, sweep capacity/backfill and terminal release, both failure policies,
 retry preservation, reaping, session recovery, completion replay, sibling event
 rollback, stop acknowledgement, and observed job-lock ordering. These tests verify

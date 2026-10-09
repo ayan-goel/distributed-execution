@@ -50,7 +50,8 @@ validation or resolution creates no sweep or child jobs.
 Sweeps have a separate idempotency namespace from jobs. Conflicts return 409,
 oversized documents 413, invalid matrices or policies 422, and missing datasets
 404. The same role checks, response headers, and dependency errors as job admission
-apply. Sweep inspection and CLI commands remain under development.
+apply. The CLI resolves local template references and uses this endpoint through
+`dispatch sweep submit`; sweep inspection remains under development.
 
 ## Accepted result inspection (D11i)
 
@@ -107,7 +108,7 @@ archive and completes registration through these endpoints. Its recovery
 options reuse the request ID and exact uploaded version after an uncertain
 response. A live CLI-to-Docker integration test verifies dataset-backed job
 execution and output download; broader dataset fault coverage remains pending.
-Job listing, events, sweep inspection/CLI commands, and worker administration
+Job listing, events, sweep inspection, and worker administration
 remain required.
 
 ## Evidence

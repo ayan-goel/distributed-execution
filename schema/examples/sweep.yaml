@@ -1,0 +1,13 @@
+apiVersion: dispatch.dev/v1alpha1
+kind: Sweep
+metadata:
+  name: masking-grid
+  project: research
+spec:
+  jobTemplateFile: job.yaml
+  matrix:
+    MASKING_METHOD: [random, contact, knn]
+    LEARNING_RATE: ["0.0001", "0.0003", "0.001"]
+    SEED: ["1", "2", "3"]
+  maxConcurrent: 6
+  failFast: false

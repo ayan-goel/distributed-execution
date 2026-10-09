@@ -200,6 +200,13 @@ same file after a timeout, lost response, or output failure; using a new key can
 create another job. Changing the request while reusing the key returns `CONFLICT`.
 A successful submission means durable admission, not completed execution.
 
+For parameter grids, `dispatch sweep validate FILE --json` resolves a local
+template and validates the expanded sweep offline. `dispatch sweep submit FILE
+--idempotency-key KEY --json` submits all children together. Relative
+`jobTemplateFile` references resolve beside the sweep file and never reach the
+server. The [sweep guide](sweeps.md) includes the 27-child example, recovery rules,
+concurrency cap, and failure policy.
+
 Options follow the file or job ID. Successful commands exit 0; validation, API,
 configuration, transport, and output errors exit 2. `--json` writes one job object
 to stdout for submit/get/cancel, or `{valid,specHash}` for validation; diagnostics stay on

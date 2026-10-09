@@ -7,6 +7,8 @@ import (
 	"context"
 	"encoding/json"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"sync"
@@ -14,6 +16,7 @@ import (
 	"testing"
 
 	"dispatch.local/dispatch/internal/admission"
+	"dispatch.local/dispatch/internal/cli"
 	"dispatch.local/dispatch/internal/objectstore"
 	"dispatch.local/dispatch/internal/spec"
 	"dispatch.local/dispatch/internal/store"
@@ -144,5 +147,23 @@ func TestHTTPSweepSubmissionIsAtomicScopedAndReplayable(t *testing.T) {
 	var sweeps, jobs int
 	if err := pool.QueryRow(ctx, "SELECT (SELECT count(*) FROM sweeps),(SELECT count(*) FROM jobs)").Scan(&sweeps, &jobs); err != nil || sweeps != 1 || jobs != 27 {
 		t.Fatal("failed admission left partial sweep", sweeps, jobs, err)
+	}
+	path := filepath.Join(t.TempDir(), "sweep.json")
+	if err := os.WriteFile(path, body, 0600); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(h)
+	defer server.Close()
+	down.Store(true)
+	var out, errs bytes.Buffer
+	env := func(key string) string {
+		return map[string]string{"DISPATCH_URL": server.URL, "DISPATCH_TOKEN": token, "DISPATCH_DEV_INSECURE": "1"}[key]
+	}
+	if code := cli.Run(ctx, []string{"sweep", "submit", path, "--idempotency-key", "same", "--json"}, env, &out, &errs); code != 0 {
+		t.Fatal("CLI could not recover committed sweep", code, errs.String())
+	}
+	var recovered store.SweepRecord
+	if err := json.Unmarshal(out.Bytes(), &recovered); err != nil || recovered.ID != first.ID || !reflect.DeepEqual(recovered.ChildIDs, first.ChildIDs) {
+		t.Fatal("CLI replay changed sweep identity", recovered, err)
 	}
 }

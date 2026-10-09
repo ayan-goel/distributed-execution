@@ -33,7 +33,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D14 cancellation | D12,D13 | Both completion/cancellation race orders, repeat requests, uncertain cleanup | pending |
 | D15 logs | D08,D11 | Bounded queues/spool, noisy-job truncation, stream cursors, reconnect | catalog, HTTP cursor/tail gaps, binary format, private spool, Rust registration client, journaled delivery, bounded Docker follower, assembler, completion summary, CLI follow, pre-start capture, and live publication passed; reconnect/fault matrix pending |
 | D16 datasets | D11 | Immutable registration/cache; corruption rejection; pin-aware eviction | ownership schema, upload/completion APIs, project-scoped resolution, real CLI registration, isolated worker cache, atomic store admission bindings, durable replay, archive assignment contract, worker validation, store assignment population, signed RPC grants, strict job-to-wire matching, real read-only Docker mount, startup cache reset, assignment-to-cache preparation, agent cache initialization, unlaunched transfer-failure completion, replay-binding validation, worker input acquisition path, HTTP submission, and one live dataset-to-output Docker job passed; dataset fault matrix still pending |
-| D17 sweeps/metrics | D05,D13,D16 | Atomic 27-child sweep; 1000 cap; concurrency; fail-fast; finite scalar export | deterministic expansion, schema constraints, atomic HTTP submission/replay, scheduler cap/backfill/terminal release, and transactional fail-fast passed; CLI, progress, and results pending |
+| D17 sweeps/metrics | D05,D13,D16 | Atomic 27-child sweep; 1000 cap; concurrency; fail-fast; finite scalar export | deterministic expansion, schema constraints, atomic HTTP/CLI submission/replay, scheduler cap/backfill/terminal release, and transactional fail-fast passed; progress and results pending |
 | D18 placement | D07,D17 | Project fairness/aging, blockers, two real independent hosts without oversubscription | pending |
 | D19 faults/benchmarks | D14–D18 | Spec §21/22 runtime matrix, 27-job worker kill, stale result, measured benchmarks | pending |
 | D20 release | D19 | TLS/auth/permissions, retention, migrations/backups, packaging, tutorial, actual research run | pending |
@@ -2647,3 +2647,20 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   remains an optional admission optimization for later measurement.
 - [HTTP API](http-api.md#sweep-admission) documents the request/response contract.
   CLI submission, progress, result export, and live multi-host sweeps remain open.
+
+### D17f: Resolve local templates and submit sweeps from the CLI
+
+- `dispatch sweep validate FILE` performs offline bounded validation and reports
+  child count/hash. `dispatch sweep submit FILE` resolves relative template paths
+  beside the sweep file and sends only the embedded template. The server parser
+  still rejects local paths. Inline templates and file references are mutually
+  exclusive; nested Job fields retain strict parsing.
+- The recovery key is written to stderr before submission; JSON stays on stdout.
+  The typed client verifies unique child identities/count, concurrency, pinned
+  image, and canonical template identity before accepting a response. The schema
+  example validates as 27 children. Unit tests cover missing files, strict local
+  source selection, preserved recovery keys, and malformed/tampered responses.
+- A real CLI-to-HTTP-to-PostgreSQL test recovers the same 27 children during a
+  resolver outage. `make test lint smoke` and the full isolated PostgreSQL/worker
+  suite passed. A separate model review found no required changes.
+  Progress inspection, result export, and real multi-host sweep execution remain.
