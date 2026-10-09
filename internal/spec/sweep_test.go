@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"slices"
 	"testing"
 )
 
@@ -17,6 +18,30 @@ func sweepExample(t *testing.T) Sweep {
 	return Sweep{APIVersion: APIVersion, Kind: "Sweep", Metadata: Metadata{Name: "grid", Project: "research"}, Spec: SweepSpec{
 		JobTemplate: j, Matrix: map[string][]string{"METHOD": {"random", "contact", "knn"}, "RATE": {"0.0001", "0.0003", "0.001"}, "SEED": {"1", "2", "3"}}, MaxConcurrent: 6,
 	}}
+}
+
+func TestSweepCanonicalNormalizesOnlyUnorderedFields(t *testing.T) {
+	sweep := sweepExample(t)
+	original := slices.Clone(sweep.Spec.JobTemplate.Spec.Retry.On)
+	body, hash, err := sweep.Canonical()
+	if err != nil || len(body) == 0 || len(hash) != 64 {
+		t.Fatal("canonical sweep rejected", hash, err)
+	}
+	if !reflect.DeepEqual(original, sweep.Spec.JobTemplate.Spec.Retry.On) {
+		t.Fatal("canonicalization mutated caller retry policy")
+	}
+	slices.Reverse(sweep.Spec.JobTemplate.Spec.Retry.On)
+	if other, otherHash, err := sweep.Canonical(); err != nil || otherHash != hash || !bytes.Equal(body, other) {
+		t.Fatal("retry set order changed sweep identity", otherHash, err)
+	}
+	slices.Reverse(sweep.Spec.Matrix["SEED"])
+	if _, changed, err := sweep.Canonical(); err != nil || changed == hash {
+		t.Fatal("matrix value order lost from sweep identity", changed, err)
+	}
+	sweep.Spec.MaxConcurrent = 0
+	if _, _, err := sweep.Canonical(); err == nil {
+		t.Fatal("invalid sweep acquired canonical identity")
+	}
 }
 
 func TestSweepStableExpansionAndIsolation(t *testing.T) {

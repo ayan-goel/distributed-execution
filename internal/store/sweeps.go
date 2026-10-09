@@ -2,8 +2,6 @@ package store
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -80,12 +78,11 @@ func SubmitSweepResolved(ctx context.Context, pool *pgxpool.Pool, key, requestHa
 			return SweepRecord{}, ErrInvalid
 		}
 	}
-	canonical, err := json.Marshal(sweep)
+	canonical, hash, err := sweep.Canonical()
 	if err != nil {
 		return SweepRecord{}, ErrInvalid
 	}
-	hash := sha256.Sum256(canonical)
-	result := SweepRecord{Spec: canonical, SpecHash: hex.EncodeToString(hash[:]), ChildIDs: make([]string, 0, len(children)), MaxConcurrent: sweep.Spec.MaxConcurrent}
+	result := SweepRecord{Spec: canonical, SpecHash: hash, ChildIDs: make([]string, 0, len(children)), MaxConcurrent: sweep.Spec.MaxConcurrent}
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return SweepRecord{}, err

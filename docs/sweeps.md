@@ -5,8 +5,11 @@ are sorted, values retain their submitted order, and each child receives a stabl
 index. Admission creates the sweep, children, frozen dataset bindings, submission
 events, and idempotency claim in one transaction. The limit is 1,000 children.
 
-The store implementation is internal. HTTP and CLI sweep commands, progress, and
-result export remain under development.
+`POST /v1/sweeps` submits an embedded job template through the authenticated HTTP
+API. Admission freezes its resolved image and project-owned datasets before
+expansion. Identical idempotency-key retries return the same children even when
+the image registry is unavailable. See [HTTP admission](http-api.md#sweep-admission).
+CLI sweep commands, progress, and result export remain under development.
 
 ## Scheduling and failure policy
 

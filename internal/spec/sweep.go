@@ -1,6 +1,8 @@
 package spec
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -36,6 +38,22 @@ func DecodeSweep(r io.Reader) (Sweep, error) {
 	}
 	_, err := s.Expand()
 	return s, err
+}
+
+func (s Sweep) Canonical() ([]byte, string, error) {
+	if _, err := s.Expand(); err != nil {
+		return nil, "", err
+	}
+	// Retry reasons form a set, while matrix values determine child indices.
+	// Normalize only the set and clone it to preserve the caller's template.
+	s.Spec.JobTemplate.Spec.Retry.On = slices.Clone(s.Spec.JobTemplate.Spec.Retry.On)
+	slices.Sort(s.Spec.JobTemplate.Spec.Retry.On)
+	body, err := json.Marshal(s)
+	if err != nil {
+		return nil, "", err
+	}
+	hash := sha256.Sum256(body)
+	return body, hex.EncodeToString(hash[:]), nil
 }
 
 func (s Sweep) Expand() ([]Job, error) {

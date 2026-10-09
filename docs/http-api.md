@@ -6,6 +6,7 @@
 | --- | --- | --- |
 | `GET /healthz` | none | Database readiness, no tenant data |
 | `POST /v1/jobs` | submit | Validate, resolve image, atomically queue a job |
+| `POST /v1/sweeps` | submit | Resolve a template and atomically queue up to 1,000 ordered children |
 | `GET /v1/jobs/{id}` | read | Return project-scoped job state and accepted result metadata |
 | `POST /v1/jobs/{id}/cancel` | submit | Idempotently record project-scoped cancellation intent |
 | `GET /v1/jobs/{id}/artifacts` | read | Accepted outputs with exact-version, 60-second download grants |
@@ -30,6 +31,26 @@ limited to 1 MiB, request contexts to 15 seconds, and in-flight handlers to 256.
 An initial global limit of 200 requests per one-second window bounds API pressure;
 429 responses include Retry-After. This global cap does not claim per-project fairness.
 Responses disable caching and MIME sniffing; TLS responses set HSTS.
+
+## Sweep admission
+
+`POST /v1/sweeps` accepts a bounded JSON/YAML Sweep document with the full Job
+document embedded at `spec.jobTemplate`, plus `matrix`, `maxConcurrent`, `failFast`,
+and `cancelRunningOnFailure`. Both metadata projects must match the token's
+project. The server rejects `jobTemplateFile`; clients must embed local templates.
+
+Use a project-scoped `Idempotency-Key`. New requests return 201 and replays return
+200 with the same sweep ID and ordered `childIds`, resolved `spec`, `specHash`,
+`projectId`, `maxConcurrent`, and `createdAt`. Both include a Location header.
+The request hash normalizes retry-reason order and map keys while preserving
+matrix value order. Image resolution and project-owned dataset lookup happen
+after replay detection, outside the bounded insertion transaction. Failed
+validation or resolution creates no sweep or child jobs.
+
+Sweeps have a separate idempotency namespace from jobs. Conflicts return 409,
+oversized documents 413, invalid matrices or policies 422, and missing datasets
+404. The same role checks, response headers, and dependency errors as job admission
+apply. Sweep inspection and CLI commands remain under development.
 
 ## Accepted result inspection (D11i)
 
@@ -86,8 +107,8 @@ archive and completes registration through these endpoints. Its recovery
 options reuse the request ID and exact uploaded version after an uncertain
 response. A live CLI-to-Docker integration test verifies dataset-backed job
 execution and output download; broader dataset fault coverage remains pending.
-Job listing, full attempt history, log byte rendering/follow, events, sweeps,
-worker administration remains required.
+Job listing, events, sweep inspection/CLI commands, and worker administration
+remain required.
 
 ## Evidence
 

@@ -102,6 +102,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch {
+	case r.URL.Path == "/v1/sweeps" && r.Method == http.MethodPost:
+		if !p.Allows(store.RoleSubmit) {
+			fail(w, 403, "FORBIDDEN", "submit permission required", false)
+			return
+		}
+		s.submitSweep(w, r, p)
 	case strings.HasPrefix(r.URL.Path, "/v1/datasets/uploads/") && strings.HasSuffix(r.URL.Path, "/complete") && r.Method == http.MethodPost:
 		if !p.Allows(store.RoleSubmit) {
 			fail(w, 403, "FORBIDDEN", "submit permission required", false)
