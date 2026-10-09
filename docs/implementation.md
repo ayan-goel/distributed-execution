@@ -33,7 +33,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D14 cancellation | D12,D13 | Both completion/cancellation race orders, repeat requests, uncertain cleanup | pending |
 | D15 logs | D08,D11 | Bounded queues/spool, noisy-job truncation, stream cursors, reconnect | catalog, HTTP cursor/tail gaps, binary format, private spool, Rust registration client, journaled delivery, bounded Docker follower, assembler, completion summary, CLI follow, pre-start capture, and live publication passed; reconnect/fault matrix pending |
 | D16 datasets | D11 | Immutable registration/cache; corruption rejection; pin-aware eviction | ownership schema, upload/completion APIs, project-scoped resolution, real CLI registration, isolated worker cache, atomic store admission bindings, durable replay, archive assignment contract, worker validation, store assignment population, signed RPC grants, strict job-to-wire matching, real read-only Docker mount, startup cache reset, assignment-to-cache preparation, agent cache initialization, unlaunched transfer-failure completion, replay-binding validation, worker input acquisition path, HTTP submission, and one live dataset-to-output Docker job passed; dataset fault matrix still pending |
-| D17 sweeps/metrics | D05,D13,D16 | Atomic 27-child sweep; 1000 cap; concurrency; fail-fast; finite scalar export | deterministic schema expansion, project-scoped sweep/child database constraints, internal atomic 27-child submission/replay, and scheduler active-attempt cap/backfill passed; HTTP/CLI submission, fail-fast, and results pending |
+| D17 sweeps/metrics | D05,D13,D16 | Atomic 27-child sweep; 1000 cap; concurrency; fail-fast; finite scalar export | deterministic expansion, schema constraints, internal atomic submission/replay, scheduler cap/backfill/terminal release, and transactional fail-fast passed; HTTP/CLI submission, progress, and results pending |
 | D18 placement | D07,D17 | Project fairness/aging, blockers, two real independent hosts without oversubscription | pending |
 | D19 faults/benchmarks | D14–D18 | Spec §21/22 runtime matrix, 27-job worker kill, stale result, measured benchmarks | pending |
 | D20 release | D19 | TLS/auth/permissions, retention, migrations/backups, packaging, tutorial, actual research run | pending |
@@ -2608,3 +2608,23 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   requests cannot start its sibling, and an unrelated job still acquires.
   `make test lint smoke` and the full isolated PostgreSQL/worker suite passed.
   Terminal release and fail-fast policy need separate verification.
+
+### D17d: Apply sweep fail-fast with permanent child failure
+
+- Permanent FAILED jobs now cancel QUEUED/RETRY_WAIT siblings atomically with
+  completion, lease reaping, or session recovery. Retrying children do not trigger
+  fail-fast. Optional active cancellation records stop intent while preserving
+  reservations until stop acknowledgement or fencing; unrelated jobs are untouched.
+- Failure paths acquire the complete sweep job lock set in UUID order before
+  attempt locks. An observed blocked PostgreSQL transaction verifies completion
+  does not hold a higher job while waiting for a lower sibling, protecting
+  independent sorted lease-renewal batches from deadlock.
+- The regression first failed for permanent completion and worker loss. Focused
+  race-enabled PostgreSQL tests now verify both policies, retry preservation,
+  reaping, session takeover, exact completion replay, sibling-event rollback,
+  stop propagation/acknowledgement, and terminal sweep-slot release. The older
+  reaper lock-observation fixture now identifies its dedicated connection rather
+  than exact SQL text. `make test lint smoke` and the full isolated
+  PostgreSQL/worker suite passed; a separate model review found no required changes.
+- [Sweep behavior](sweeps.md) documents the internal contract. Public admission,
+  progress, results, and real sweep execution remain required work.

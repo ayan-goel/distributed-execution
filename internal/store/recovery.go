@@ -72,25 +72,17 @@ type recoveryAttempt struct {
 }
 
 func lockWorkerAttempts(ctx context.Context, tx pgx.Tx, workerID string) ([]recoveryAttempt, error) {
-	// The cluster lock is already held. Lock every affected job in stable order
-	// before attempts so renewal/completion races cannot invert ownership locks.
-	rows, err := tx.Query(ctx, `SELECT j.id FROM jobs j WHERE EXISTS(SELECT 1 FROM attempts a JOIN reservations r ON r.attempt_id=a.id WHERE a.job_id=j.id AND a.worker_id=$1 AND (a.state IN ('ASSIGNED','STARTING','RUNNING','FINALIZING') OR r.state='quarantined')) ORDER BY j.id FOR UPDATE OF j`, workerID)
+	// Include fail-fast siblings in the initial sorted lock set. Recovery can
+	// permanently fail several children, including siblings on other workers.
+	var jobIDs []string
+	err := tx.QueryRow(ctx, `SELECT coalesce(array_agg(j.id::text),ARRAY[]::text[]) FROM jobs j WHERE EXISTS(SELECT 1 FROM attempts a JOIN reservations r ON r.attempt_id=a.id WHERE a.job_id=j.id AND a.worker_id=$1 AND (a.state IN ('ASSIGNED','STARTING','RUNNING','FINALIZING') OR r.state='quarantined'))`, workerID).Scan(&jobIDs)
 	if err != nil {
 		return nil, err
 	}
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			rows.Close()
-			return nil, err
-		}
-	}
-	err = rows.Err()
-	rows.Close()
-	if err != nil {
+	if err := lockFailureJobs(ctx, tx, jobIDs); err != nil {
 		return nil, err
 	}
-	rows, err = tx.Query(ctx, `SELECT job_id::text,id::text,lease_expires_at FROM attempts WHERE worker_id=$1 AND state IN ('ASSIGNED','STARTING','RUNNING','FINALIZING') ORDER BY job_id,id FOR UPDATE`, workerID)
+	rows, err := tx.Query(ctx, `SELECT job_id::text,id::text,lease_expires_at FROM attempts WHERE worker_id=$1 AND state IN ('ASSIGNED','STARTING','RUNNING','FINALIZING') ORDER BY job_id,id FOR UPDATE`, workerID)
 	if err != nil {
 		return nil, err
 	}
@@ -198,6 +190,9 @@ func fenceLostAttempt(ctx context.Context, tx pgx.Tx, a recoveryAttempt, now tim
 	}
 	payload, _ := json.Marshal(map[string]any{"reason": reason, "nextState": jobState, "cleanupPending": true, "nextEligibleAt": nextEligible})
 	_, err = tx.Exec(ctx, "INSERT INTO job_events(job_id,sequence,attempt_id,type,payload) VALUES($1,$2,$3,$4,$5)", a.JobID, sequence, a.ID, event, payload)
+	if err == nil && jobState == "FAILED" {
+		err = applySweepFailFast(ctx, tx, a.JobID)
+	}
 	return err
 }
 

@@ -138,7 +138,9 @@ func TestExpiredAttemptReaperRechecksLeaseAfterWaitingForJobLock(t *testing.T) {
 	deadline := time.Now().Add(time.Second)
 	for {
 		var blocked bool
-		if err := pool.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE application_name=$1 AND wait_event_type='Lock' AND query LIKE 'SELECT current_attempt_id%')", app).Scan(&blocked); err != nil {
+		// The first job lock may cover fail-fast siblings too. Observe this
+		// dedicated reaper connection instead of coupling the gate to SQL text.
+		if err := pool.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE application_name=$1 AND wait_event_type='Lock')", app).Scan(&blocked); err != nil {
 			t.Fatal(err)
 		}
 		if blocked {

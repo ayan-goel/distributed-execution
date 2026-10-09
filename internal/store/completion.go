@@ -77,6 +77,9 @@ func CompleteAttempt(ctx context.Context, pool *pgxpool.Pool, id WorkerIdentity,
 	if err = authorizeWorkerTx(ctx, tx, id); err != nil {
 		return CompletionResult{}, err
 	}
+	if err = lockFailureJobs(ctx, tx, []string{r.Authority.JobID}); err != nil {
+		return CompletionResult{}, err
+	}
 	jobs, attempts, err := lockLeaseBatch(ctx, tx, []AttemptAuthority{r.Authority})
 	if err != nil {
 		return CompletionResult{}, err
@@ -211,6 +214,11 @@ func CompleteAttempt(ctx context.Context, pool *pgxpool.Pool, id WorkerIdentity,
 	event, _ := json.Marshal(map[string]any{"completionId": r.CompletionID, "state": state, "nextState": jobState, "reason": r.Reason, "cleanupPending": !r.Stopped, "nextEligibleAt": nextEligible})
 	if _, err = tx.Exec(ctx, "INSERT INTO job_events(job_id,sequence,attempt_id,type,payload) VALUES($1,$2,$3,'ATTEMPT_COMPLETED',$4)", r.Authority.JobID, sequence, r.Authority.AttemptID, event); err != nil {
 		return CompletionResult{}, err
+	}
+	if jobState == "FAILED" {
+		if err = applySweepFailFast(ctx, tx, r.Authority.JobID); err != nil {
+			return CompletionResult{}, err
+		}
 	}
 	if err = tx.Commit(ctx); err != nil {
 		return CompletionResult{}, err

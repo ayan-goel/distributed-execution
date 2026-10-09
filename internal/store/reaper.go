@@ -52,6 +52,9 @@ func reapOneExpiredAttempt(ctx context.Context, pool *pgxpool.Pool) (bool, bool,
 	if err != nil {
 		return false, false, err
 	}
+	if err := lockFailureJobs(ctx, tx, []string{candidate.JobID}); err != nil {
+		return true, false, err
+	}
 	var current *string
 	if err := tx.QueryRow(ctx, "SELECT current_attempt_id::text FROM jobs WHERE id=$1 FOR UPDATE", candidate.JobID).Scan(&current); err != nil {
 		return true, false, err
