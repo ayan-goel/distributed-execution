@@ -34,7 +34,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D15 logs | D08,D11 | Bounded queues/spool, noisy-job truncation, stream cursors, reconnect | catalog, HTTP cursor/tail gaps, binary format, private spool, Rust registration client, journaled delivery, bounded Docker follower, assembler, completion summary, CLI follow, pre-start capture, and live publication passed; reconnect/fault matrix pending |
 | D16 datasets | D11 | Immutable registration/cache; corruption rejection; pin-aware eviction | ownership schema, upload/completion APIs, project-scoped resolution, real CLI registration, isolated worker cache, atomic store admission bindings, durable replay, archive assignment contract, worker validation, store assignment population, signed RPC grants, strict job-to-wire matching, real read-only Docker mount, startup cache reset, assignment-to-cache preparation, agent cache initialization, unlaunched transfer-failure completion, replay-binding validation, worker input acquisition path, HTTP submission, and one live dataset-to-output Docker job passed; dataset fault matrix still pending |
 | D17 sweeps/metrics | D05,D13,D16 | Atomic 27-child sweep; 1000 cap; concurrency; fail-fast; finite scalar export | deterministic expansion, schema constraints, HTTP/CLI submission/replay, scheduler cap/terminal release, fail-fast, bounded CLI/HTTP progress/accepted metrics, CSV/JSON export, real worker metric ingestion, local 27-child success/fail-fast/worker-loss sweeps, immutable project-scoped retry lineage, atomic failed/cancelled-only store/HTTP/client/CLI retry, and local dataset-backed retry execution passed; independent-host gates pending |
-| D18 placement | D07,D17 | Project fairness/aging, blockers, two real independent hosts without oversubscription | durable project round-robin, public 0–3 job priorities, and eligible queue aging checks passed; blocker history and independent hosts pending |
+| D18 placement | D07,D17 | Project fairness/aging, blockers, two real independent hosts without oversubscription | durable project round-robin, public 0–3 job priorities, eligible queue aging, and bounded diagnostic storage checks passed; scheduler/API blocker integration and independent hosts pending |
 | D19 faults/benchmarks | D14–D18 | Spec §21/22 runtime matrix, 27-job worker kill, stale result, measured benchmarks | local 27-child worker kill/natural lease recovery and real delayed completion rejection after replacement passed; independent-host evidence, broader fault matrix, and published measurements pending |
 | D20 release | D19 | TLS/auth/permissions, retention, migrations/backups, packaging, tutorial, actual research run | pending |
 
@@ -3082,6 +3082,7 @@ This recorded gap is resolved by D17l/D17m below; the live sweep gate remains op
 - This is approximate admission fairness, not equal CPU time or preemption.
   Priority aging, per-job blocker history, scheduling measurements, and independent
   Linux-host execution remain pending.
+
 - `make test lint smoke` and the full combined PostgreSQL/Docker/S3-compatible
   storage suite passed (store: 45.244 seconds; server: 494.871 seconds). Final
   documentation review and `git diff --check` found no remaining blockers.
@@ -3159,3 +3160,32 @@ This recorded gap is resolved by D17l/D17m below; the live sweep gate remains op
   under ignored `.local/verification/aging-full.log`. Separate-model review and
   `git diff --check` found no blockers. Per-job blocker history and independent
   Linux-host execution remain pending.
+
+### D18d: Bound durable queue-blocker history
+
+- Added migration 0018 and internal observation storage as the first step toward
+  spec §9.2/15 visible blockers. A fixed-slot ring enforces at most 16 rows per job;
+  increasing sequence IDs order history despite clock corrections. Each sample
+  records worker/session/request identity, attempt counter, one of six bounded
+  reason codes, and finite server time. Provenance does not authorize the caller.
+- The recorder requires the cluster transition lock and prior caller authorization.
+  It uses a vacant slot or replaces the oldest retained sequence, not a global ID
+  modulo the bound. Only queued, uncancelled jobs gain new samples. Retained
+  request replay leaves history unchanged; changing its reason conflicts. Eviction
+  ends recorder-level replay, so scheduler integration must check durable acquisition
+  replay before recording. No frozen job, lifecycle, reservation, or cursor writes.
+- Real PostgreSQL regressions first failed for the missing table and missing store
+  operations. Constraints, interleaved-job eviction, clock correction, 24 concurrent
+  duplicate/fresh requests, rollback restoration, invalid context/terminal rejection,
+  and project-scoped empty/absent/history reads passed. Migration checks preserve
+  active job/attempt/reservation bytes, upload authority/deadlines, and project cursor;
+  development rollback discards diagnostics only. Updated historical rollback chains
+  and the migration-count fixture in this same slice.
+- `make test lint smoke`, complete fresh-schema/rollback/reapply, and all affected
+  PostgreSQL integration packages passed (store: 47.372 seconds; admission: 1.565;
+  API: 3.830; worker API: 22.093). Separate-model review and `git diff --check` found
+  no blockers. Logs are local under ignored `.local/verification/blocker-foundation-*`.
+  Scheduler/runtime behavior is unchanged; no new live-worker execution is claimed.
+- [The remaining diagnostics slices](queue-diagnostics.md) connect fresh acquisition
+  sampling (including backfill) and project-scoped public job status. This foundation
+  alone does not satisfy visible blockers or the independent Linux-host D18 gate.

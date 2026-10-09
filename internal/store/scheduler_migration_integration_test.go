@@ -60,6 +60,7 @@ func TestSchedulerCursorMigrationPreservesActiveAuthority(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer rollback(tx)
+	rollbackQueueBlockers(t, ctx, tx)
 	down, err := os.ReadFile("../../migrations/0017_scheduler_cursor.down.sql")
 	if err != nil {
 		t.Fatal(err)

@@ -109,6 +109,7 @@ func TestSweepRetryParentsStayProjectScopedAndImmutable(t *testing.T) {
 
 func rollbackRetryLineage(t *testing.T, ctx context.Context, tx pgx.Tx) {
 	t.Helper()
+	rollbackQueueBlockers(t, ctx, tx)
 	downCursor, err := os.ReadFile("../../migrations/0017_scheduler_cursor.down.sql")
 	if err != nil {
 		t.Fatal(err)
