@@ -7,6 +7,7 @@
 | `GET /healthz` | none | Database readiness, no tenant data |
 | `POST /v1/jobs` | submit | Validate, resolve image, atomically queue a job |
 | `POST /v1/sweeps` | submit | Resolve a template and atomically queue up to 1,000 ordered children |
+| `POST /v1/sweeps/{id}/retry` | submit | Create fresh linked jobs for a terminal sweep's failed/cancelled children |
 | `GET /v1/sweeps/{id}` | read | Sweep-wide progress and a bounded ordered page of children/accepted metrics |
 | `GET /v1/jobs/{id}` | read | Return project-scoped job state and accepted result metadata |
 | `POST /v1/jobs/{id}/cancel` | submit | Idempotently record project-scoped cancellation intent |
@@ -28,7 +29,8 @@ without leaking their internal errors or credentials.
 
 Error responses have `error.code`, `error.message`, `error.retryable`, and
 `error.requestId`. Every response also carries `X-Request-ID`. Request bodies are
-limited to 1 MiB, request contexts to 15 seconds, and in-flight handlers to 256.
+limited to 1 MiB (sweep retry requires an empty body), request contexts to 15
+seconds, and in-flight handlers to 256.
 An initial global limit of 200 requests per one-second window bounds API pressure;
 429 responses include Retry-After. This global cap does not claim per-project fairness.
 Responses disable caching and MIME sniffing; TLS responses set HSTS.
@@ -53,6 +55,34 @@ oversized documents 413, invalid matrices or policies 422, and missing datasets
 404. The same role checks, response headers, and dependency errors as job admission
 apply. The CLI resolves local template references and uses this endpoint through
 `dispatch sweep submit`.
+
+## Sweep retry
+
+`POST /v1/sweeps/{id}/retry` requires a submit token and `Idempotency-Key` of
+1–128 visible ASCII characters without spaces. Send no body or query parameters;
+even `{}` or a whitespace body returns 400. The only retry policy is to create
+fresh jobs for failed/cancelled children once every source child is terminal.
+A still-running or entirely successful source returns 409. Invalid, unknown,
+or other-project source IDs return 404; read-only tokens return 403.
+
+New retries return 201; replays return 200. Both return `id`, `projectId`,
+`parentSweepId`, `specHash`, `maxConcurrent`, `createdAt`, and ordered `children`.
+Each child has its new `id`, dense zero-based `index`, and immediate `parentJobId`.
+The Location header points to `/v1/sweeps/{newId}`, which supports ordinary
+inspection and accepted-results export. The new hash binds the selected parents;
+it is not the original full-grid hash.
+
+Keys are scoped to the authenticated project and source sweep. Reusing the key
+after a lost response returns the exact saved identity/mapping, even after quotas
+change. A new key creates another retry, subject to current project quotas.
+Retrying a retry uses its ID as the source and preserves immediate parent links.
+Neither fresh retries nor replay contact image resolution or object storage.
+Original jobs, successful results, and history remain unchanged; new jobs copy
+frozen execution specs, input bindings, priority, and sweep policies.
+
+Authentication and submit authorization still run before replay. Disabled
+projects and revoked tokens return 401; a durable store-level replay does not
+bypass these HTTP checks. The Go client method and CLI command remain pending.
 
 ## Sweep inspection
 

@@ -33,7 +33,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D14 cancellation | D12,D13 | Both completion/cancellation race orders, repeat requests, uncertain cleanup | pending |
 | D15 logs | D08,D11 | Bounded queues/spool, noisy-job truncation, stream cursors, reconnect | catalog, HTTP cursor/tail gaps, binary format, private spool, Rust registration client, journaled delivery, bounded Docker follower, assembler, completion summary, CLI follow, pre-start capture, and live publication passed; reconnect/fault matrix pending |
 | D16 datasets | D11 | Immutable registration/cache; corruption rejection; pin-aware eviction | ownership schema, upload/completion APIs, project-scoped resolution, real CLI registration, isolated worker cache, atomic store admission bindings, durable replay, archive assignment contract, worker validation, store assignment population, signed RPC grants, strict job-to-wire matching, real read-only Docker mount, startup cache reset, assignment-to-cache preparation, agent cache initialization, unlaunched transfer-failure completion, replay-binding validation, worker input acquisition path, HTTP submission, and one live dataset-to-output Docker job passed; dataset fault matrix still pending |
-| D17 sweeps/metrics | D05,D13,D16 | Atomic 27-child sweep; 1000 cap; concurrency; fail-fast; finite scalar export | deterministic expansion, schema constraints, HTTP/CLI submission/replay, scheduler cap/terminal release, fail-fast, bounded CLI/HTTP progress/accepted metrics, CSV/JSON export, real worker metric ingestion, local 27-child success/fail-fast/worker-loss sweeps, immutable project-scoped retry lineage, and atomic failed/cancelled-only store retry passed; retry API/CLI/live execution and independent-host gates pending |
+| D17 sweeps/metrics | D05,D13,D16 | Atomic 27-child sweep; 1000 cap; concurrency; fail-fast; finite scalar export | deterministic expansion, schema constraints, HTTP/CLI submission/replay, scheduler cap/terminal release, fail-fast, bounded CLI/HTTP progress/accepted metrics, CSV/JSON export, real worker metric ingestion, local 27-child success/fail-fast/worker-loss sweeps, immutable project-scoped retry lineage, and atomic failed/cancelled-only store/HTTP retry passed; retry client/CLI/live execution and independent-host gates pending |
 | D18 placement | D07,D17 | Project fairness/aging, blockers, two real independent hosts without oversubscription | pending |
 | D19 faults/benchmarks | D14–D18 | Spec §21/22 runtime matrix, 27-job worker kill, stale result, measured benchmarks | local 27-child worker kill/natural lease recovery and real delayed completion rejection after replacement passed; independent-host evidence, broader fault matrix, and published measurements pending |
 | D20 release | D19 | TLS/auth/permissions, retention, migrations/backups, packaging, tutorial, actual research run | pending |
@@ -2976,3 +2976,25 @@ This recorded gap is resolved by D17l/D17m below; the live sweep gate remains op
   `make test lint smoke` and the complete PostgreSQL suite (store: 42.388 seconds;
   server: 90.380 seconds). Separate model review and `git diff --check` found no
   blockers. This slice adds no new object-store or independent-host evidence.
+
+### D17s: Expose authenticated sweep retry over HTTP
+
+- Added `POST /v1/sweeps/{id}/retry` after a real PostgreSQL API regression
+  returned 404 for the missing endpoint. It requires submit authorization,
+  a canonical non-nil source UUID, and a visible ASCII recovery key. Bodies and
+  query parameters are rejected so ignored options cannot alias the durable
+  source-only request identity. Body rejection reads at most one byte.
+- New/replayed requests return 201/200 with Location and the same typed ordered
+  parent/new-job mapping as the store operation. Terminal-source conflicts get
+  a contextual 409 error. Existing API authentication, rate/concurrency limits,
+  response headers, and bounded contexts apply before every operation/replay.
+- Focused race-enabled PostgreSQL HTTP tests passed (1.578 seconds), covering
+  eight concurrent same-key calls, source-specific namespaces/chained retries,
+  malformed input/no row leaks, quota-change replay versus fresh rejection,
+  read-only/foreign/revoked tokens, and disabled-project replay rejection.
+  A failing resolver proves neither fresh retries nor replay depend on registry
+  availability. Client/CLI and live worker retry execution remain pending.
+- `make test lint smoke` and the complete PostgreSQL integration suite passed
+  (API: 4.668 seconds; server: 90.063 seconds). Separate model review and
+  `git diff --check` found no blockers. No new live worker/storage execution or
+  independent-host evidence is claimed by this HTTP slice.

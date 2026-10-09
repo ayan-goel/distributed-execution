@@ -211,7 +211,9 @@ The idempotency claim and every new row commit together. Durable replay precedes
 mutable project policy checks; fresh retries enforce project enablement and
 single-job CPU/memory quotas. No registry or object-store request occurs inside
 this transaction. The caller must authorize project submit access separately;
-the HTTP/CLI retry interfaces are not implemented yet.
+the HTTP retry endpoint now checks this on every request, including replay.
+Disabled projects and revoked tokens cannot recover a retry through HTTP; the
+store-level ordering does not bypass authentication. The client/CLI remain pending.
 
 Race-enabled PostgreSQL tests cover eight concurrent same-key calls, changed
 policy replay, immutable source results, frozen dataset inputs, chained retries,

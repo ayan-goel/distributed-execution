@@ -104,6 +104,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case strings.HasPrefix(r.URL.Path, "/v1/sweeps/") && r.Method == http.MethodGet:
 		s.sweepProgress(w, r, p)
+	case strings.HasPrefix(r.URL.Path, "/v1/sweeps/") && strings.HasSuffix(r.URL.Path, "/retry") && r.Method == http.MethodPost:
+		if !p.Allows(store.RoleSubmit) {
+			fail(w, 403, "FORBIDDEN", "submit permission required", false)
+			return
+		}
+		s.retrySweep(w, r, p)
 	case r.URL.Path == "/v1/sweeps" && r.Method == http.MethodPost:
 		if !p.Allows(store.RoleSubmit) {
 			fail(w, 403, "FORBIDDEN", "submit permission required", false)

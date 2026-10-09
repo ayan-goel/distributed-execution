@@ -164,8 +164,10 @@ One transaction creates the sweep, jobs, input bindings, submission events, and
 idempotency claim. Reusing the same project/source/key returns the same ordered
 mapping even after project quotas or enablement change. Fresh retries check
 current enablement and per-job CPU/memory quotas. Callers must authorize submit
-access before invoking the store operation. The authenticated HTTP endpoint and
-CLI retry command are still pending.
+access before invoking the store operation. The authenticated
+`POST /v1/sweeps/{id}/retry` endpoint enforces this and accepts an empty body plus
+an idempotency key; see [the API contract](http-api.md#sweep-retry). The Go client
+and CLI retry command are still pending.
 
 ## Verification
 
