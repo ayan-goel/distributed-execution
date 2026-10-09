@@ -195,6 +195,26 @@ No rollback runs automatically.
 
 Real PostgreSQL tests cover valid chains, cross-project/self-parent rejection,
 immutable links, populated rollback/reapply, unchanged active authority, and
-atomic rejection of invalid legacy data. Failed-sweep retry will select only
-failed/cancelled children and create fresh linked jobs; the operation and its
-HTTP/CLI interfaces remain to be implemented.
+atomic rejection of invalid legacy data.
+
+## Atomic failed/cancelled sweep retry (D17r)
+
+`store.RetrySweep` holds the cluster transition lock while checking that all
+source children are terminal and selecting failed/cancelled children in source
+index order. It creates one linked sweep with dense child indices, fresh job
+identities/attempt state, copied frozen specs and dataset bindings, and one
+submission event per child. The source sweep and jobs remain unchanged. The
+stored spec hash includes a server-owned immediate-parent selector, so partial
+nonrectangular retries are distinguishable from the original full matrix.
+
+The idempotency claim and every new row commit together. Durable replay precedes
+mutable project policy checks; fresh retries enforce project enablement and
+single-job CPU/memory quotas. No registry or object-store request occurs inside
+this transaction. The caller must authorize project submit access separately;
+the HTTP/CLI retry interfaces are not implemented yet.
+
+Race-enabled PostgreSQL tests cover eight concurrent same-key calls, changed
+policy replay, immutable source results, frozen dataset inputs, chained retries,
+nondefault policies/priority, the 1,000-child boundary, and injected failures at
+each of the sweep/job/input/event write stages. Each failed transaction leaves
+the key reusable and no partial rows.

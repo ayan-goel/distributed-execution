@@ -146,13 +146,26 @@ failed job ID, and previous/new states. Accepted completion replay does not repe
 these events. Failure paths lock all affected jobs in UUID order before attempts
 so independent batch renewals cannot invert the lock order.
 
-A command to retry a failed sweep as new jobs linked to the originals is still
-required for v0.1. Current retry policies replace eligible attempts within their
-existing child jobs; they do not provide that separate sweep retry operation.
-The selected behavior is to create new jobs only for failed/cancelled children,
-preserving successful jobs and all original history. Project-scoped immutable
-job/sweep parent links are now enforced by migration 0016; the retry operation
-and public command are still pending.
+The internal `store.RetrySweep` operation creates a new sweep containing only
+failed/cancelled children. All source children must be terminal, with at least
+one failed/cancelled child. Successful jobs and the original history stay intact.
+New children have fresh IDs, dense indices, zero attempts, and immediate parent
+links protected by migration 0016. Frozen job specs, dataset bindings, resources,
+priority, and sweep failure/concurrency policies are copied without resolving
+image or dataset names again.
+
+An arbitrary failed subset need not form a rectangular parameter matrix. The
+stored retry spec preserves the original matrix description and adds a
+server-owned `retry` selector containing the immediate source sweep and ordered
+source job IDs. Its hash includes this selection; another retry records its
+immediate parents while immutable links retain the earlier ancestry.
+
+One transaction creates the sweep, jobs, input bindings, submission events, and
+idempotency claim. Reusing the same project/source/key returns the same ordered
+mapping even after project quotas or enablement change. Fresh retries check
+current enablement and per-job CPU/memory quotas. Callers must authorize submit
+access before invoking the store operation. The authenticated HTTP endpoint and
+CLI retry command are still pending.
 
 ## Verification
 
