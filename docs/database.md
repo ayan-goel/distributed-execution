@@ -221,3 +221,21 @@ policy replay, immutable source results, frozen dataset inputs, chained retries,
 nondefault policies/priority, the 1,000-child boundary, and injected failures at
 each of the sweep/job/input/event write stages. Each failed transaction leaves
 the key reusable and no partial rows.
+
+## Durable project rotation (D18a)
+
+Migration 0017 adds `scheduler_state`: one singleton row, a nullable project UUID
+cursor, and a finite database timestamp. The primary key/check permit at most one
+row, and migration seeds it. Deleting an otherwise empty project clears its cursor
+reference. Missing singleton state is an error during new scheduling; it is not
+treated as an empty queue.
+
+The existing cluster transition lock serializes cursor reads and updates. A new
+assignment advances the cursor in the same transaction as its attempt, reservation,
+job state, event, and response reference. Replays and no-work requests do not advance
+it. Explicit development rollback drops only scheduler state, resetting rotation
+on reapply while preserving active execution ownership and deadlines.
+
+Real PostgreSQL tests cover singleton/FK/time constraints, populated rollback and
+upgrade, cross-connection rotation, concurrent acquisitions, and rollback when an
+acquisition response write fails after the cursor update.

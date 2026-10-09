@@ -21,12 +21,21 @@ counts active **and quarantined** reservations. Project quotas count active atte
 so fenced historical work does not prevent retry elsewhere. Actual cleanup still
 controls reuse of the original host's capacity.
 
-Fitting candidates precede blocked jobs, permitting backfill. Within those groups,
-the current baseline orders by priority, creation time, and UUID. A no-work result
-reports the highest-ranked candidate's blocker, or QUEUE_EMPTY when there are no
-eligible visible candidates. This is not yet the final scheduling policy: durable
-project round-robin, aging, and per-job blocker history remain D18 requirements.
-Sweep concurrency joins this eligibility check with D17's sweep metadata.
+Fitting candidates precede blocked jobs, permitting backfill. Selection rotates
+among eligible projects in ascending UUID order after the last selected project,
+wrapping at the end. Within the selected project, priority descends, then creation
+time and job UUID ascend. Priority does not let one project monopolize admission.
+Sweep concurrency is part of eligibility. A no-work result reports the first
+blocked candidate's reason under that ordering, or QUEUE_EMPTY when no visible
+queued candidate has reached its eligibility time.
+
+Migration 0017 stores one global project cursor in PostgreSQL. The cluster lock
+serializes its use across worker requests and control-plane connections. Only a
+new committed assignment advances it; replay, no-work, and rolled-back transactions
+leave it unchanged. If its singleton row is missing, new scheduling fails closed.
+This provides approximate admission fairness, not equal CPU time or preemption.
+Priority aging, per-job blocker history, and independent-host verification remain
+D18 requirements.
 
 The transaction holds the existing cluster transition lock, locks its selected job,
 then worker and project accounting. It rechecks capacity/quotas/readiness and reads
@@ -38,11 +47,12 @@ the transaction. For an assignment it atomically:
 3. Reserves CPU, memory, scratch, and one execution slot.
 4. Moves the job to ACTIVE with its current attempt pointer.
 5. Records the ASSIGNED event and acquisition request's response reference.
+6. Advances the durable project cursor in the same transaction.
 
 Commit failures return no assignment. Database ownership constraints independently
 reject mismatched reservations and multiple authoritative active attempts. Only
-input-free, digest-pinned admitted jobs are supported until dataset staging lands.
-Returned canonical job bytes are reconstructed and checked against the stored hash.
+digest-pinned admitted jobs are assigned. Frozen dataset bindings accompany jobs
+with inputs. Returned canonical job bytes are checked against the stored hash.
 
 ## Replay
 

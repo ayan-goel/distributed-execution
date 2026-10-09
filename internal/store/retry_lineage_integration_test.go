@@ -109,6 +109,16 @@ func TestSweepRetryParentsStayProjectScopedAndImmutable(t *testing.T) {
 
 func rollbackRetryLineage(t *testing.T, ctx context.Context, tx pgx.Tx) {
 	t.Helper()
+	downCursor, err := os.ReadFile("../../migrations/0017_scheduler_cursor.down.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, string(downCursor)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, "DELETE FROM schema_migrations WHERE name='0017_scheduler_cursor.up.sql'"); err != nil {
+		t.Fatal(err)
+	}
 	down, err := os.ReadFile("../../migrations/0016_retry_lineage.down.sql")
 	if err != nil {
 		t.Fatal(err)

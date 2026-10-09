@@ -125,8 +125,15 @@ func AcquireWork(ctx context.Context, pool *pgxpool.Pool, identity WorkerIdentit
 	reason := w.readiness(now, policy)
 	jobID := ""
 	if reason == "" {
+		var cursor *string
+		if err = tx.QueryRow(ctx, "SELECT project_cursor::text FROM scheduler_state WHERE singleton").Scan(&cursor); errors.Is(err, pgx.ErrNoRows) {
+			return AcquisitionResult{}, ErrInvalid
+		} else if err != nil {
+			return AcquisitionResult{}, err
+		}
 		// Resource-changing transactions share the cluster lock. Rank fitting
-		// candidates ahead of blocked jobs to permit backfill without overbooking.
+		// jobs first, then rotate projects in UUID order after the durable cursor.
+		// Blocked projects must not hide fitting work during backfill.
 		err = tx.QueryRow(ctx, `WITH usage AS (
             SELECT j.project_id,sum(r.cpu_millis) cpu,sum(r.memory_mib) memory,count(*) slots
             FROM attempts a JOIN jobs j ON j.id=a.job_id JOIN reservations r ON r.attempt_id=a.id
@@ -136,7 +143,7 @@ func AcquireWork(ctx context.Context, pool *pgxpool.Pool, identity WorkerIdentit
             WHERE j.sweep_id IS NOT NULL AND a.state IN ('ASSIGNED','STARTING','RUNNING','FINALIZING')
             GROUP BY j.sweep_id
         ), candidates AS (
-            SELECT j.id,j.priority,j.created_at,CASE
+            SELECT j.id,j.project_id,j.priority,j.created_at,CASE
             WHEN NOT ($6::jsonb @> COALESCE(j.spec->'spec'->'placement'->'labels','{}'::jsonb)) THEN 'PLACEMENT_MISMATCH'
             WHEN j.cpu_millis>$2 OR j.memory_mib>$3 OR j.scratch_mib>$4 OR $5<1 THEN 'NO_RESOURCE_FIT'
             WHEN j.cpu_millis>p.cpu_quota-COALESCE(u.cpu,0) OR j.memory_mib>p.memory_quota_mib-COALESCE(u.memory,0) OR COALESCE(u.slots,0)>=p.concurrency_quota THEN 'PROJECT_QUOTA'
@@ -146,7 +153,9 @@ func AcquireWork(ctx context.Context, pool *pgxpool.Pool, identity WorkerIdentit
             LEFT JOIN usage u ON u.project_id=p.id LEFT JOIN sweeps s ON s.id=j.sweep_id
             LEFT JOIN sweep_usage su ON su.sweep_id=j.sweep_id
             WHERE p.enabled AND j.state IN ('QUEUED','RETRY_WAIT') AND NOT j.cancel_requested AND j.next_eligible_at<=clock_timestamp()
-        ) SELECT id::text,reason FROM candidates ORDER BY (reason='') DESC,priority DESC,created_at,id LIMIT 1`, identity.WorkerID, w.free.CPUMillis, w.free.MemoryMiB, w.free.ScratchMiB, w.slots, w.labels).Scan(&jobID, &reason)
+        ) SELECT id::text,reason FROM candidates
+        ORDER BY (reason='') DESC,($7::uuid IS NULL OR project_id>$7::uuid) DESC,
+            project_id,priority DESC,created_at,id LIMIT 1`, identity.WorkerID, w.free.CPUMillis, w.free.MemoryMiB, w.free.ScratchMiB, w.slots, w.labels, cursor).Scan(&jobID, &reason)
 		if errors.Is(err, pgx.ErrNoRows) {
 			reason = "QUEUE_EMPTY"
 		} else if err != nil {
@@ -256,6 +265,15 @@ func AcquireWork(ctx context.Context, pool *pgxpool.Pool, identity WorkerIdentit
 		}
 		if _, err = tx.Exec(ctx, "INSERT INTO job_events(job_id,sequence,attempt_id,type,payload) VALUES($1,$2,$3,'ASSIGNED',jsonb_build_object('workerId',$4::text,'sessionId',$5::text,'generation',$6::bigint))", jobID, sequence, id, identity.WorkerID, request.SessionID, counter+1); err != nil {
 			return AcquisitionResult{}, err
+		}
+		// Advance rotation only with a new committed assignment. Replays, no-work
+		// polls and rollbacks must not spend another project's turn.
+		updated, err := tx.Exec(ctx, "UPDATE scheduler_state SET project_cursor=$1,updated_at=$2 WHERE singleton", projectID, now)
+		if err != nil {
+			return AcquisitionResult{}, err
+		}
+		if updated.RowsAffected() != 1 {
+			return AcquisitionResult{}, ErrInvalid
 		}
 		result.Assignment = assignment
 	}
