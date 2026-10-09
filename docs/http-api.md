@@ -82,7 +82,12 @@ frozen execution specs, input bindings, priority, and sweep policies.
 
 Authentication and submit authorization still run before replay. Disabled
 projects and revoked tokens return 401; a durable store-level replay does not
-bypass these HTTP checks. The Go client method and CLI command remain pending.
+bypass these HTTP checks. `Client.RetrySweep` validates the requested source,
+canonical IDs, hash/time, bounds, present dense indices, unique mappings, and
+disjoint new/parent identities. It makes one explicit request and returns API
+errors without creating a new retry automatically. `dispatch sweep retry ID
+--idempotency-key KEY --json` records the recovery key before admission and emits
+the validated mapping. Without `--json`, it prints the new sweep ID and child count.
 
 ## Sweep inspection
 

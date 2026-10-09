@@ -44,7 +44,8 @@ processes sharing Docker, including metrics, exports, both fail-fast policies,
 and recovery after killing a running worker. Independent Linux-host execution and
 the broader failure matrix remain to be verified. A separate local test rejects
 a real delayed completion after replacement and downloads the replacement's
-distinct output bytes.
+distinct output bytes. `dispatch sweep retry` creates fresh linked jobs only for
+failed/cancelled children while keeping successful results and the original history.
 Declared metric outputs are collected into source-bound completion reports.
 Strict scratch limits, full retry policy coverage, and
 other v0.1 gates remain. See the

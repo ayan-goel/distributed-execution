@@ -167,7 +167,27 @@ current enablement and per-job CPU/memory quotas. Callers must authorize submit
 access before invoking the store operation. The authenticated
 `POST /v1/sweeps/{id}/retry` endpoint enforces this and accepts an empty body plus
 an idempotency key; see [the API contract](http-api.md#sweep-retry). The Go client
-and CLI retry command are still pending.
+validates the returned source, bounds, dense indices, and distinct parent/new
+identities before the CLI prints the mapping.
+
+## Retry failed or cancelled children
+
+After every child reaches a terminal state, create a linked sweep for the
+failed/cancelled subset while keeping successful results:
+
+```sh
+bin/dispatch sweep retry SWEEP_ID --idempotency-key retry-grid-1 --json
+```
+
+The CLI prints the recovery key to stderr before contacting the server. It
+generates a key if omitted. After an uncertain reply, repeat the same source ID
+and key to recover the same retry; changing the key creates another retry.
+JSON output includes the new sweep ID, immediate source sweep ID, and ordered
+new-job/parent-job mappings. Text output prints the new ID and child count.
+Use the new ID with `sweep get` and `sweep export`, or as the source of another
+retry after it finishes. There is no option to rerun successful jobs or change
+the frozen job configuration. The source must contain at least one failed or
+cancelled child, and the token needs submit permission.
 
 ## Verification
 

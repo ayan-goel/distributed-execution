@@ -12,6 +12,8 @@ import (
 	"sync"
 	"testing"
 
+	"dispatch.local/dispatch/internal/cli"
+	"dispatch.local/dispatch/internal/client"
 	"dispatch.local/dispatch/internal/spec"
 	"dispatch.local/dispatch/internal/store"
 	"github.com/google/uuid"
@@ -139,6 +141,31 @@ func TestHTTPSweepRetryIsScopedAtomicAndReplayable(t *testing.T) {
 	if newCount != 1 {
 		t.Fatal("same-key calls created multiple retries", newCount)
 	}
+	server := httptest.NewServer(h)
+	defer server.Close()
+	env := func(key string) string {
+		return map[string]string{"DISPATCH_URL": server.URL, "DISPATCH_TOKEN": submit, "DISPATCH_DEV_INSECURE": "1"}[key]
+	}
+	var cliRetry client.SweepRetry
+	for i := range 2 {
+		var out, errout bytes.Buffer
+		if code := cli.Run(ctx, []string{"sweep", "retry", source.ID, "--idempotency-key", "cli-retry", "--json"}, env, &out, &errout); code != 0 {
+			t.Fatal("CLI retry failed against real HTTP/PostgreSQL", code, errout.String())
+		}
+		var result client.SweepRetry
+		if err := json.Unmarshal(out.Bytes(), &result); err != nil || result.ParentSweepID != source.ID || len(result.Children) != 3 || result.ID == first.ID || i == 1 && !reflect.DeepEqual(cliRetry, result) {
+			t.Fatal("CLI changed retry identity/mapping", out.String(), err)
+		}
+		cliRetry = result
+	}
+	c, err := client.New(server.URL, reader, true, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, err := c.GetSweep(ctx, cliRetry.ID, "", 100)
+	if err != nil || page.Sweep.Progress.Queued != 3 || page.Sweep.Progress.Total != 3 {
+		t.Fatal("CLI retry cannot use ordinary progress inspection", page, err)
+	}
 	nextPath := "/v1/sweeps/" + first.ID + "/retry"
 	if response := call(h, "POST", nextPath, submit, "retry", nil); response.Code != 409 {
 		t.Fatal("key replay crossed source sweep scope", response.Code, response.Body.String())
@@ -194,7 +221,7 @@ func TestHTTPSweepRetryIsScopedAtomicAndReplayable(t *testing.T) {
 		t.Fatal("disabled project replay bypassed authentication", response.Code, response.Body.String())
 	}
 	var sweeps, jobs int
-	if err := pool.QueryRow(ctx, "SELECT (SELECT count(*) FROM sweeps),(SELECT count(*) FROM jobs)").Scan(&sweeps, &jobs); err != nil || sweeps != 3 || jobs != 9 {
+	if err := pool.QueryRow(ctx, "SELECT (SELECT count(*) FROM sweeps),(SELECT count(*) FROM jobs)").Scan(&sweeps, &jobs); err != nil || sweeps != 4 || jobs != 12 {
 		t.Fatal("rejected or replayed requests created extra rows", sweeps, jobs, err)
 	}
 }

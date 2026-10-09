@@ -16,6 +16,9 @@ import (
 )
 
 func runSweep(ctx context.Context, args []string, getenv func(string) string, out, errout io.Writer) error {
+	if len(args) >= 3 && args[1] == "retry" {
+		return retrySweep(ctx, args, getenv, out, errout)
+	}
 	if len(args) >= 3 && args[1] == "get" {
 		return getSweep(ctx, args, getenv, out)
 	}

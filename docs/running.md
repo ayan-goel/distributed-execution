@@ -219,6 +219,17 @@ Inspection returns one page; pass its `nextCursor` with `--cursor` to continue.
 Export follows every page. Export after the sweep is terminal for final comparison;
 running sweeps can still contain unfinished children.
 
+Once all children are terminal, rerun only failed/cancelled children with fresh
+linked job identities. Successful results and the source history stay intact:
+
+```sh
+bin/dispatch sweep retry SWEEP_UUID --idempotency-key retry-grid-1 --json
+```
+
+Save the recovery key printed to stderr and reuse the same source/key after an
+uncertain response. A new key creates another retry sweep. Inspect/export using
+the new ID in the response; its child mapping includes immediate parent job IDs.
+
 Options follow the file or job ID. Successful commands exit 0; validation, API,
 configuration, transport, and output errors exit 2. For job commands, `--json`
 writes one job object to stdout for submit/get/cancel, or `{valid,specHash}` for

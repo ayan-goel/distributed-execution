@@ -213,7 +213,8 @@ single-job CPU/memory quotas. No registry or object-store request occurs inside
 this transaction. The caller must authorize project submit access separately;
 the HTTP retry endpoint now checks this on every request, including replay.
 Disabled projects and revoked tokens cannot recover a retry through HTTP; the
-store-level ordering does not bypass authentication. The client/CLI remain pending.
+store-level ordering does not bypass authentication. The validated Go client and
+`dispatch sweep retry` command use this endpoint with the same source/key identity.
 
 Race-enabled PostgreSQL tests cover eight concurrent same-key calls, changed
 policy replay, immutable source results, frozen dataset inputs, chained retries,
