@@ -23,10 +23,10 @@ controls reuse of the original host's capacity.
 
 Fitting candidates precede blocked jobs, permitting backfill. Selection rotates
 among eligible projects in ascending UUID order after the last selected project,
-wrapping at the end. Within the selected project, priority descends, then creation
-time and job UUID ascend. Priority does not let one project monopolize admission.
+wrapping at the end. Within the selected project, effective priority descends, then
+creation time and job UUID ascend. Priority does not let one project monopolize admission.
 Users set the optional [job priority](contracts.md#job-priority-d18b) from 0–3 in
-`spec.priority`; larger values run first, and omission defaults to 0.
+`spec.priority`; larger base values start higher, and omission defaults to 0.
 Sweep concurrency is part of eligibility. A no-work result reports the first
 blocked candidate's reason under that ordering, or QUEUE_EMPTY when no visible
 queued candidate has reached its eligibility time.
@@ -36,8 +36,7 @@ serializes its use across worker requests and control-plane connections. Only a
 new committed assignment advances it; replay, no-work, and rolled-back transactions
 leave it unchanged. If its singleton row is missing, new scheduling fails closed.
 This provides approximate admission fairness, not equal CPU time or preemption.
-Priority aging, per-job blocker history, and independent-host verification remain
-D18 requirements.
+Per-job blocker history and independent-host verification remain D18 requirements.
 
 The transaction holds the existing cluster transition lock, locks its selected job,
 then worker and project accounting. It rechecks capacity/quotas/readiness and reads
@@ -55,6 +54,28 @@ Commit failures return no assignment. Database ownership constraints independent
 reject mismatched reservations and multiple authoritative active attempts. Only
 digest-pinned admitted jobs are assigned. Frozen dataset bindings accompany jobs
 with inputs. Returned canonical job bytes are checked against the stored hash.
+
+## Priority aging (D18c)
+
+Selection computes `min(3, basePriority + floor(eligibleWaitSeconds / 600))` from
+one database wall-time sample. Negative elapsed time is treated as zero. Ten minutes
+is the initial fixed policy, not a measured optimum. A base-0 job reaches level 3
+after 30 eligible minutes. Promotion is calculated on acquisition without background
+updates or mutations to the job's frozen priority, specification, or hash.
+
+Waiting starts at persisted `next_eligible_at`. Initial queue time counts, including
+waits for capacity, labels, project quotas, sweep concurrency, or project enablement.
+Execution and retry backoff do not count: completion/recovery reset eligibility to
+the new retry deadline. A linked sweep retry creates fresh jobs with fresh ages.
+An automatic retry retains its original creation time for FIFO ties after aging;
+resetting promotion age does not reset that seniority. Database wall-clock changes
+can advance or delay promotion; this is not a monotonic elapsed-time guarantee.
+
+Aging stays within project rotation and never overrides eligibility or reservations.
+Even a fully aged job must fit resources. It does not preempt running work or promise
+a start deadline. A fresh time sample after job/accounting locks still rechecks the
+selected job and worker before assignment. Durable replay returns the original
+assignment without recalculating placement or spending another project's turn.
 
 ## Replay
 

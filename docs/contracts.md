@@ -45,10 +45,11 @@ disabled. Other resource/time/retry fields are explicit rather than guessed.
 ### Job priority (D18b)
 
 Set `spec.priority` in a Job document, including a sweep's embedded or local job
-template. Larger values run first within the next eligible project selected by
-round-robin. Priority does not bypass project access, quotas, placement, backoff,
-resource fit, or sweep concurrency, and does not preempt running jobs. Aging is
-not implemented yet.
+template. Larger effective priorities run first within the next eligible project
+selected by round-robin. [Queue aging](acquisition.md#priority-aging-d18c) adds one
+level per 10 eligible waiting minutes, capped at 3. Priority does not bypass project
+access, quotas, placement, backoff, resource fit, or sweep concurrency, and does not
+preempt running jobs.
 
 Priority is stored in the frozen job specification and scheduler column. Sweep
 children inherit their template's value; failed/cancelled-only retries copy their

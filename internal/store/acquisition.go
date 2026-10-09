@@ -18,6 +18,12 @@ import (
 const InitialLease = 30 * time.Second
 const WorkerSuspectAfter = 15 * time.Second
 
+// Ten eligible minutes earn one level, so waiting work can reach the highest
+// priority without changing its frozen spec. Clamp before casting to avoid
+// overflow for old finite timestamps; queue_clock is sampled once per selection.
+const effectivePrioritySQL = `LEAST(3, j.priority + LEAST(3,
+    FLOOR(GREATEST(0, EXTRACT(EPOCH FROM (queue_clock.now-j.next_eligible_at))) / 600))::integer)`
+
 type AcquisitionRequest struct{ SessionID, RequestID string }
 type AcquisitionPolicy struct{ AllowSoftScratch bool }
 type WorkAssignment struct {
@@ -134,7 +140,7 @@ func AcquireWork(ctx context.Context, pool *pgxpool.Pool, identity WorkerIdentit
 		// Resource-changing transactions share the cluster lock. Rank fitting
 		// jobs first, then rotate projects in UUID order after the durable cursor.
 		// Blocked projects must not hide fitting work during backfill.
-		err = tx.QueryRow(ctx, `WITH usage AS (
+		err = tx.QueryRow(ctx, `WITH queue_clock AS MATERIALIZED (SELECT clock_timestamp() AS now), usage AS (
             SELECT j.project_id,sum(r.cpu_millis) cpu,sum(r.memory_mib) memory,count(*) slots
             FROM attempts a JOIN jobs j ON j.id=a.job_id JOIN reservations r ON r.attempt_id=a.id
             WHERE a.state IN ('ASSIGNED','STARTING','RUNNING','FINALIZING') GROUP BY j.project_id
@@ -143,7 +149,7 @@ func AcquireWork(ctx context.Context, pool *pgxpool.Pool, identity WorkerIdentit
             WHERE j.sweep_id IS NOT NULL AND a.state IN ('ASSIGNED','STARTING','RUNNING','FINALIZING')
             GROUP BY j.sweep_id
         ), candidates AS (
-            SELECT j.id,j.project_id,j.priority,j.created_at,CASE
+            SELECT j.id,j.project_id,`+effectivePrioritySQL+` AS effective_priority,j.created_at,CASE
             WHEN NOT ($6::jsonb @> COALESCE(j.spec->'spec'->'placement'->'labels','{}'::jsonb)) THEN 'PLACEMENT_MISMATCH'
             WHEN j.cpu_millis>$2 OR j.memory_mib>$3 OR j.scratch_mib>$4 OR $5<1 THEN 'NO_RESOURCE_FIT'
             WHEN j.cpu_millis>p.cpu_quota-COALESCE(u.cpu,0) OR j.memory_mib>p.memory_quota_mib-COALESCE(u.memory,0) OR COALESCE(u.slots,0)>=p.concurrency_quota THEN 'PROJECT_QUOTA'
@@ -152,10 +158,11 @@ func AcquireWork(ctx context.Context, pool *pgxpool.Pool, identity WorkerIdentit
             FROM jobs j JOIN projects p ON p.id=j.project_id JOIN worker_projects wp ON wp.project_id=p.id AND wp.worker_id=$1
             LEFT JOIN usage u ON u.project_id=p.id LEFT JOIN sweeps s ON s.id=j.sweep_id
             LEFT JOIN sweep_usage su ON su.sweep_id=j.sweep_id
-            WHERE p.enabled AND j.state IN ('QUEUED','RETRY_WAIT') AND NOT j.cancel_requested AND j.next_eligible_at<=clock_timestamp()
+            CROSS JOIN queue_clock
+            WHERE p.enabled AND j.state IN ('QUEUED','RETRY_WAIT') AND NOT j.cancel_requested AND j.next_eligible_at<=queue_clock.now
         ) SELECT id::text,reason FROM candidates
         ORDER BY (reason='') DESC,($7::uuid IS NULL OR project_id>$7::uuid) DESC,
-            project_id,priority DESC,created_at,id LIMIT 1`, identity.WorkerID, w.free.CPUMillis, w.free.MemoryMiB, w.free.ScratchMiB, w.slots, w.labels, cursor).Scan(&jobID, &reason)
+            project_id,effective_priority DESC,created_at,id LIMIT 1`, identity.WorkerID, w.free.CPUMillis, w.free.MemoryMiB, w.free.ScratchMiB, w.slots, w.labels, cursor).Scan(&jobID, &reason)
 		if errors.Is(err, pgx.ErrNoRows) {
 			reason = "QUEUE_EMPTY"
 		} else if err != nil {

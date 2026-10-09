@@ -34,7 +34,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D15 logs | D08,D11 | Bounded queues/spool, noisy-job truncation, stream cursors, reconnect | catalog, HTTP cursor/tail gaps, binary format, private spool, Rust registration client, journaled delivery, bounded Docker follower, assembler, completion summary, CLI follow, pre-start capture, and live publication passed; reconnect/fault matrix pending |
 | D16 datasets | D11 | Immutable registration/cache; corruption rejection; pin-aware eviction | ownership schema, upload/completion APIs, project-scoped resolution, real CLI registration, isolated worker cache, atomic store admission bindings, durable replay, archive assignment contract, worker validation, store assignment population, signed RPC grants, strict job-to-wire matching, real read-only Docker mount, startup cache reset, assignment-to-cache preparation, agent cache initialization, unlaunched transfer-failure completion, replay-binding validation, worker input acquisition path, HTTP submission, and one live dataset-to-output Docker job passed; dataset fault matrix still pending |
 | D17 sweeps/metrics | D05,D13,D16 | Atomic 27-child sweep; 1000 cap; concurrency; fail-fast; finite scalar export | deterministic expansion, schema constraints, HTTP/CLI submission/replay, scheduler cap/terminal release, fail-fast, bounded CLI/HTTP progress/accepted metrics, CSV/JSON export, real worker metric ingestion, local 27-child success/fail-fast/worker-loss sweeps, immutable project-scoped retry lineage, atomic failed/cancelled-only store/HTTP/client/CLI retry, and local dataset-backed retry execution passed; independent-host gates pending |
-| D18 placement | D07,D17 | Project fairness/aging, blockers, two real independent hosts without oversubscription | durable project round-robin and public 0–3 job priority contract/admission checks passed; aging, blocker history, and independent hosts pending |
+| D18 placement | D07,D17 | Project fairness/aging, blockers, two real independent hosts without oversubscription | durable project round-robin, public 0–3 job priorities, and eligible queue aging checks passed; blocker history and independent hosts pending |
 | D19 faults/benchmarks | D14–D18 | Spec §21/22 runtime matrix, 27-job worker kill, stale result, measured benchmarks | local 27-child worker kill/natural lease recovery and real delayed completion rejection after replacement passed; independent-host evidence, broader fault matrix, and published measurements pending |
 | D20 release | D19 | TLS/auth/permissions, retention, migrations/backups, packaging, tutorial, actual research run | pending |
 
@@ -3129,3 +3129,33 @@ This recorded gap is resolved by D17l/D17m below; the live sweep gate remains op
   the real priority-bearing job and linked sweep retries. Verbose evidence is kept
   locally under ignored `.local/verification/priority-full.log`. Separate-model
   review and `git diff --check` found no blockers. The next slice is priority aging.
+
+### D18c: Promote jobs by eligible queue age
+
+- PostgreSQL ordering regressions first failed at each promotion level, confirming
+  older low-priority work could not advance. Added a bounded effective priority:
+  one level per 10 eligible minutes, capped at 3. Ten minutes is an initial policy
+  choice, not a benchmark-derived optimum. One materialized database wall-time
+  sample governs candidate eligibility and promotion; locked final checks retain
+  their fresh time sample.
+- Age starts at persisted `next_eligible_at`, so execution/backoff do not count,
+  and automatic retries reset promotion age while retaining creation-time FIFO
+  seniority. Linked retry jobs start fresh. Base priority and frozen spec/hash are
+  unchanged. Aging cannot override resource fit, access, quotas, sweep caps, or the
+  durable project rotation. No preemption or start deadline is claimed.
+- Real PostgreSQL checks cover microsecond boundaries at 10/20/30 minutes for all
+  four base levels, negative elapsed time, long waits, and extreme finite timestamps.
+  Promotion is clamped before integer conversion. Fixed timestamp fixtures avoid
+  waiting 30 minutes or introducing a production test clock. Initial promotion and
+  boundary checks passed (2.622 seconds).
+- Added actual completion/reaper retry transitions to check eligibility reset,
+  original identity/FIFO preservation, and aged assignment replay. Extended the
+  project fairness fixture with old high-priority work. Focused PostgreSQL/race
+  checks passed (4.569 seconds). Separate-model review found no blockers.
+- `make test lint smoke` and the complete combined PostgreSQL/Docker/S3-compatible
+  runtime gate passed (store: 45.009 seconds; server: 497.985 seconds), including
+  the local real worker-loss/retry and 27-child sweep scenarios. Temporary idle-sleep
+  inhibition remained active for the combined command; verbose local evidence is
+  under ignored `.local/verification/aging-full.log`. Separate-model review and
+  `git diff --check` found no blockers. Per-job blocker history and independent
+  Linux-host execution remain pending.

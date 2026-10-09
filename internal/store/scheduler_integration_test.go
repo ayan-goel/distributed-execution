@@ -46,6 +46,11 @@ func TestProjectRoundRobinOverridesCrossProjectPriority(t *testing.T) {
 	ctx := context.Background()
 	second := queueAcquisitionJob(t, pool, func(job *spec.Job) { job.Metadata.Project = "second" })
 	secondNext := queueAcquisitionJob(t, pool, func(job *spec.Job) { job.Metadata.Project = "second" })
+	// Give only the high-priority jobs in the first project a long wait; aging
+	// must not spend the next project's turn on another old job in this project.
+	if _, err := pool.Exec(ctx, "UPDATE jobs SET next_eligible_at=clock_timestamp()-interval '1 hour' WHERE id=ANY($1::uuid[])", []string{first.ID, next.ID}); err != nil {
+		t.Fatal(err)
+	}
 	request := AcquisitionRequest{SessionID: registration.SessionID, RequestID: uuid.NewString()}
 	assigned, err := AcquireWork(ctx, pool, worker, request, AcquisitionPolicy{})
 	if err != nil || assigned.Assignment == nil || assigned.Assignment.Authority.JobID != first.ID {

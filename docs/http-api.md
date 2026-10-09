@@ -26,7 +26,8 @@ Job documents accept optional `spec.priority` (integer 0–3, default 0). Sweep
 children inherit `spec.jobTemplate.spec.priority`. Nonzero changes are part of the
 request hash; changing priority with the same key returns 409. Invalid priorities
 return 422 before creating jobs or keys. Priority orders jobs within an eligible
-project and never bypasses admission limits. See the [priority contract](contracts.md#job-priority-d18b).
+project, gains one level per 10 eligible waiting minutes up to 3, and never bypasses
+admission limits. See the [priority contract](contracts.md#job-priority-d18b).
 
 Project mismatches return 403 for submission; looking up another project's UUID
 returns 404. Read-only tokens cannot submit. Registry resolution happens outside
