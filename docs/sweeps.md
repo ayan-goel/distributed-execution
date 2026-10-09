@@ -229,5 +229,14 @@ retains the replacement's accepted ID and metrics.
 The result file contains the attempt ID, so the CLI download proves it received
 replacement bytes distinct from the old worker's still-verified diagnostic object.
 
+A dataset-backed three-child scenario now verifies the separate sweep retry
+command. Natural worker loss exhausts the first child's attempt policy and
+fail-fast cancels the unstarted third child; a held real completion then lets
+the second child succeed. `sweep retry` creates only two new linked jobs, and
+same-key replay preserves their identities. Both finish across the remaining
+workers. CLI downloads contain the frozen uploaded input and each fresh job and
+attempt ID. Original sweep/jobs/attempts/events/completions and its export remain
+unchanged; the lost worker's reservation remains quarantined.
+
 These scenarios share one Docker daemon. Independent Linux hosts, reconciliation
 after these worker kills, and the broader fault matrix remain separate gates.

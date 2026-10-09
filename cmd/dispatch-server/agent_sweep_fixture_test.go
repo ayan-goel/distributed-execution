@@ -171,6 +171,25 @@ func (f *sweepDaemonFixture) startWorkers(t *testing.T, service pb.WorkerService
 			}
 		})
 		dir := filepath.Join(f.root, strconv.Itoa(index))
+		t.Cleanup(func() {
+			// Verified dataset directories stay read-only during execution. Reopen
+			// only this stopped fixture's cache so TempDir can remove its contents.
+			err := filepath.WalkDir(filepath.Join(dir, "work", ".dataset-cache"), func(path string, entry os.DirEntry, walkErr error) error {
+				if os.IsNotExist(walkErr) {
+					return nil
+				}
+				if walkErr != nil {
+					return walkErr
+				}
+				if entry.IsDir() {
+					return os.Chmod(path, 0700)
+				}
+				return nil
+			})
+			if err != nil {
+				t.Error("cannot reopen isolated sweep dataset cache", err)
+			}
+		})
 		for _, name := range []string{"state", "work"} {
 			if err := os.MkdirAll(filepath.Join(dir, name), 0700); err != nil {
 				t.Fatal(err)

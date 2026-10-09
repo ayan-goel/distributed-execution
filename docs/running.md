@@ -308,6 +308,12 @@ failure. Another local 27-child sweep recovers after killing a running worker,
 using natural lease expiry and a replacement on another worker. Independent Linux
 hosts and the broader failure matrix remain open.
 
+The sweep retry command is also verified with a real uploaded dataset and mixed
+source outcomes: one failed after natural worker loss, one successful, and one
+cancelled by fail-fast. Only the failed/cancelled jobs are recreated. Both new
+jobs execute on remaining workers and publish downloadable results containing
+the frozen input and fresh identities. The original history/results remain intact.
+
 A separate three-child test delays a real successful completion before acceptance,
 kills its worker, and lets the natural lease expire. After replacement succeeds,
 the exact old request is rejected over mTLS as `ALREADY_TERMINAL/LOST`. The accepted

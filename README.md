@@ -46,6 +46,8 @@ the broader failure matrix remain to be verified. A separate local test rejects
 a real delayed completion after replacement and downloads the replacement's
 distinct output bytes. `dispatch sweep retry` creates fresh linked jobs only for
 failed/cancelled children while keeping successful results and the original history.
+A local dataset-backed test verifies those retry jobs execute and publish outputs
+across the remaining workers after a worker loss.
 Declared metric outputs are collected into source-bound completion reports.
 Strict scratch limits, full retry policy coverage, and
 other v0.1 gates remain. See the

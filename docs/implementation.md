@@ -33,7 +33,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D14 cancellation | D12,D13 | Both completion/cancellation race orders, repeat requests, uncertain cleanup | pending |
 | D15 logs | D08,D11 | Bounded queues/spool, noisy-job truncation, stream cursors, reconnect | catalog, HTTP cursor/tail gaps, binary format, private spool, Rust registration client, journaled delivery, bounded Docker follower, assembler, completion summary, CLI follow, pre-start capture, and live publication passed; reconnect/fault matrix pending |
 | D16 datasets | D11 | Immutable registration/cache; corruption rejection; pin-aware eviction | ownership schema, upload/completion APIs, project-scoped resolution, real CLI registration, isolated worker cache, atomic store admission bindings, durable replay, archive assignment contract, worker validation, store assignment population, signed RPC grants, strict job-to-wire matching, real read-only Docker mount, startup cache reset, assignment-to-cache preparation, agent cache initialization, unlaunched transfer-failure completion, replay-binding validation, worker input acquisition path, HTTP submission, and one live dataset-to-output Docker job passed; dataset fault matrix still pending |
-| D17 sweeps/metrics | D05,D13,D16 | Atomic 27-child sweep; 1000 cap; concurrency; fail-fast; finite scalar export | deterministic expansion, schema constraints, HTTP/CLI submission/replay, scheduler cap/terminal release, fail-fast, bounded CLI/HTTP progress/accepted metrics, CSV/JSON export, real worker metric ingestion, local 27-child success/fail-fast/worker-loss sweeps, immutable project-scoped retry lineage, and atomic failed/cancelled-only store/HTTP/client/CLI retry passed; live retry execution and independent-host gates pending |
+| D17 sweeps/metrics | D05,D13,D16 | Atomic 27-child sweep; 1000 cap; concurrency; fail-fast; finite scalar export | deterministic expansion, schema constraints, HTTP/CLI submission/replay, scheduler cap/terminal release, fail-fast, bounded CLI/HTTP progress/accepted metrics, CSV/JSON export, real worker metric ingestion, local 27-child success/fail-fast/worker-loss sweeps, immutable project-scoped retry lineage, atomic failed/cancelled-only store/HTTP/client/CLI retry, and local dataset-backed retry execution passed; independent-host gates pending |
 | D18 placement | D07,D17 | Project fairness/aging, blockers, two real independent hosts without oversubscription | pending |
 | D19 faults/benchmarks | D14–D18 | Spec §21/22 runtime matrix, 27-job worker kill, stale result, measured benchmarks | local 27-child worker kill/natural lease recovery and real delayed completion rejection after replacement passed; independent-host evidence, broader fault matrix, and published measurements pending |
 | D20 release | D19 | TLS/auth/permissions, retention, migrations/backups, packaging, tutorial, actual research run | pending |
@@ -3021,3 +3021,37 @@ This recorded gap is resolved by D17l/D17m below; the live sweep gate remains op
   seconds; server: 89.395 seconds). Separate model review corrected wording to
   distinguish terminal job state from physical stop/quarantined cleanup; no
   code blockers remained. `git diff --check` and built CLI help inspection passed.
+
+### D17u: Execute failed/cancelled-only sweep retry with real workers
+
+- Added a real three-child mixed-outcome fixture through CLI admission, native
+  mTLS workers, Docker, PostgreSQL, and versioned SeaweedFS. Killed the first
+  child's agent while its container was RUNNING; the production reaper waits
+  for its unmodified lease to expire. Its one-attempt policy permanently fails
+  that job and fail-fast cancels the unstarted third child.
+- The second child's real successful two-output completion is captured and held
+  in FINALIZING until failure/cancellation are observed, then accepted. Explicit
+  capture/state checks prove this barrier was exercised instead of depending on
+  worker startup timing. The source ends with one failed, one cancelled, and one
+  successful job. The old reservation stays quarantined.
+- CLI retry and same-key replay create two ordered linked jobs with copied specs
+  and exact dataset IDs. Both execute across the remaining two worker identities
+  with fresh generation/attempt numbering, accept results, and release their
+  reservations. Export preserves selected parameters and exact integer metrics;
+  CLI downloads prove frozen input bytes and fresh job/attempt identities. The
+  input directory is changed after upload to distinguish frozen storage data.
+- Full source sweep/job/attempt/event/completion snapshots and export remain
+  byte-identical after retry execution. No successful source job is repeated or
+  replaced, and the lost worker never executes a new retry assignment.
+- The initial runtime run passed behavior assertions but failed TempDir cleanup
+  because verified dataset directories are sealed read-only. Reused the existing
+  dataset-test cleanup pattern inside the shared sweep fixture: stop each worker,
+  then reopen only its isolated cache directories before temporary removal.
+  Separate model review also strengthened the captured-completion assertion.
+  The corrected focused race-enabled test passed (43.64 seconds; package 45.120).
+- This gate uses one Docker Desktop daemon, soft scratch, and a cached digest
+  resolver. Independent Linux hosts, reconciliation of the killed worker, strict
+  scratch, external image resolution, and later release gates remain open.
+- `make test lint smoke` and the full combined PostgreSQL/Docker/S3-compatible
+  storage suite passed (server package: 493.623 seconds). Final read-only model
+  review and `git diff --check` found no remaining blockers.
