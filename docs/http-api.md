@@ -7,6 +7,7 @@
 | `GET /healthz` | none | Database readiness, no tenant data |
 | `POST /v1/jobs` | submit | Validate, resolve image, atomically queue a job |
 | `POST /v1/sweeps` | submit | Resolve a template and atomically queue up to 1,000 ordered children |
+| `GET /v1/sweeps/{id}` | read | Sweep-wide progress and a bounded ordered page of children/accepted metrics |
 | `GET /v1/jobs/{id}` | read | Return project-scoped job state and accepted result metadata |
 | `POST /v1/jobs/{id}/cancel` | submit | Idempotently record project-scoped cancellation intent |
 | `GET /v1/jobs/{id}/artifacts` | read | Accepted outputs with exact-version, 60-second download grants |
@@ -51,7 +52,33 @@ Sweeps have a separate idempotency namespace from jobs. Conflicts return 409,
 oversized documents 413, invalid matrices or policies 422, and missing datasets
 404. The same role checks, response headers, and dependency errors as job admission
 apply. The CLI resolves local template references and uses this endpoint through
-`dispatch sweep submit`; sweep inspection remains under development.
+`dispatch sweep submit`.
+
+## Sweep inspection
+
+`GET /v1/sweeps/{id}` returns `sweep` (identity, name, state, policy, spec hash,
+creation time, and `progress`), `children`, `hasMore`, and `nextCursor`. Progress
+counts cover the whole sweep: `total`, `queued`, `retryWait`, `active`, `cancelling`,
+`succeeded`, `failed`, and `cancelled`. Aggregate state reflects logical job states;
+terminal jobs can still have quarantined physical cleanup pending.
+
+Each child has `id`, `index`, `state`, matrix `parameters`, nullable
+`currentAttemptId`/`acceptedAttemptId`, and accepted successful `metrics`. Failed
+attempt diagnostics are excluded. Metrics are JSON numbers with preserved decimal
+precision. The immutable template is available from the submission response;
+inspection does not repeat it on every page.
+
+Use `limit=1..100` (default 50) and pass the previous `nextCursor` unchanged to
+continue. Child JSON also has a 2 MiB limit, so wide matrices may return fewer
+rows than requested. Children retain stable index order. Counts and children
+share one snapshot per request; progress can advance between pages. `hasMore`
+is false and `nextCursor` is empty at the end. Cursors bind to one sweep and carry
+position only; project authorization is checked on every request.
+
+Unknown/repeated query parameters and malformed, empty, out-of-range, or
+wrong-sweep cursors return 400. Invalid/unknown/foreign sweep IDs return 404.
+Read and submit tokens can inspect their project's sweeps. CLI inspection and
+result export remain under development.
 
 ## Accepted result inspection (D11i)
 
@@ -108,7 +135,7 @@ archive and completes registration through these endpoints. Its recovery
 options reuse the request ID and exact uploaded version after an uncertain
 response. A live CLI-to-Docker integration test verifies dataset-backed job
 execution and output download; broader dataset fault coverage remains pending.
-Job listing, events, sweep inspection, and worker administration
+Job listing, events, and worker administration
 remain required.
 
 ## Evidence

@@ -38,7 +38,8 @@ directory. Dataset-backed jobs now pin project-owned registrations at submission
 refresh signed download grants, and mount verified cache contents read-only.
 The real worker and Docker integration test reads an uploaded dataset and
 publishes its output. Sweeps now support CLI and HTTP submission, concurrency
-limits, and cancellation after permanent failure; progress and export remain in development.
+limits, cancellation after permanent failure, and HTTP progress/metrics inspection.
+Sweep CLI inspection and export remain in development.
 Strict scratch limits, full retry policy coverage, and
 other v0.1 gates remain. See the
 [implementation ledger](docs/implementation.md) for verified progress and remaining work.

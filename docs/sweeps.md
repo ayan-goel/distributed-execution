@@ -9,7 +9,8 @@ events, and idempotency claim in one transaction. The limit is 1,000 children.
 API. Admission freezes its resolved image and project-owned datasets before
 expansion. Identical idempotency-key retries return the same children even when
 the image registry is unavailable. See [HTTP admission](http-api.md#sweep-admission).
-Progress inspection and result export remain under development.
+HTTP progress inspection is available; CLI inspection and result export remain
+under development.
 
 ## CLI submission
 
@@ -35,7 +36,7 @@ before reporting success. Admission does not mean the children have finished.
 
 ## Progress and accepted metrics
 
-The internal `GetSweep` store call reads summary counts and a child page from one
+`GET /v1/sweeps/{id}` reads summary counts and a child page from one
 read-only database snapshot. It returns counts for queued, retrying, active,
 cancelling, succeeded, failed, and cancelled children. Aggregate state remains
 ACTIVE while any child is unfinished; after every child is terminal, failure
@@ -50,7 +51,8 @@ results. Numeric values retain their decimal precision.
 Pages contain at most 100 children and 2 MiB of child JSON. Wide parameters may
 shorten a page; continuation resumes after its last included index. Summary counts
 cover the entire sweep. Separate page requests may observe later child states;
-they retain stable membership and index order. HTTP/CLI inspection is still pending.
+they retain stable membership and index order. Use `limit` and the returned
+`nextCursor` for continuation; see [HTTP inspection](http-api.md#sweep-inspection).
 
 ## Scheduling and failure policy
 
