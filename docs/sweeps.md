@@ -9,7 +9,7 @@ events, and idempotency claim in one transaction. The limit is 1,000 children.
 API. Admission freezes its resolved image and project-owned datasets before
 expansion. Identical idempotency-key retries return the same children even when
 the image registry is unavailable. See [HTTP admission](http-api.md#sweep-admission).
-CLI/HTTP progress inspection is available; result export remains under development.
+CLI/HTTP progress inspection and CSV/JSON result export are available.
 
 ## CLI submission
 
@@ -56,7 +56,6 @@ they retain stable membership and index order. Use `limit` and the returned
 The Go client exposes `GetSweep(ctx, id, cursor, limit)`. It checks summary counts,
 ordered child identities, pagination, and accepted-only finite scalar metrics
 before returning a typed page. Decimal metric tokens retain their precision.
-CSV/JSON export remains under development.
 
 Inspect one page from the terminal:
 
@@ -70,6 +69,32 @@ Text output shows sweep-wide counts, each returned child's parameters/metrics,
 and a `nextCursor` when more children remain. JSON returns the full HTTP page.
 The default limit is 50; use 1–100 and pass the previous cursor unchanged. The
 command reads one page per invocation. Parameters are escaped for terminal safety.
+
+## Result export
+
+```sh
+bin/dispatch sweep export SWEEP_ID > results.json
+bin/dispatch sweep export SWEEP_ID --format csv > results.csv
+```
+
+Export follows all pages and verifies stable identity, ordered membership, and
+completion of the traversal before writing stdout. JSON includes `sweepId`,
+`projectId`, `specHash`, and every child with observed state, parameters, attempt
+references, and accepted metrics. A failed later request returns an error without
+writing an incomplete export. Collection has a 32 MiB JSON size budget; inspect
+bounded pages directly when a result exceeds this limit. This measures encoded
+result size, rather than exact heap usage or final CSV size.
+
+CSV columns are `index`, `jobId`, `state`, `acceptedAttemptId`, `parameters`, then
+sorted `metric.NAME` columns. Missing metrics are blank. `parameters` is a JSON
+object inside a CSV cell, preserving exact strings and preventing spreadsheet
+formula interpretation. Metric values retain their decimal text, though a
+spreadsheet may coerce them when opening the file. CSV allows at most 256 distinct
+metric columns across the sweep; use JSON for wider metric sets.
+
+Pages can observe different points in time while jobs run, so an active export
+can contain unfinished children. Export after the sweep is terminal for final
+comparison. Failed-attempt diagnostics never enter canonical metric columns.
 
 ## Scheduling and failure policy
 

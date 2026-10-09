@@ -96,6 +96,15 @@ func TestHTTPSweepInspectionScopesProgressAndCursors(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &clientPage); err != nil || clientPage.Sweep.ID != created.ID || clientPage.Sweep.Progress.Cancelled != 1 || len(clientPage.Children) != 2 || !clientPage.HasMore {
 		t.Fatal("CLI returned incorrect real sweep progress", stdout.String(), err)
 	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := cli.Run(ctx, []string{"sweep", "export", created.ID}, env, &stdout, &stderr); code != 0 {
+		t.Fatal("CLI export failed against real HTTP/database", code, stderr.String())
+	}
+	var exported client.SweepResults
+	if err := json.Unmarshal(stdout.Bytes(), &exported); err != nil || exported.SweepID != created.ID || len(exported.Children) != 3 || exported.Children[2].State != "CANCELLED" {
+		t.Fatal("CLI export omitted real children", stdout.String(), err)
+	}
 	for _, tc := range []struct {
 		path, token string
 		code        int
