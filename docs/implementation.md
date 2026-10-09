@@ -2664,3 +2664,23 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   resolver outage. `make test lint smoke` and the full isolated PostgreSQL/worker
   suite passed. A separate model review found no required changes.
   Progress inspection, result export, and real multi-host sweep execution remain.
+
+### D17g: Read consistent sweep progress and bounded accepted-result pages
+
+- Internal `GetSweep` scopes the parent and children to a project and reads one
+  repeatable-read snapshot for aggregate counts and ordered child pages. Aggregate
+  state finishes only after all children are terminal. Child metrics follow only
+  accepted successful completion references, preserving decimal numbers rather
+  than converting them to floating point.
+- Pagination caps both rows (100) and child JSON (2 MiB), resuming before an
+  overflow child. A wide 100-child matrix verifies multiple pages cover every
+  child once within the byte limit. Focused PostgreSQL tests also verify mixed
+  queued/retry/cancel/success progress, scope rejection, stable parameter indices,
+  and exact 9007199254740993 metrics while excluding a retry's diagnostics.
+- The initial SQL regression caught the completion manifest's byte storage;
+  metric extraction now converts its validated UTF-8 bytes explicitly to JSON.
+  `make test lint smoke` and the full isolated PostgreSQL/worker suite passed;
+  separate model review found no required changes. An additional focused real
+  database test commits cancellation between the two reads and verifies one
+  page retains the old consistent snapshot while a fresh page sees cancellation.
+  HTTP/CLI inspection and result export remain required.

@@ -33,6 +33,25 @@ stdout; the text form prints the sweep ID and number of children. The client
 checks the resolved template, spec hash, child count, unique child IDs, and cap
 before reporting success. Admission does not mean the children have finished.
 
+## Progress and accepted metrics
+
+The internal `GetSweep` store call reads summary counts and a child page from one
+read-only database snapshot. It returns counts for queued, retrying, active,
+cancelling, succeeded, failed, and cancelled children. Aggregate state remains
+ACTIVE while any child is unfinished; after every child is terminal, failure
+takes precedence over cancellation, followed by success. An untouched sweep is
+QUEUED.
+
+Children are ordered by immutable index and include matrix parameters, state,
+current/accepted attempt IDs, and final metrics from the accepted successful
+completion only. Failed-attempt diagnostic metrics never become canonical sweep
+results. Numeric values retain their decimal precision.
+
+Pages contain at most 100 children and 2 MiB of child JSON. Wide parameters may
+shorten a page; continuation resumes after its last included index. Summary counts
+cover the entire sweep. Separate page requests may observe later child states;
+they retain stable membership and index order. HTTP/CLI inspection is still pending.
+
 ## Scheduling and failure policy
 
 `maxConcurrent` counts child attempts from ASSIGNED through FINALIZING. The
@@ -58,8 +77,9 @@ so independent batch renewals cannot invert the lock order.
 
 ## Verification
 
-Race-enabled PostgreSQL tests cover CLI admission replay, concurrent submission replay, ordered children,
-quota rollback, sweep capacity/backfill and terminal release, both failure policies,
-retry preservation, reaping, session recovery, completion replay, sibling event
-rollback, stop acknowledgement, and observed job-lock ordering. These tests verify
-store behavior; they do not establish a multi-host sweep or public CLI workflow.
+Race-enabled PostgreSQL tests cover CLI admission replay, concurrent submission,
+ordered children, quota rollback, sweep capacity/backfill and terminal release,
+both failure policies, retry preservation, reaping, session recovery, completion
+replay, sibling event rollback, stop acknowledgement, and observed job-lock ordering.
+Progress tests cover accepted-only numeric precision, byte/row pagination, and
+cancellation between snapshot reads. Real multi-host sweep execution remains open.
