@@ -1,6 +1,6 @@
 //! Bounded collection of declared files after confirmed container exit.
 use crate::{execution::ExecutionSpec, runtime::PreparedWorkspace};
-use ring::digest::{Context, SHA256};
+use ring::digest::{digest, Context, SHA256};
 use std::{
     ffi::CString,
     fmt,
@@ -76,6 +76,48 @@ impl CollectedOutput {
     }
     pub fn into_file(self) -> File {
         self.file
+    }
+
+    /// Read validated metric bytes from the held output inode, then rewind for
+    /// upload. Invalid metric syntax returns None so its source can remain a
+    /// diagnostic artifact; I/O or identity changes cannot authorize publication.
+    /// Call off lease/heartbeat tasks because this performs synchronous file I/O.
+    pub fn read_metrics(&mut self) -> Result<Option<Vec<u8>>, CollectionError> {
+        if self.name != "metrics" {
+            return Err(CollectionError::Configuration);
+        }
+        let before = self.file.metadata()?;
+        regular(&before)?;
+        if before.len() != self.size {
+            return Err(CollectionError::Changed);
+        }
+        // A metrics payload has a separate 64 KiB limit. Oversized source files
+        // can still be uploaded as diagnostics without allocating their contents.
+        if self.size > 64 << 10 {
+            return Ok(None);
+        }
+        self.file.rewind()?;
+        let mut body = Vec::with_capacity(self.size as usize);
+        (&mut self.file)
+            .take(self.size + 1)
+            .read_to_end(&mut body)?;
+        let after = self.file.metadata()?;
+        regular(&after)?;
+        let sha256: String = digest(&SHA256, &body)
+            .as_ref()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        // INVARIANT: reported metric bytes must match the exact declared output
+        // size/checksum; never reopen a workload path to obtain another source.
+        if body.len() as u64 != self.size
+            || stamp(&before) != stamp(&after)
+            || sha256 != self.sha256
+        {
+            return Err(CollectionError::Changed);
+        }
+        self.file.rewind()?;
+        Ok(crate::control::valid_metrics(&body).then_some(body))
     }
 }
 

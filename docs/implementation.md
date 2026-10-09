@@ -2762,3 +2762,19 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
   output artifact and durable completion, retaining the source file. It needs
   malformed/oversized/changing-file coverage before live sweep/export evidence.
   No live 27-child success or independent multi-host result is claimed.
+
+### D17l: Read bounded metrics from the collected output inode
+
+- `CollectedOutput::read_metrics` reads only the declared `metrics` output's held
+  file handle, caps allocation at 64 KiB, and rechecks size, checksum, and metadata
+  stability before returning raw bytes. It reuses completion signing's strict
+  numeric-object parser and rewinds the source for artifact upload.
+- Invalid or oversized metric content returns no canonical values while leaving
+  the source available for diagnostic upload. Changed file identity/content is
+  rejected. The reader never reopens a workload path to obtain metric bytes.
+- Tests first failed for the missing reader, then passed for exact whitespace,
+  large integer/exponent tokens, path replacement with a symlink, malformed and
+  oversized retained diagnostics, and same-size/shrink/grow mutations. Separate
+  model review found no blockers. `make test lint smoke` and the Linux worker
+  suite passed, including every new file-reader regression on both platforms.
+  Daemon finalization wiring and live sweep execution remain required.

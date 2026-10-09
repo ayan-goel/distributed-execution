@@ -29,6 +29,7 @@ pub(crate) use uploads::{scoped_key, validate_artifact, validate_finalization};
 pub(crate) use uploads::{valid_version, validate_create, validate_grant};
 mod phase;
 pub use completion_payload::completion_digest;
+pub(crate) use completion_payload::valid_metrics;
 pub(crate) use phase::validate_request as validate_phase_request;
 pub use phase::PhaseStatus;
 pub(crate) use work::{canonical_uuid, lower_hash};

@@ -178,6 +178,10 @@ fn bounded_name(name: &str, metric: bool) -> bool {
         })
 }
 
+pub(crate) fn valid_metrics(body: &[u8]) -> bool {
+    !body.is_empty() && body.len() <= 64 << 10 && serde_json::from_slice::<Metrics>(body).is_ok()
+}
+
 impl<'de> Deserialize<'de> for Metrics {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         struct MetricsVisitor;

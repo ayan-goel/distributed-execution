@@ -70,6 +70,86 @@ fn output(path: &str, required: bool, max: u64) -> serde_json::Value {
     serde_json::json!({"name":"result", "path":path, "required":required, "maxBytes":max})
 }
 
+fn metric_spec(max: u64) -> ExecutionSpec {
+    let mut declaration = output("/outputs/metrics.json", true, max);
+    declaration["name"] = "metrics".into();
+    spec(serde_json::json!([declaration]))
+}
+
+#[test]
+fn metric_source_preserves_exact_bytes_and_original_output_handle() {
+    let f = Fixture::new();
+    let body = b" {\"score\":9007199254740993,\"loss\":1e-3}\n";
+    fs::write(f.0.join("outputs/metrics.json"), body).unwrap();
+    let mut files = collect_outputs(
+        &f.workspace(),
+        &metric_spec(65536),
+        CollectionLimits::default(),
+    )
+    .unwrap();
+    let mut output = files.pop().unwrap();
+    fs::rename(
+        f.0.join("outputs/metrics.json"),
+        f.0.join("outputs/original"),
+    )
+    .unwrap();
+    symlink(f.0.join("scratch"), f.0.join("outputs/metrics.json")).unwrap();
+    assert_eq!(
+        output.read_metrics().unwrap().as_deref(),
+        Some(body.as_slice())
+    );
+    let mut original = Vec::new();
+    output.into_file().read_to_end(&mut original).unwrap();
+    assert_eq!(original, body);
+}
+
+#[test]
+fn invalid_metrics_remain_available_as_diagnostic_artifacts() {
+    let f = Fixture::new();
+    for body in [
+        Vec::new(),
+        b"[]".to_vec(),
+        b"{\"x\":\"1\"}".to_vec(),
+        b"{\"x\":1,\"x\":2}".to_vec(),
+        b"{\"x\":1e999}".to_vec(),
+        b"{\"x\":1e-999}".to_vec(),
+        vec![b' '; 65537],
+    ] {
+        fs::write(f.0.join("outputs/metrics.json"), &body).unwrap();
+        let mut files = collect_outputs(
+            &f.workspace(),
+            &metric_spec(65537),
+            CollectionLimits::default(),
+        )
+        .unwrap();
+        let mut output = files.pop().unwrap();
+        assert!(output.read_metrics().unwrap().is_none());
+        let mut original = Vec::new();
+        output.into_file().read_to_end(&mut original).unwrap();
+        assert_eq!(original, body);
+    }
+}
+
+#[test]
+fn metrics_cannot_be_detached_from_collected_size_and_checksum() {
+    let f = Fixture::new();
+    for changed in [b"{\"x\":2}".as_slice(), b"{}", b"{\"x\":12345}"] {
+        fs::write(f.0.join("outputs/metrics.json"), b"{\"x\":1}").unwrap();
+        let mut files = collect_outputs(
+            &f.workspace(),
+            &metric_spec(65536),
+            CollectionLimits::default(),
+        )
+        .unwrap();
+        let mut output = files.pop().unwrap();
+        fs::write(f.0.join("outputs/metrics.json"), changed).unwrap();
+        assert!(matches!(
+            output.read_metrics(),
+            Err(CollectionError::Changed)
+        ));
+    }
+}
+
 #[test]
 fn hashes_declared_files_and_preserves_open_inode_after_path_replacement() {
     let f = Fixture::new();
