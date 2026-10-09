@@ -33,7 +33,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D14 cancellation | D12,D13 | Both completion/cancellation race orders, repeat requests, uncertain cleanup | pending |
 | D15 logs | D08,D11 | Bounded queues/spool, noisy-job truncation, stream cursors, reconnect | catalog, HTTP cursor/tail gaps, binary format, private spool, Rust registration client, journaled delivery, bounded Docker follower, assembler, completion summary, CLI follow, pre-start capture, and live publication passed; reconnect/fault matrix pending |
 | D16 datasets | D11 | Immutable registration/cache; corruption rejection; pin-aware eviction | ownership schema, upload/completion APIs, project-scoped resolution, real CLI registration, isolated worker cache, atomic store admission bindings, durable replay, archive assignment contract, worker validation, store assignment population, signed RPC grants, strict job-to-wire matching, real read-only Docker mount, startup cache reset, assignment-to-cache preparation, agent cache initialization, unlaunched transfer-failure completion, replay-binding validation, worker input acquisition path, HTTP submission, and one live dataset-to-output Docker job passed; dataset fault matrix still pending |
-| D17 sweeps/metrics | D05,D13,D16 | Atomic 27-child sweep; 1000 cap; concurrency; fail-fast; finite scalar export | deterministic expansion, schema constraints, HTTP/CLI submission/replay, scheduler cap/terminal release, fail-fast, bounded CLI/HTTP progress/accepted metrics, CSV/JSON export, real worker metric ingestion, and local 27-child success/fail-fast/worker-loss sweeps passed; failed-sweep retry links and independent-host gates pending |
+| D17 sweeps/metrics | D05,D13,D16 | Atomic 27-child sweep; 1000 cap; concurrency; fail-fast; finite scalar export | deterministic expansion, schema constraints, HTTP/CLI submission/replay, scheduler cap/terminal release, fail-fast, bounded CLI/HTTP progress/accepted metrics, CSV/JSON export, real worker metric ingestion, local 27-child success/fail-fast/worker-loss sweeps, and immutable project-scoped retry lineage passed; failed-sweep retry operation/API/CLI and independent-host gates pending |
 | D18 placement | D07,D17 | Project fairness/aging, blockers, two real independent hosts without oversubscription | pending |
 | D19 faults/benchmarks | D14–D18 | Spec §21/22 runtime matrix, 27-job worker kill, stale result, measured benchmarks | local 27-child worker kill/natural lease recovery and real delayed completion rejection after replacement passed; independent-host evidence, broader fault matrix, and published measurements pending |
 | D20 release | D19 | TLS/auth/permissions, retention, migrations/backups, packaging, tutorial, actual research run | pending |
@@ -2929,3 +2929,25 @@ This recorded gap is resolved by D17l/D17m below; the live sweep gate remains op
 - `make test lint smoke` and the complete combined PostgreSQL/Docker/object-store
   suite passed (server package: 447.543 seconds). Final documentation review and
   `git diff --check` found no blockers.
+
+### D17q: Preserve project-scoped immutable retry lineage
+
+- User selected retry of failed/cancelled children only, retaining successful
+  original jobs. Added migration 0016 as the prerequisite for fresh linked jobs
+  and a new linked sweep; the executable retry operation/API/CLI remain pending.
+- The initial real PostgreSQL regression reproduced a cross-project parent link
+  being accepted. The migration adds a composite project/job foreign key and
+  immutable job-parent trigger, plus same-project sweep parents protected by
+  existing sweep immutability. Both tables reject self-parent links.
+- Focused race-enabled tests pass for valid chains, ownership/self-parent checks,
+  unchanged links, and rollback/reapply with a real FINALIZING attempt. Its
+  authority, reservation, lease/phase deadlines, and existing job parent survive.
+  Invalid legacy links reject the upgrade atomically without losing data or
+  leaving partial DDL/history. Explicit development rollback discards new sweep
+  parent links and restores the previous job-parent contract.
+- Historical populated upgrade fixtures now roll migration 0016 back before
+  removing its dependencies; the expected embedded migration count is 16.
+- Focused lineage tests, fresh/full-rollback/reapply schema tests, the complete
+  PostgreSQL suite (server package: 92.536 seconds), and `make test lint smoke`
+  passed. Separate model review found no blockers. This slice does not add a
+  retry execution path or claim new object-store/independent-host evidence.

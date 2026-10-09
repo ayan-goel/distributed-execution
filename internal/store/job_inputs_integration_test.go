@@ -16,6 +16,7 @@ import (
 
 func rollbackJobInputs(t *testing.T, ctx context.Context, tx pgx.Tx) {
 	t.Helper()
+	rollbackRetryLineage(t, ctx, tx)
 	sweepDown, err := os.ReadFile("../../migrations/0015_sweeps.down.sql")
 	if err != nil {
 		t.Fatal(err)

@@ -149,6 +149,10 @@ so independent batch renewals cannot invert the lock order.
 A command to retry a failed sweep as new jobs linked to the originals is still
 required for v0.1. Current retry policies replace eligible attempts within their
 existing child jobs; they do not provide that separate sweep retry operation.
+The selected behavior is to create new jobs only for failed/cancelled children,
+preserving successful jobs and all original history. Project-scoped immutable
+job/sweep parent links are now enforced by migration 0016; the retry operation
+and public command are still pending.
 
 ## Verification
 

@@ -170,10 +170,31 @@ indices cannot change after admission. `SubmitSweepResolved`
 creates the sweep, ordered children, input bindings, submission events, and
 idempotency claim in one transaction. A failed quota check rolls the claim
 back; concurrent same-key requests return the same child IDs. HTTP/CLI
-submission stays closed until the remaining failure policy and progress
-transitions are implemented.
+submission, fail-fast, progress inspection, and export are now available; see
+the [sweep guide](sweeps.md) for their contracts and verification scope.
 
 Acquisition now counts each sweep's ASSIGNED through FINALIZING attempts while
 ranking candidates and rechecks the count before reserving a worker. A blocked
-child reports `SWEEP_CONCURRENCY`; another runnable job can backfill. Failure
-policy and terminal progress still need their own transitions.
+child reports `SWEEP_CONCURRENCY`; another runnable job can backfill.
+
+## Retry lineage foundation (D17q)
+
+Migration 0016 adds `sweeps.parent_sweep_id` and hardens the existing
+`jobs.parent_job_id`. Composite foreign keys keep both parent references in the
+same project; self-parent links are rejected. Sweep records already prohibit
+updates, and a new job-parent trigger prevents clearing or rebinding provenance
+after insertion. These constraints preserve links, not an executable retry API.
+
+Valid existing job parents and active attempt ownership/deadlines survive the
+upgrade. A preexisting cross-project or self-parent job makes migration fail
+atomically, leaving the prior schema, migration history, and rows intact.
+The migration never rewrites invalid history to force an upgrade through.
+Explicit development rollback removes the sweep-parent column and its links,
+retains job parents, and restores the previous weaker job-parent constraint.
+No rollback runs automatically.
+
+Real PostgreSQL tests cover valid chains, cross-project/self-parent rejection,
+immutable links, populated rollback/reapply, unchanged active authority, and
+atomic rejection of invalid legacy data. Failed-sweep retry will select only
+failed/cancelled children and create fresh linked jobs; the operation and its
+HTTP/CLI interfaces remain to be implemented.
