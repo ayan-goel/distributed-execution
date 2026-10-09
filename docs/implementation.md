@@ -35,7 +35,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D16 datasets | D11 | Immutable registration/cache; corruption rejection; pin-aware eviction | ownership schema, upload/completion APIs, project-scoped resolution, real CLI registration, isolated worker cache, atomic store admission bindings, durable replay, archive assignment contract, worker validation, store assignment population, signed RPC grants, strict job-to-wire matching, real read-only Docker mount, startup cache reset, assignment-to-cache preparation, agent cache initialization, unlaunched transfer-failure completion, replay-binding validation, worker input acquisition path, HTTP submission, and one live dataset-to-output Docker job passed; dataset fault matrix still pending |
 | D17 sweeps/metrics | D05,D13,D16 | Atomic 27-child sweep; 1000 cap; concurrency; fail-fast; finite scalar export | deterministic expansion, schema constraints, HTTP/CLI submission/replay, scheduler cap/terminal release, fail-fast, bounded CLI/HTTP progress/accepted metrics, CSV/JSON export, real worker metric ingestion, and local 27-child success/fail-fast/worker-loss sweeps passed; failed-sweep retry links and independent-host gates pending |
 | D18 placement | D07,D17 | Project fairness/aging, blockers, two real independent hosts without oversubscription | pending |
-| D19 faults/benchmarks | D14–D18 | Spec §21/22 runtime matrix, 27-job worker kill, stale result, measured benchmarks | local 27-child worker kill and natural lease recovery passed; delayed real completion, broader fault matrix, and published measurements pending |
+| D19 faults/benchmarks | D14–D18 | Spec §21/22 runtime matrix, 27-job worker kill, stale result, measured benchmarks | local 27-child worker kill/natural lease recovery and real delayed completion rejection after replacement passed; independent-host evidence, broader fault matrix, and published measurements pending |
 | D20 release | D19 | TLS/auth/permissions, retention, migrations/backups, packaging, tutorial, actual research run | pending |
 
 ## Release audit (all required)
@@ -2901,3 +2901,31 @@ This recorded gap is resolved by D17l/D17m below; the live sweep gate remains op
   1.576592 seconds after natural expiry. `make test lint smoke`, final lint, and
   the complete combined PostgreSQL/Docker/object-store suite passed (server
   package: 416.750 seconds). Final separate model review found no blockers.
+
+### D19b: Reject a real delayed completion after replacement succeeds
+
+- Added a three-child real-stack scenario that delays the first child's actual
+  successful worker completion before server acceptance. Both declared outputs
+  already have verified immutable versions owned by that attempt. The worker is
+  killed in FINALIZING after its container has stopped, with its natural lease
+  still issued. The production detector expires it and another worker accepts
+  the next generation. This complements D19a's kill during RUNNING.
+- The unchanged old request is replayed through the real worker listener using
+  the killed worker's enrolled TLS leaf and original session/generation. The
+  response is `ALREADY_TERMINAL/LOST` with no accepted manifest. The replacement's
+  canonical manifest is byte-identical before and after replay, only three
+  completions exist across four attempts, and the old attempt has no completion.
+- Each real container writes its unique attempt ID to a required result file.
+  CLI download returns the replacement's bytes and checksum, distinct from the
+  old artifact, while the old exact object version still verifies as diagnostic
+  evidence. Sweep export retains the replacement's accepted ID and exact metrics.
+  Fixture daemon handles expose their existing listener/TLS identity solely for
+  authenticated replay; production code and wire contracts are unchanged.
+- The focused race-enabled PostgreSQL/Docker/object-store test passed in 32.83
+  seconds. Separate model review found no blockers. The scenario uses native
+  workers sharing Docker Desktop with soft scratch and a fixture image resolver;
+  it does not prove independent Linux hosts, killed-worker reconciliation,
+  the remaining fault matrix, or release benchmarks.
+- `make test lint smoke` and the complete combined PostgreSQL/Docker/object-store
+  suite passed (server package: 447.543 seconds). Final documentation review and
+  `git diff --check` found no blockers.

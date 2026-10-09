@@ -297,6 +297,13 @@ failure. Another local 27-child sweep recovers after killing a running worker,
 using natural lease expiry and a replacement on another worker. Independent Linux
 hosts and the broader failure matrix remain open.
 
+A separate three-child test delays a real successful completion before acceptance,
+kills its worker, and lets the natural lease expire. After replacement succeeds,
+the exact old request is rejected over mTLS as `ALREADY_TERMINAL/LOST`. The accepted
+manifest stays unchanged, and CLI download returns the replacement's distinct
+attempt-ID bytes. Old verified output remains diagnostic; fixture cleanup does
+not demonstrate reconciliation of the killed worker.
+
 Worker command integration verifies enrollment/takeover/revocation, then starts
 both actual listeners, registers and reconciles a host over mTLS, restarts the
 command, recovers the same session, and observes revocation on an existing channel.

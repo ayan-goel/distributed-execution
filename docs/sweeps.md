@@ -180,5 +180,15 @@ lost reservation stays quarantined; its container is removed by fixture teardown
 not claimed as reconciled by this test. Export and CLI download verify the
 replacement's accepted metrics and immutable artifact.
 
-These scenarios share one Docker daemon. Independent Linux hosts, delayed old
-completion after replacement, and the broader fault matrix remain separate gates.
+A separate three-child scenario captures an actual successful worker completion
+after both declared outputs are uploaded and verified. It kills that worker in
+FINALIZING, waits for natural lease expiry, and lets another worker finish the
+replacement. Replaying the exact old request through the authenticated mTLS
+listener returns `ALREADY_TERMINAL/LOST` without a canonical manifest. The accepted
+replacement manifest and completion history remain unchanged, and sweep export
+retains the replacement's accepted ID and metrics.
+The result file contains the attempt ID, so the CLI download proves it received
+replacement bytes distinct from the old worker's still-verified diagnostic object.
+
+These scenarios share one Docker daemon. Independent Linux hosts, reconciliation
+after these worker kills, and the broader fault matrix remain separate gates.

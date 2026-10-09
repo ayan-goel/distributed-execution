@@ -123,6 +123,8 @@ func (f *sweepDaemonFixture) submit(t *testing.T, sweep spec.Sweep) store.SweepR
 type sweepTestDaemon struct {
 	workerID string
 	stop     func()
+	endpoint string
+	tls      *tls.Config
 }
 
 func (f *sweepDaemonFixture) startWorkers(t *testing.T, service pb.WorkerServiceServer) []sweepTestDaemon {
@@ -192,7 +194,8 @@ func (f *sweepDaemonFixture) startWorkers(t *testing.T, service pb.WorkerService
 		var stopped sync.Once
 		stop := func() { stopped.Do(func() { _ = command.Process.Kill(); _ = command.Wait() }) }
 		t.Cleanup(stop)
-		daemons = append(daemons, sweepTestDaemon{workerID: worker.WorkerID, stop: stop})
+		daemons = append(daemons, sweepTestDaemon{workerID: worker.WorkerID, stop: stop,
+			endpoint: listener.Addr().String(), tls: &tls.Config{RootCAs: pkis[0].roots, Certificates: []tls.Certificate{pki.client}, MinVersion: tls.VersionTLS13}})
 	}
 	t.Cleanup(func() {
 		if t.Failed() {
