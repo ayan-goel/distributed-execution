@@ -9,10 +9,12 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -32,7 +34,8 @@ type failedContainerInspection struct {
 	HostConfig struct {
 		Memory, MemorySwap int64
 	}
-	err error
+	err    error
+	absent bool
 }
 
 type inspectFailedCompletion struct {
@@ -44,8 +47,14 @@ type inspectFailedCompletion struct {
 func (s *inspectFailedCompletion) CompleteAttempt(ctx context.Context, request *pb.CompleteAttemptRequest) (*pb.CompleteAttemptResponse, error) {
 	var container string
 	var observed failedContainerInspection
-	observed.err = s.pool.QueryRow(ctx, "SELECT container_id FROM attempts WHERE id=$1", request.GetAuthority().GetAttemptId()).Scan(&container)
-	if observed.err == nil {
+	if request.Reason == pb.FailureReason_RUNTIME_UNAVAILABLE && request.ExitCode == nil {
+		var body []byte
+		body, observed.err = exec.CommandContext(ctx, "docker", "ps", "-aq", "--filter", "label=dev.dispatch.attempt="+request.GetAuthority().GetAttemptId()).Output()
+		observed.absent = len(bytes.TrimSpace(body)) == 0
+	} else {
+		observed.err = s.pool.QueryRow(ctx, "SELECT container_id FROM attempts WHERE id=$1", request.GetAuthority().GetAttemptId()).Scan(&container)
+	}
+	if observed.err == nil && container != "" {
 		var body []byte
 		body, observed.err = exec.CommandContext(ctx, "docker", "inspect", "--format", "{{json .}}", container).Output()
 		if observed.err == nil {
@@ -70,7 +79,10 @@ func TestWorkerDaemonDistinguishesOOMFromExit137(t *testing.T) {
 		{"memory_limit", "OOM", []string{"awk", "BEGIN { for (i=0; i<16777216; i++) a[i]=i }"}, true},
 		{"application_exit_137", "APPLICATION_EXIT", []string{"sh", "-c", "exit 137"}, false},
 	} {
-		t.Run(tc.name, func(t *testing.T) { testWorkerDaemonFailure(t, tc.command, nil, tc.reason, 137, tc.oom) })
+		t.Run(tc.name, func(t *testing.T) {
+			exit := int32(137)
+			testWorkerDaemonFailure(t, tc.command, nil, tc.reason, &exit, tc.oom)
+		})
 	}
 }
 
@@ -82,19 +94,33 @@ func TestWorkerDaemonRejectsMissingAndUnsafeRequiredOutputs(t *testing.T) {
 		{"directory", "mkdir /outputs/result"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			exit := int32(0)
 			testWorkerDaemonFailure(t, []string{"sh", "-c", tc.command},
 				[]spec.Output{{Name: "result", Path: "/outputs/result", Required: true, MaxBytes: 4096}},
-				"OUTPUT_INVALID", 0, false)
+				"OUTPUT_INVALID", &exit, false)
 		})
 	}
 }
 
-func testWorkerDaemonFailure(t *testing.T, command []string, outputs []spec.Output, wantReason string, wantExit int32, wantOOM bool) {
+func TestWorkerDaemonReportsRejectedContainerStart(t *testing.T) {
+	testWorkerDaemonFailure(t, []string{"sleep", "120"}, nil, "RUNTIME_UNAVAILABLE", nil, false)
+}
+
+func TestWorkerDaemonClassifiesMissingExecutable(t *testing.T) {
+	exit := int32(127)
+	testWorkerDaemonFailure(t, []string{"/dispatch-no-such-executable"}, nil, "APPLICATION_EXIT", &exit, false)
+}
+
+func testWorkerDaemonFailure(t *testing.T, command []string, outputs []spec.Output, wantReason string, wantExit *int32, wantOOM bool) {
 	t.Helper()
 	configureServerTestDatabase(t)
 	objects := publicationStorage(t, "agent-failure", &publicationEvidence{})
 	pki := testWorkerPKI(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	budget := 60 * time.Second
+	if wantExit == nil {
+		budget = 20 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), budget)
 	defer cancel()
 	docker := func(args ...string) string {
 		t.Helper()
@@ -106,6 +132,17 @@ func testWorkerDaemonFailure(t *testing.T, command []string, outputs []spec.Outp
 	}
 	architecture := docker("version", "--format", "{{.Server.Arch}}")
 	socket := strings.TrimPrefix(docker("context", "inspect", "--format", "{{.Endpoints.docker.Host}}"), "unix://")
+	var rejectedStarts atomic.Int32
+	if wantExit == nil {
+		socket = newDockerOperationProxy(t, socket, func(w http.ResponseWriter, r *http.Request) bool {
+			if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/start") {
+				rejectedStarts.Add(1)
+				http.Error(w, `{"message":"injected start unavailable"}`, http.StatusServiceUnavailable)
+				return true
+			}
+			return false
+		})
+	}
 	image := "rust@sha256:38bc5a86d998772d4aec2348656ed21438d20fcdce2795b56ca434cf21430d89"
 	if exec.CommandContext(ctx, "docker", "image", "inspect", image).Run() != nil {
 		docker("pull", image)
@@ -144,6 +181,9 @@ func testWorkerDaemonFailure(t *testing.T, command []string, outputs []spec.Outp
 	// Retryable infrastructure reasons stay enabled: a classification regression
 	// must not quietly turn a permanent workload failure into another attempt.
 	job.Spec.Retry.MaxAttempts = 2
+	if wantExit == nil {
+		job.Spec.Retry.MaxAttempts = 1
+	}
 	job.Spec.Timeouts.StartupSeconds, job.Spec.Timeouts.ExecutionSeconds, job.Spec.Timeouts.FinalizationSeconds = 30, 30, 15
 	job.Spec.Placement.Labels["architecture"] = architecture
 	_, hash, err := job.Canonical()
@@ -207,10 +247,23 @@ func testWorkerDaemonFailure(t *testing.T, command []string, outputs []spec.Outp
 	case <-ctx.Done():
 		t.Fatal("worker never completed the failed job", logs.String())
 	}
-	if observed.err != nil || observed.State.Running || observed.State.OOMKilled != wantOOM || observed.State.ExitCode != wantExit || observed.HostConfig.Memory != 128<<20 || observed.HostConfig.MemorySwap != 128<<20 {
+	if wantExit == nil && rejectedStarts.Load() != 1 {
+		t.Fatal("start rejection was not observed exactly once", rejectedStarts.Load())
+	}
+	if observed.err != nil {
 		t.Fatalf("unexpected independent Docker exit evidence: %+v", observed)
 	}
-	t.Logf("Docker exit=%d OOMKilled=%t memory=%d swap=%d", observed.State.ExitCode, observed.State.OOMKilled, observed.HostConfig.Memory, observed.HostConfig.MemorySwap)
+	if wantExit == nil {
+		if !observed.absent {
+			t.Fatal("rejected-start container survived before failure acceptance")
+		}
+		t.Log("Docker attempt inventory is empty before failure acceptance")
+	} else {
+		if observed.State.Running || observed.State.OOMKilled != wantOOM || observed.State.ExitCode != *wantExit || observed.HostConfig.Memory != 128<<20 || observed.HostConfig.MemorySwap != 128<<20 {
+			t.Fatalf("unexpected independent Docker exit evidence: %+v", observed)
+		}
+		t.Logf("Docker exit=%d OOMKilled=%t memory=%d swap=%d", observed.State.ExitCode, observed.State.OOMKilled, observed.HostConfig.Memory, observed.HostConfig.MemorySwap)
+	}
 	var attempt string
 	for {
 		var jobState, attemptState, reason, reservation string
@@ -226,7 +279,8 @@ func testWorkerDaemonFailure(t *testing.T, command []string, outputs []spec.Outp
 			t.Fatal(err, logs.String())
 		}
 		if jobState == "FAILED" {
-			if attemptState != "FAILED" || reason != wantReason || exit == nil || *exit != wantExit || reservation != "released" || canonical || cleanup || attempts != 1 || completions != 1 {
+			sameExit := exit == nil && wantExit == nil || exit != nil && wantExit != nil && *exit == *wantExit
+			if attemptState != "FAILED" || reason != wantReason || !sameExit || reservation != "released" || canonical || cleanup || attempts != 1 || completions != 1 {
 				t.Fatal("failure was retried, published, or misclassified", jobState, attemptState, reason, exit, reservation, canonical, cleanup, attempts, completions, logs.String())
 			}
 			break

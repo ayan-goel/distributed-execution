@@ -6,8 +6,9 @@ use crate::{
     dataset_cache_store::{CachePin, CacheStore, CacheStoreError},
     dataset_download::DatasetDownloader,
     finalization::{
-        prepare_cancelled_completion, prepare_completion, prepare_unlaunched_runtime_failure,
-        prepare_unlaunched_transfer_failure, publish_finished_logs, FinalizationError,
+        prepare_cancelled_completion, prepare_completion, prepare_removed_launch_failure,
+        prepare_unlaunched_runtime_failure, prepare_unlaunched_transfer_failure,
+        publish_finished_logs, FinalizationError,
     },
     launch::{execute_with_logs, CleanupEvidence, ExecutionError, LaunchCause},
     runtime::Runtime,
@@ -238,6 +239,13 @@ async fn run_assignment(
     let mut finalizing = match outcome {
         Ok(finalizing) => finalizing,
         Err(error) => {
+            if matches!(&error, ExecutionError::Launch(failed) if matches!(&failed.cause, LaunchCause::Runtime(_)))
+            {
+                complete_removed_launch_failure(context, client, grant).await?;
+                drop(workspace);
+                remove_workspace(path).await?;
+                return Ok(());
+            }
             let Some(cleanup) = confirmed_cancellation(&error) else {
                 return Err(error.into());
             };
@@ -341,6 +349,48 @@ async fn run_assignment(
     context.runtime.remove(finalizing.handle()).await?;
     drop(finalizing);
     remove_workspace(path).await
+}
+
+async fn complete_removed_launch_failure(
+    context: &ExecutionContext<'_>,
+    client: &mut ControlClient,
+    grant: &GrantedAssignment,
+) -> Result<(), AgentError> {
+    let identity = grant
+        .assignment()
+        .authority
+        .as_ref()
+        .ok_or(AgentError::Task)?;
+    let saved = context
+        .journal
+        .load_attempt(identity.attempt_id.clone())
+        .await?
+        .ok_or(AgentError::Task)?;
+    if saved.exit().is_some()
+        || saved.phase_reports().last().map(|r| r.phase)
+            != Some(dispatch_protocol::v1::AttemptState::Starting as i32)
+    {
+        return Err(AgentError::Task);
+    }
+    let container = saved.container_id().ok_or(AgentError::Task)?;
+    // A failed start can leave CREATED or race an ambiguous daemon operation.
+    // Seal stopped evidence only after checked nonforced removal proves absence.
+    context
+        .runtime
+        .remove_stopped_current(identity, container, &grant.assignment().spec_sha256)
+        .await?;
+    prepare_removed_launch_failure(context.journal, identity).await?;
+    let mut reply = deliver_terminal(context.journal, client, &identity.attempt_id).await?;
+    if reply.decision == Decision::StopRequested as i32 {
+        // Cancellation may win while cleanup runs. Retain the rejected runtime
+        // request, then acknowledge the same already-removed container.
+        prepare_cancelled_completion(context.journal, identity, CleanupEvidence::Stopped).await?;
+        reply = deliver_terminal(context.journal, client, &identity.attempt_id).await?;
+    }
+    if !terminal_decision(&reply) {
+        return Err(AgentError::Task);
+    }
+    Ok(())
 }
 
 enum StageReplayError {

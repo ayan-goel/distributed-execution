@@ -222,6 +222,9 @@ lease expires; natural fencing quarantines capacity until replacement cleanup.
 See [worker-leases.md](worker-leases.md#control-channel-partition-gate).
 Real runtime failure gates distinguish OOM from exit 137 and reject missing,
 oversized, symlink, and directory outputs before upload declarations. They also
-verify permanent failure and local cleanup. See [runtime-failures.md](runtime-failures.md).
+verify permanent failure and local cleanup. Rejected Docker starts now report a
+runtime failure after checked removal and independently observed absence; a missing
+executable that actually exits 127 remains an application failure.
+See [runtime-failures.md](runtime-failures.md).
 Strict scratch, independent Linux hosts, and the broader timeout/failure matrix
 remain required for the v0.1 release.

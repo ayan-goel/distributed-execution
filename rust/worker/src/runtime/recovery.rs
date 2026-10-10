@@ -170,14 +170,14 @@ impl DockerRuntime {
         };
         let checked = recover(actual, &authority.worker_id, container_id)?;
         // INVARIANT: current-session cleanup can remove only this journaled,
-        // physically stopped attempt. A running or relabeled container must
-        // block local capacity reuse instead of being force-removed.
+        // non-running attempt. CREATED alone is not stop evidence: a concurrent
+        // start must lose to nonforced removal before absence can release capacity.
         if checked.authority() != authority
             || checked.fingerprint.spec_sha256 != spec_sha256
             || checked.status().running
             || !matches!(
                 checked.status().state,
-                ContainerState::Exited | ContainerState::Dead
+                ContainerState::Created | ContainerState::Exited | ContainerState::Dead
             )
         {
             return Err(RuntimeError::Identity);
@@ -192,7 +192,21 @@ impl DockerRuntime {
         )
         .await
         {
-            Ok(()) | Err(RuntimeError::Daemon(404)) => Ok(()),
+            Ok(())
+            | Err(RuntimeError::Transport | RuntimeError::Deadline)
+            | Err(RuntimeError::Daemon(404 | 409 | 500..=599)) => {}
+            Err(error) => return Err(error),
+        }
+        // Resolve lost delete replies by observation. A successful reply without
+        // absence, or a start that won the race, must retain local capacity.
+        match bounded(
+            RPC_TIMEOUT,
+            self.docker.inspect_container(container_id, None),
+        )
+        .await
+        {
+            Err(RuntimeError::Daemon(404)) => Ok(()),
+            Ok(_) => Err(RuntimeError::Transport),
             Err(error) => Err(error),
         }
     }

@@ -7,8 +7,8 @@ use dispatch_protocol::v1::{
 use dispatch_protocol::v1::{RegisterWorkerRequest, RegisterWorkerResponse, WorkerSession};
 use dispatch_worker::control::completion_digest;
 use dispatch_worker::finalization::{
-    prepare_cancelled_completion, prepare_unlaunched_runtime_failure,
-    prepare_unlaunched_transfer_failure,
+    prepare_cancelled_completion, prepare_removed_launch_failure,
+    prepare_unlaunched_runtime_failure, prepare_unlaunched_transfer_failure,
 };
 use dispatch_worker::journal::{AsyncJournal, Journal, JournalError, JournalLimits};
 use dispatch_worker::launch::CleanupEvidence;
@@ -258,6 +258,70 @@ async fn image_preparation_failure_seals_replayable_unlaunched_runtime_evidence(
         .is_err());
     let saved = journal.load_attempt(ATTEMPT.into()).await.unwrap().unwrap();
     assert_eq!(saved.completion(), Some(&first));
+}
+
+#[tokio::test]
+async fn removed_launch_failure_requires_bound_starting_without_exit_and_replays_exactly() {
+    for (name, bound, exited, running) in [
+        ("unbound", false, false, false),
+        ("removed", true, false, false),
+        ("exited", true, true, false),
+        ("running", true, false, true),
+    ] {
+        let fixture = Fixture::new();
+        let journal = AsyncJournal::new(fixture.open());
+        let identity = assignment().authority.unwrap();
+        journal.persist_assignment(assignment()).await.unwrap();
+        journal
+            .prepare_phase(ATTEMPT.into(), AttemptState::Starting)
+            .await
+            .unwrap();
+        if bound {
+            journal
+                .bind_container(ATTEMPT.into(), "a".repeat(64))
+                .await
+                .unwrap();
+        }
+        if exited {
+            journal
+                .record_exit(ATTEMPT.into(), 127, false)
+                .await
+                .unwrap();
+        }
+        if running {
+            journal
+                .prepare_phase(ATTEMPT.into(), AttemptState::Running)
+                .await
+                .unwrap();
+        }
+        let prepared = prepare_removed_launch_failure(&journal, &identity).await;
+        if name != "removed" {
+            assert!(prepared.is_err(), "{name}");
+            continue;
+        }
+        let first = prepared.unwrap();
+        assert_eq!(first.reason, FailureReason::RuntimeUnavailable as i32);
+        assert!(first.stopped);
+        assert!(!first.logs_complete);
+        assert_eq!(first.exit_code, None);
+        assert_eq!(first.payload_sha256, completion_digest(&first).unwrap());
+        assert_eq!(
+            prepare_removed_launch_failure(&journal, &identity)
+                .await
+                .unwrap(),
+            first
+        );
+        assert!(
+            prepare_cancelled_completion(&journal, &identity, CleanupEvidence::Stopped)
+                .await
+                .is_err()
+        );
+        let mut wrong = identity;
+        wrong.generation += 1;
+        assert!(prepare_removed_launch_failure(&journal, &wrong)
+            .await
+            .is_err());
+    }
 }
 
 #[tokio::test]

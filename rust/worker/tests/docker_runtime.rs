@@ -257,6 +257,12 @@ id -u; printf out; printf err >&2; printf result > /outputs/result; sleep 1
         .unwrap();
     runtime.start(&handle, &lease()).await.unwrap();
     assert!(runtime.remove(&handle).await.is_err());
+    assert_eq!(
+        runtime
+            .remove_stopped_current(&identity, handle.id(), sleeper.sha256())
+            .await,
+        Err(RuntimeError::Identity)
+    );
     // An operator can change live resource settings. Launch must reject drift,
     // but cleanup must still be able to stop our correctly labelled container.
     let admin = bollard::Docker::connect_with_socket(
@@ -344,7 +350,14 @@ id -u; printf out; printf err >&2; printf result > /outputs/result; sleep 1
         runtime.inspect(&handle).await.unwrap().state,
         dispatch_worker::runtime::ContainerState::Created
     );
-    runtime.remove(&handle).await.unwrap();
+    runtime
+        .remove_stopped_current(&identity, handle.id(), sleeper.sha256())
+        .await
+        .unwrap();
+    assert!(matches!(
+        runtime.inspect(&handle).await,
+        Err(RuntimeError::Daemon(404))
+    ));
 }
 
 #[tokio::test]

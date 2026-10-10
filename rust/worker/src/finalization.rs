@@ -16,7 +16,8 @@ use crate::{
     upload::{deliver_output, UploadError},
 };
 use dispatch_protocol::v1::{
-    AttemptAuthority, CompleteAttemptRequest, Decision, FailureReason, LogStream, OutputReference,
+    AttemptAuthority, AttemptState, CompleteAttemptRequest, Decision, FailureReason, LogStream,
+    OutputReference,
 };
 use std::{
     fmt,
@@ -224,6 +225,47 @@ pub async fn prepare_unlaunched_runtime_failure(
     identity: &AttemptAuthority,
 ) -> Result<CompleteAttemptRequest, FinalizationError> {
     prepare_unlaunched_failure(journal, identity, FailureReason::RuntimeUnavailable).await
+}
+
+/// Call only after checked, nonforced removal proves the journaled container absent.
+/// A rejected start has no process exit; sealing that absence permits safe replay.
+pub async fn prepare_removed_launch_failure(
+    journal: &AsyncJournal,
+    identity: &AttemptAuthority,
+) -> Result<CompleteAttemptRequest, FinalizationError> {
+    let saved = journal
+        .load_attempt(identity.attempt_id.clone())
+        .await?
+        .ok_or(FinalizationError::Identity)?;
+    if saved.assignment().authority.as_ref() != Some(identity) {
+        return Err(FinalizationError::Identity);
+    }
+    // INVARIANT: this path cannot replace an observed exit or a later phase
+    // with retryable runtime failure, which could repeat permanent user errors.
+    if saved.container_id().is_none()
+        || saved.exit().is_some()
+        || saved.phase_reports().last().map(|r| r.phase) != Some(AttemptState::Starting as i32)
+    {
+        return Err(FinalizationError::StopUnconfirmed);
+    }
+    if let Some(request) = saved.completion() {
+        return if request.reason == FailureReason::RuntimeUnavailable as i32 && request.stopped {
+            Ok(request.clone())
+        } else {
+            Err(FinalizationError::Identity)
+        };
+    }
+    let mut request = CompleteAttemptRequest {
+        authority: Some(identity.clone()),
+        completion_id: new_uuid()?,
+        reason: FailureReason::RuntimeUnavailable as i32,
+        stopped: true,
+        logs_complete: false,
+        ..Default::default()
+    };
+    request.payload_sha256 = completion_digest(&request).map_err(FinalizationError::Payload)?;
+    journal.persist_completion(request.clone()).await?;
+    Ok(request)
 }
 
 async fn prepare_unlaunched_failure(

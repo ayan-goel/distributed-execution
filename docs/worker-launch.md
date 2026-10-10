@@ -67,6 +67,11 @@ and exclusive owner remain held until that write completes. The parent must cont
 polling launch through error cleanup. Dropping its future or killing the process
 cannot run asynchronous Docker cleanup; restart uses the old-session recovery path.
 
+For a runtime launch error with a bound STARTING container and no recorded exit,
+the agent additionally attempts checked, nonforced removal. Only independently
+observed absence permits a durable `RUNTIME_UNAVAILABLE` completion with no exit
+code. Running containers and ambiguous unbound creation retain uncertainty.
+
 ## Verification scope
 
 Unit fixtures use a real private journal with a deterministic runtime and phase

@@ -24,7 +24,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D05 durable submission | D02,D03 | HTTP/CLI submission; 100 identical requests yield one job; changed payload conflicts | job admission, auth, image resolution, dataset bindings, filtered HTTP/CLI listing, wait exit codes, CLI attempt history, and paginated HTTP events gates passed |
 | D06 worker identities | D03,D04 | Authenticated registration, session takeover/recovery; stale-session rejection | control-plane, Rust client, startup/health loop, operator drain, and project-scoped HTTP/CLI fleet listing gates passed; broader release audit pending |
 | D07 acquisition | D03,D06 | Atomic assignment/reservations; concurrent quota/capacity races; acquisition replay | store, RPC, Rust client, sequential agent loop, and local operator policy switch passed; broader scheduler pending |
-| D08 Docker adapter | D04 | Real bounded create/start/inspect/stop; ambiguous create reconciles one identity | pinned image pulls, staged inputs, RUNNING/FINALIZING coordination, and actual daemon execution passed; strict workspaces pending |
+| D08 Docker adapter | D04 | Real bounded create/start/inspect/stop; ambiguous create reconciles one identity | pinned image pulls, staged inputs, RUNNING/FINALIZING coordination, actual daemon execution, and rejected-start cleanup passed; strict workspaces pending |
 | D09 leases | D06,D07 | Fresh DB-time expiry checks; delayed grants; local monotonic deadline enforcement | deadline, store/RPC/client, watchdog, periodic renewal, daemon execution, production lease reaper, and actual-worker control-channel partition gate passed; independent-host/pause/runtime-failure matrix pending |
 | D10 worker recovery | D08,D09 | Durable journal; agent kill/restart stops old containers before new capacity | agent-owned job kill/restart, fencing, container/workspace cleanup, and reservation release passed; broader recovery matrix pending |
 | D11 artifacts | D03,D04 | Scoped grants; verified exact versions; stale publication rejection | grants, verification, completion, public metadata, and verified CLI download gates passed; Rust transfers and multipart support pending |
@@ -35,7 +35,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D16 datasets | D11 | Immutable registration/cache; corruption rejection; pin-aware eviction | ownership schema, upload/completion APIs, project-scoped resolution, real CLI registration, isolated worker cache, atomic store admission bindings, durable replay, archive assignment contract, worker validation, store assignment population, signed RPC grants, strict job-to-wire matching, real read-only Docker mount, startup cache reset, assignment-to-cache preparation, agent cache initialization, unlaunched transfer-failure completion, replay-binding validation, worker input acquisition path, HTTP submission, and one live dataset-to-output Docker job passed; dataset fault matrix still pending |
 | D17 sweeps/metrics | D05,D13,D16 | Atomic 27-child sweep; 1000 cap; concurrency; fail-fast; finite scalar export | deterministic expansion, schema constraints, HTTP/CLI submission/replay, scheduler cap/terminal release, fail-fast, bounded CLI/HTTP progress/accepted metrics, CSV/JSON export, real worker metric ingestion, local 27-child success/fail-fast/worker-loss sweeps, immutable project-scoped retry lineage, atomic failed/cancelled-only store/HTTP/client/CLI retry, and local dataset-backed retry execution passed; independent-host gates pending |
 | D18 placement | D07,D17 | Project fairness/aging, blockers, two real independent hosts without oversubscription | durable project round-robin, public 0–3 job priorities, eligible queue aging, bounded diagnostic storage, scheduler recording, and public historical blocker status gates passed; independent hosts pending |
-| D19 faults/benchmarks | D14–D18 | Spec §21/22 runtime matrix, 27-job worker kill, stale result, measured benchmarks | local 27-child worker kill/natural lease recovery, delayed completion rejection after replacement, and actual-worker OOM/exit-137 and invalid-output gates passed; independent-host evidence, broader fault matrix, and published measurements pending |
+| D19 faults/benchmarks | D14–D18 | Spec §21/22 runtime matrix, 27-job worker kill, stale result, measured benchmarks | local 27-child worker kill/natural lease recovery, delayed completion rejection after replacement, and actual-worker OOM/exit-137, invalid-output, and rejected-start gates passed; independent-host evidence, broader fault matrix, and published measurements pending |
 | D20 release | D19 | TLS/auth/permissions, retention, migrations/backups, packaging, tutorial, actual research run | pending |
 
 ## Release audit (all required)
@@ -3680,3 +3680,37 @@ This recorded gap is resolved by D17l/D17m below; the live sweep gate remains op
   evidence does not establish nested-path/concurrent filesystem mutation cases,
   dedicated Linux hosts, disk pressure, strict scratch, or the remaining release
   matrix.
+
+
+### D19e: Report rejected container starts after verified removal
+
+- Reproduced a real agent gap: rejecting Docker POST start with HTTP 503 left a
+  journal-bound CREATED container, exited with cleanup uncertainty, and never
+  reported runtime failure. The regression failed before the fix. A missing
+  executable instead really exited 127; retained it as an APPLICATION_EXIT
+  counterexample rather than treating it as a start rejection.
+- Current-session cleanup accepts owned CREATED containers only through nonforced
+  deletion followed by independent absence inspection. Fault tests cover lost
+  deletion replies, surviving containers, and a racing start. Running or relabeled
+  containers remain rejected. The three real Docker component tests passed.
+- Added a durable failure helper requiring matching identity, bound container,
+  STARTING phase, and no exit evidence. It seals RUNTIME_UNAVAILABLE with no exit
+  code, incomplete logs, and a stable completion identity/digest. Journal guards
+  and exact replay passed (28 tests, one existing ignored test).
+- The agent removes the container before sealing/delivering completion and uses
+  the existing cancellation supersession if the server returns STOP_REQUESTED.
+  The actual-worker gate independently checks container absence before acceptance,
+  one completion, no canonical result, released reservations, and local cleanup.
+  It allows one attempt; runtime retry execution and completion-loss/cancellation
+  races on this branch remain separate unverified gates.
+- Final race-enabled regression passed in 87.366 seconds with real PostgreSQL,
+  local versioned object storage, mTLS, and Docker: successful publication,
+  OOM/exit-137, invalid outputs, rejected start, missing executable, restart,
+  startup/execution/finalization deadlines, and control-channel partition.
+  `make test lint smoke`, integration-tagged Go vet, formatting, and diff checks
+  passed. Production cleanup/replay review found no blockers.
+  Evidence: `.local/verification/agent-start-failure-{regression,native,vet}.log`,
+  `start-cleanup-{red,green,docker}.log`, and `start-failure-journal-{red,green}.log`.
+- Updated README and runtime/worker guides. Evidence still uses one Docker Desktop
+  engine and development scratch. Strict Linux quotas, independent hosts, the
+  remaining fault matrix, benchmarks, and release requirements remain open.

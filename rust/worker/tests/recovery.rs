@@ -28,6 +28,10 @@ enum Mode {
     Gone,
     LostDelete,
     PhantomDelete,
+    Created,
+    CreatedPhantomDelete,
+    CreatedLostDelete,
+    CreatedRace,
     Stall,
 }
 
@@ -94,13 +98,24 @@ impl Fixture {
                     };
                     serde_json::json!(vec![serde_json::json!({"Id":"a".repeat(64)}); n])
                 } else if line.starts_with("DELETE ") {
-                    assert!(path.contains("force=true") && path.contains("v=false"));
+                    let current = matches!(
+                        mode,
+                        Mode::Created
+                            | Mode::CreatedPhantomDelete
+                            | Mode::CreatedLostDelete
+                            | Mode::CreatedRace
+                    );
+                    assert!(path.contains(if current { "force=false" } else { "force=true" }));
+                    assert!(path.contains(if current { "v=true" } else { "v=false" }));
                     count.fetch_add(1, Ordering::SeqCst);
-                    gone = mode != Mode::PhantomDelete;
-                    if mode == Mode::LostDelete {
+                    gone = !matches!(
+                        mode,
+                        Mode::PhantomDelete | Mode::CreatedPhantomDelete | Mode::CreatedRace
+                    );
+                    if matches!(mode, Mode::LostDelete | Mode::CreatedLostDelete) {
                         continue;
                     }
-                    status = 204;
+                    status = if mode == Mode::CreatedRace { 409 } else { 204 };
                     serde_json::Value::Null
                 } else if gone {
                     status = 404;
@@ -108,6 +123,18 @@ impl Fixture {
                 } else {
                     inspections += 1;
                     let mut actual = inspection();
+                    if matches!(
+                        mode,
+                        Mode::Created
+                            | Mode::CreatedPhantomDelete
+                            | Mode::CreatedLostDelete
+                            | Mode::CreatedRace
+                    ) {
+                        let running = mode == Mode::CreatedRace && inspections > 1;
+                        actual["State"]["Status"] =
+                            if running { "running" } else { "created" }.into();
+                        actual["State"]["Running"] = running.into();
+                    }
                     if let Mode::Malformed(case) = mode {
                         match case {
                             0 => actual["Id"] = "short".into(),
@@ -173,6 +200,34 @@ fn inspection() -> serde_json::Value {
             "dev.dispatch.attempt":"00000000-0000-0000-0000-000000000004",
             "dev.dispatch.generation":"1","dev.dispatch.spec-sha256":"c".repeat(64),"dev.dispatch.scratch-policy":"soft-development"}},
         "State":{"Status":"running","Running":true,"OOMKilled":false,"ExitCode":0}})
+}
+
+#[tokio::test]
+async fn current_created_cleanup_requires_nonforced_removal_and_observed_absence() {
+    let authority = dispatch_protocol::v1::AttemptAuthority {
+        worker_id: WORKER.into(),
+        session_id: "00000000-0000-0000-0000-000000000002".into(),
+        job_id: "00000000-0000-0000-0000-000000000003".into(),
+        attempt_id: "00000000-0000-0000-0000-000000000004".into(),
+        generation: 1,
+    };
+    for (mode, expected) in [
+        (Mode::Created, Ok(())),
+        (Mode::CreatedLostDelete, Ok(())),
+        (Mode::CreatedPhantomDelete, Err(RuntimeError::Transport)),
+        (Mode::CreatedRace, Err(RuntimeError::Transport)),
+    ] {
+        let fixture = Fixture::new(mode);
+        assert_eq!(
+            fixture
+                .runtime()
+                .await
+                .remove_stopped_current(&authority, &"a".repeat(64), &"c".repeat(64))
+                .await,
+            expected
+        );
+        assert_eq!(fixture.deletes.load(Ordering::SeqCst), 1);
+    }
 }
 
 #[tokio::test]

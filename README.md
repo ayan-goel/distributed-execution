@@ -64,6 +64,7 @@ Workers now pull missing pinned image digests under the assignment's startup
 deadline before staging inputs; cached images are reused.
 The server fences expired startup, execution, and finalization phases with explicit
 timeout reasons and preserves uncertain capacity until cleanup is confirmed.
+Rejected Docker starts report runtime failure after verified container removal.
 A local control-disconnection test verifies workers stop Docker jobs before lease
 expiry and reconcile cleanup before reusing capacity.
 `dispatch workers drain` lets authorized operators stop new assignments for
