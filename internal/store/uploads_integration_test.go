@@ -17,11 +17,15 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func uploadFixture(t *testing.T) (*pgxpool.Pool, WorkerIdentity, UploadRequest) {
+func uploadFixture(t *testing.T, outputLimits ...int64) (*pgxpool.Pool, WorkerIdentity, UploadRequest) {
 	t.Helper()
+	limit := MaxUploadBytes
+	if len(outputLimits) > 0 {
+		limit = outputLimits[0]
+	}
 	pool, id, registration := readyAcquisitionWorker(t)
 	queueAcquisitionJob(t, pool, func(job *spec.Job) {
-		job.Spec.Outputs = []spec.Output{{Name: "result", Path: "/outputs/result", MaxBytes: MaxUploadBytes, Required: true}}
+		job.Spec.Outputs = []spec.Output{{Name: "result", Path: "/outputs/result", MaxBytes: limit, Required: true}}
 	})
 	acquired, err := AcquireWork(context.Background(), pool, id, AcquisitionRequest{SessionID: registration.SessionID, RequestID: uuid.NewString()}, AcquisitionPolicy{})
 	if err != nil || acquired.Assignment == nil {
@@ -44,7 +48,7 @@ func TestUploadMigrationPreservesAnExistingActiveAttempt(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer rollback(tx)
-	for _, name := range []string{"0020_active_deadlines", "0019_job_listing", "0018_queue_blockers", "0017_scheduler_cursor", "0016_retry_lineage", "0015_sweeps", "0014_job_inputs", "0013_datasets", "0012_log_segments", "0011_attempt_completions", "0010_verified_artifacts", "0009_artifact_uploads"} {
+	for _, name := range []string{"0021_multipart_uploads", "0020_active_deadlines", "0019_job_listing", "0018_queue_blockers", "0017_scheduler_cursor", "0016_retry_lineage", "0015_sweeps", "0014_job_inputs", "0013_datasets", "0012_log_segments", "0011_attempt_completions", "0010_verified_artifacts", "0009_artifact_uploads"} {
 		down, err := os.ReadFile("../../migrations/" + name + ".down.sql")
 		if err != nil {
 			t.Fatal(err)

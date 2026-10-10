@@ -3968,3 +3968,29 @@ This recorded gap is resolved by D17l/D17m below; the live sweep gate remains op
   R02 remains open: durable initialization/completion replay, bounded RPCs,
   journaled Rust parts, larger size policy, and a submitted large-output job are
   still required. Public uploads remain single-part with the existing 64 MiB cap.
+
+### R02b: Durable multipart declarations and backend identity
+
+- Migration `0021` adds immutable part sizing and an initialization UUID with a
+  set-once backend upload ID. Internal output declarations allow bounded plans up
+  to 8 GiB while preserving single-part canonical replay and the aggregate
+  attempt budget. Public storage/worker limits remain unchanged.
+- Concurrent declaration replay returns one identity; competing backend bindings
+  produce one winner. Authority is checked with fresh database time after locks.
+  Binding and its event commit atomically, with backend IDs omitted from events.
+  The future coordinator must abort an unused backend upload when binding fails.
+- Race-enabled real PostgreSQL tests prove 16-way replay/binding, expired-owner
+  rejection, unchanged single-part replay/deadlines through downgrade/upgrade,
+  SQL identity protection, and refusal of a lossy multipart downgrade. The final
+  affected store gate passed in 6.247 seconds. Fresh schema, rollback and reapply
+  passed. The initial full store run had exactly two failures from the backend-ID
+  regex constraint; its corrected form passed both cases and upload/migration
+  regressions. Logs: `.local/verification/multipart-state-{store,final,schema-final}.log`.
+- Full Go race tests passed before the final event-order correction; affected
+  store/API/worker API race tests and integration-tagged store vet passed after
+  it. Read-only code review found no blockers. Updated README, multipart guide,
+  and release checklist. R02 remains open for storage coordination and ambiguous
+  completion recovery, bounded RPCs, Rust delivery, and a real large-output job.
+- Final repository `make test lint smoke` passed, including Go race tests, Rust
+  tests, paired protocol checks, vet, Clippy, and all three binary smoke checks.
+  Evidence: `.local/verification/multipart-state-gate.log`.

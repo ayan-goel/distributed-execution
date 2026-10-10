@@ -2,7 +2,8 @@
 
 Specification §13.3 requires multipart outputs above a configurable threshold.
 The storage lifecycle is implemented and verified against the local versioned
-backend. Durable coordination, worker RPCs, Rust delivery, larger object limits,
+backend. Part plans and initialization identities are durable. Completion
+recovery, worker RPCs, Rust delivery, larger object limits,
 and the submitted-job demonstration remain required. The public upload path
 still accepts one part and at most 64 MiB; R02 is not complete.
 
@@ -39,11 +40,33 @@ In-flight part uploads can race abort. The coordinator must stop transfers and
 retry cleanup after capabilities expire if needed. A single successful abort is
 not a claim that no in-flight write can still finish remotely.
 
+## Durable declaration and initialization metadata
+
+Migration `0021` adds immutable part sizing to output declarations and a separate
+multipart identity row. Internal declarations permit up to 8 GiB, with 5–64 MiB
+parts and at most 10,000 parts; the existing 8 GiB aggregate attempt budget still
+applies. Single-part payloads retain their original canonical hash and size cap.
+This metadata limit does not enable larger public uploads or downloads.
+
+`CreateUpload` persists the plan and a stable initialization UUID.
+`BindMultipartUpload` saves one backend upload ID after fresh attempt-authority
+checks. Concurrent identical declarations return the same identity; competing
+backend IDs have one winner, and a repeat of the winner is idempotent. Binding
+and its audit event commit together. Backend IDs are omitted from public events.
+
+The future coordinator must create the declaration before storage initialization,
+perform storage I/O outside the transaction, and bind afterward. A losing or
+fenced initializer must abort its unused backend upload. This slice does not
+recover ambiguous storage responses or implement automatic orphan cleanup.
+The initialization UUID alone is not proof of a completed storage version.
+
+The migration preserves existing single-part replay and attempt deadlines. Its
+downgrade refuses to discard any multipart declaration or identity.
+
 ## Remaining R02 implementation
 
-1. Persist immutable part plans and backend upload identity under the existing
-   attempt-scoped declaration. Serialize concurrent initialization, retain
-   completion intent and the exact completed version, and recover ambiguous
+1. Connect durable initialization metadata to storage calls, retain completion
+   intent and the exact completed version, and recover ambiguous
    create/complete responses without issuing a new accepted identity or guessing
    the latest object. Perform storage I/O outside ownership transactions and
    recheck authority afterward. Preserve upgrade/rollback fixtures.

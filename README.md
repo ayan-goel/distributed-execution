@@ -78,9 +78,10 @@ other v0.1 release gates remain. See the
 [implementation ledger](docs/implementation.md) for verified progress and remaining work.
 The [release checklist](docs/release-checklist.md) tracks the finite remaining
 implementation, fault, benchmark, and packaging deliverables.
-The [multipart storage lifecycle](docs/multipart-uploads.md) now passes real
-version/checksum/abort tests; public worker uploads remain single-part until its
-durable coordination and delivery path are connected.
+The [multipart implementation](docs/multipart-uploads.md) includes verified
+storage operations and durable part plans with a set-once backend upload identity.
+Public worker uploads remain single-part until completion recovery and delivery
+are connected.
 
 ## Development
 

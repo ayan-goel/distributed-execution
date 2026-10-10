@@ -8,6 +8,7 @@ import (
 	"errors"
 	"regexp"
 	"slices"
+	"strings"
 	"time"
 
 	"dispatch.local/dispatch/internal/spec"
@@ -17,6 +18,9 @@ import (
 )
 
 const MaxUploadBytes int64 = 64 << 20
+const MaxMultipartUploadBytes int64 = 8 << 30
+const MinUploadPartBytes int64 = 5 << 20
+const MaxUploadParts = 10000
 const MaxAttemptUploadCount = 1024
 const MaxAttemptUploadBytes int64 = 8 << 30
 
@@ -24,21 +28,24 @@ var ErrUploadLimit = errors.New("attempt upload limit exceeded")
 var uploadNamePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$`)
 
 type UploadRequest struct {
-	Authority   AttemptAuthority `json:"authority"`
-	RequestID   string           `json:"-"`
-	Kind        string           `json:"kind"`
-	LogicalName string           `json:"logicalName"`
-	SizeBytes   int64            `json:"sizeBytes"`
-	SHA256      string           `json:"sha256"`
-	PartCount   int              `json:"partCount"`
+	Authority     AttemptAuthority `json:"authority"`
+	RequestID     string           `json:"-"`
+	Kind          string           `json:"kind"`
+	LogicalName   string           `json:"logicalName"`
+	SizeBytes     int64            `json:"sizeBytes"`
+	SHA256        string           `json:"sha256"`
+	PartCount     int              `json:"partCount"`
+	PartSizeBytes int64            `json:"partSizeBytes,omitempty"`
 }
 type UploadRecord struct {
-	UploadID, ProjectID, ObjectKey string
-	Authority                      AttemptAuthority
-	Kind, LogicalName, SHA256      string
-	SizeBytes                      int64
-	PartCount                      int
-	CreatedAt                      time.Time
+	UploadID, ProjectID, ObjectKey    string
+	Authority                         AttemptAuthority
+	Kind, LogicalName, SHA256         string
+	SizeBytes                         int64
+	PartCount                         int
+	PartSizeBytes                     int64
+	InitializationID, BackendUploadID string
+	CreatedAt                         time.Time
 }
 type UploadResult struct {
 	Decision, State                           string
@@ -48,7 +55,7 @@ type UploadResult struct {
 
 func (r UploadRequest) hash(workerID string) (string, error) {
 	a := r.Authority
-	if !canonicalUUID(r.RequestID) || !canonicalUUID(a.JobID) || !canonicalUUID(a.AttemptID) || !canonicalUUID(a.SessionID) || a.WorkerID != workerID || a.Generation < 1 || !uploadNamePattern.MatchString(r.LogicalName) || !slices.Contains([]string{"OUTPUT", "LOG", "MANIFEST"}, r.Kind) || r.SizeBytes < 0 || r.SizeBytes > MaxUploadBytes || !hashPattern.MatchString(r.SHA256) || r.PartCount != 1 {
+	if !canonicalUUID(r.RequestID) || !canonicalUUID(a.JobID) || !canonicalUUID(a.AttemptID) || !canonicalUUID(a.SessionID) || a.WorkerID != workerID || a.Generation < 1 || !uploadNamePattern.MatchString(r.LogicalName) || !slices.Contains([]string{"OUTPUT", "LOG", "MANIFEST"}, r.Kind) || !hashPattern.MatchString(r.SHA256) || !r.validPartPlan() {
 		return "", ErrInvalid
 	}
 	body, err := json.Marshal(r)
@@ -57,6 +64,17 @@ func (r UploadRequest) hash(workerID string) (string, error) {
 	}
 	sum := sha256.Sum256(append([]byte("dispatch.worker.v1.CreateUpload\n"), body...))
 	return hex.EncodeToString(sum[:]), nil
+}
+
+func (r UploadRequest) validPartPlan() bool {
+	if r.PartCount == 1 {
+		return r.PartSizeBytes == 0 && r.SizeBytes >= 0 && r.SizeBytes <= MaxUploadBytes
+	}
+	// Part sizing is immutable request identity, not a hint a retry may change.
+	// The last part can be shorter; all prior parts satisfy the storage minimum.
+	return r.Kind == "OUTPUT" && r.PartCount >= 2 && r.PartCount <= MaxUploadParts &&
+		r.SizeBytes > 0 && r.SizeBytes <= MaxMultipartUploadBytes && r.PartSizeBytes >= MinUploadPartBytes &&
+		r.PartSizeBytes <= MaxUploadBytes && int64(r.PartCount) == 1+(r.SizeBytes-1)/r.PartSizeBytes
 }
 
 func validateUploadDeclaration(r UploadRequest, job spec.Job, state string) error {
@@ -89,6 +107,19 @@ func validateUploadDeclaration(r UploadRequest, job spec.Job, state string) erro
 // CreateUpload persists a bounded declaration before any storage capability is
 // signed. It does not perform network I/O, renew authority, or accept a result.
 func CreateUpload(ctx context.Context, pool *pgxpool.Pool, id WorkerIdentity, r UploadRequest) (UploadResult, error) {
+	return createUpload(ctx, pool, id, r, "")
+}
+
+// BindMultipartUpload records the server-created backend identity once. A caller
+// losing this race must abort its own unused backend upload outside the transaction.
+func BindMultipartUpload(ctx context.Context, pool *pgxpool.Pool, id WorkerIdentity, r UploadRequest, backendID string) (UploadResult, error) {
+	if r.PartCount < 2 || len(backendID) == 0 || len(backendID) > 1024 || strings.IndexFunc(backendID, func(c rune) bool { return c < 33 || c > 126 }) != -1 {
+		return UploadResult{}, ErrInvalid
+	}
+	return createUpload(ctx, pool, id, r, backendID)
+}
+
+func createUpload(ctx context.Context, pool *pgxpool.Pool, id WorkerIdentity, r UploadRequest, backendID string) (UploadResult, error) {
 	if !canonicalUUID(id.WorkerID) || !canonicalUUID(id.CredentialID) {
 		return UploadResult{}, ErrUnauthorized
 	}
@@ -138,8 +169,8 @@ func CreateUpload(ctx context.Context, pool *pgxpool.Pool, id WorkerIdentity, r 
 	}
 	// Claim only after ownership locks: upload foreign keys must not lock an
 	// attempt ahead of its job. Equal cross-attempt request IDs serialize here.
-	inserted, err := tx.Exec(ctx, `INSERT INTO artifact_uploads(upload_id,project_id,job_id,attempt_id,worker_id,session_id,generation,request_id,request_hash,kind,logical_name,size_bytes,sha256,part_count)
-        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) ON CONFLICT(worker_id,session_id,request_id) DO NOTHING`, uploadID.String(), projectID, r.Authority.JobID, r.Authority.AttemptID, id.WorkerID, r.Authority.SessionID, r.Authority.Generation, r.RequestID, hash, r.Kind, r.LogicalName, r.SizeBytes, r.SHA256, r.PartCount)
+	inserted, err := tx.Exec(ctx, `INSERT INTO artifact_uploads(upload_id,project_id,job_id,attempt_id,worker_id,session_id,generation,request_id,request_hash,kind,logical_name,size_bytes,sha256,part_count,part_size_bytes)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) ON CONFLICT(worker_id,session_id,request_id) DO NOTHING`, uploadID.String(), projectID, r.Authority.JobID, r.Authority.AttemptID, id.WorkerID, r.Authority.SessionID, r.Authority.Generation, r.RequestID, hash, r.Kind, r.LogicalName, r.SizeBytes, r.SHA256, r.PartCount, r.PartSizeBytes)
 	if err != nil {
 		return UploadResult{}, err
 	}
@@ -150,10 +181,18 @@ func CreateUpload(ctx context.Context, pool *pgxpool.Pool, id WorkerIdentity, r 
 	if hash != oldHash {
 		return UploadResult{}, ErrConflict
 	}
-	saved := UploadRequest{Authority: record.Authority, RequestID: r.RequestID, Kind: record.Kind, LogicalName: record.LogicalName, SizeBytes: record.SizeBytes, SHA256: record.SHA256, PartCount: record.PartCount}
+	saved := UploadRequest{Authority: record.Authority, RequestID: r.RequestID, Kind: record.Kind, LogicalName: record.LogicalName, SizeBytes: record.SizeBytes, SHA256: record.SHA256, PartCount: record.PartCount, PartSizeBytes: record.PartSizeBytes}
 	savedHash, err := saved.hash(id.WorkerID)
 	if err != nil || savedHash != oldHash || record.ProjectID != projectID {
 		return UploadResult{}, ErrInvalid
+	}
+	if r.PartCount > 1 {
+		if _, err = tx.Exec(ctx, "INSERT INTO artifact_multipart_uploads(upload_id) VALUES($1) ON CONFLICT(upload_id) DO NOTHING", record.UploadID); err != nil {
+			return UploadResult{}, err
+		}
+		if err = tx.QueryRow(ctx, "SELECT initialization_id::text,COALESCE(backend_upload_id,'') FROM artifact_multipart_uploads WHERE upload_id=$1 FOR UPDATE", record.UploadID).Scan(&record.InitializationID, &record.BackendUploadID); err != nil {
+			return UploadResult{}, err
+		}
 	}
 	// Sample after every ownership/replay lock wait. Transaction-start time or
 	// the original request's grant cannot authorize an expired upload replay.
@@ -182,6 +221,22 @@ func CreateUpload(ctx context.Context, pool *pgxpool.Pool, id WorkerIdentity, r 
 			return UploadResult{}, err
 		}
 	}
+	if backendID != "" {
+		if record.BackendUploadID != "" && record.BackendUploadID != backendID {
+			return UploadResult{}, ErrConflict
+		}
+		if record.BackendUploadID == "" {
+			// INITIALIZING -> bound: ownership was checked after the multipart row
+			// lock. No storage call or wait remains before saving this identity.
+			if _, err = tx.Exec(ctx, "UPDATE artifact_multipart_uploads SET backend_upload_id=$2 WHERE upload_id=$1", record.UploadID, backendID); err != nil {
+				return UploadResult{}, err
+			}
+			record.BackendUploadID = backendID
+			if err = appendMultipartInitialized(ctx, tx, record); err != nil {
+				return UploadResult{}, err
+			}
+		}
+	}
 	if err = tx.Commit(ctx); err != nil {
 		return UploadResult{}, err
 	}
@@ -194,7 +249,7 @@ func CreateUpload(ctx context.Context, pool *pgxpool.Pool, id WorkerIdentity, r 
 func readUpload(ctx context.Context, tx pgx.Tx, worker, session, request string) (UploadRecord, string, error) {
 	var r UploadRecord
 	var hash string
-	err := tx.QueryRow(ctx, `SELECT upload_id::text,project_id::text,object_key,job_id::text,attempt_id::text,worker_id::text,session_id::text,generation,kind,logical_name,size_bytes,sha256,part_count,created_at,request_hash FROM artifact_uploads WHERE worker_id=$1 AND session_id=$2 AND request_id=$3`, worker, session, request).Scan(&r.UploadID, &r.ProjectID, &r.ObjectKey, &r.Authority.JobID, &r.Authority.AttemptID, &r.Authority.WorkerID, &r.Authority.SessionID, &r.Authority.Generation, &r.Kind, &r.LogicalName, &r.SizeBytes, &r.SHA256, &r.PartCount, &r.CreatedAt, &hash)
+	err := tx.QueryRow(ctx, `SELECT upload_id::text,project_id::text,object_key,job_id::text,attempt_id::text,worker_id::text,session_id::text,generation,kind,logical_name,size_bytes,sha256,part_count,part_size_bytes,created_at,request_hash FROM artifact_uploads WHERE worker_id=$1 AND session_id=$2 AND request_id=$3`, worker, session, request).Scan(&r.UploadID, &r.ProjectID, &r.ObjectKey, &r.Authority.JobID, &r.Authority.AttemptID, &r.Authority.WorkerID, &r.Authority.SessionID, &r.Authority.Generation, &r.Kind, &r.LogicalName, &r.SizeBytes, &r.SHA256, &r.PartCount, &r.PartSizeBytes, &r.CreatedAt, &hash)
 	return r, hash, err
 }
 
@@ -208,5 +263,20 @@ func appendUploadEvent(ctx context.Context, tx pgx.Tx, r UploadRecord) error {
 		return err
 	}
 	_, err = tx.Exec(ctx, "INSERT INTO job_events(job_id,sequence,attempt_id,type,payload) VALUES($1,$2,$3,'UPLOAD_CREATED',$4)", r.Authority.JobID, sequence, r.Authority.AttemptID, body)
+	return err
+}
+
+func appendMultipartInitialized(ctx context.Context, tx pgx.Tx, r UploadRecord) error {
+	var sequence int64
+	if err := tx.QueryRow(ctx, "UPDATE jobs SET event_sequence=event_sequence+1 WHERE id=$1 RETURNING event_sequence", r.Authority.JobID).Scan(&sequence); err != nil {
+		return err
+	}
+	// Record the durable initialization transition without exposing the backend
+	// upload ID in public events. Event failure rolls back the binding as well.
+	body, err := json.Marshal(map[string]string{"uploadId": r.UploadID, "initializationId": r.InitializationID})
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, "INSERT INTO job_events(job_id,sequence,attempt_id,type,payload) VALUES($1,$2,$3,'MULTIPART_INITIALIZED',$4)", r.Authority.JobID, sequence, r.Authority.AttemptID, body)
 	return err
 }

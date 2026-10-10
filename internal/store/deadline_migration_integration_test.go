@@ -13,6 +13,7 @@ import (
 
 func rollbackActiveDeadlines(t *testing.T, ctx context.Context, tx pgx.Tx) {
 	t.Helper()
+	rollbackMultipartUploads(t, ctx, tx)
 	down, err := os.ReadFile("../../migrations/0020_active_deadlines.down.sql")
 	if err != nil {
 		t.Fatal(err)
