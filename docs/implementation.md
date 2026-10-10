@@ -3418,3 +3418,22 @@ This recorded gap is resolved by D17l/D17m below; the live sweep gate remains op
   Host-wide maintenance and evidence boundaries are documented in
   worker-administration.md and running.md. No schema or Rust runtime code changed.
   Fleet listing and the full v0.1 release audit remain open.
+
+### D06k: Add bounded read-only fleet snapshots
+
+- Added the internal project-scoped `ListWorkers` query, ordered by worker UUID.
+  A read-only repeatable snapshot returns observed health, drain, heartbeat time,
+  labels, advertised capacity, global active/quarantined reservations, and clamped
+  free headroom. It takes no scheduler locks and writes no lifecycle state.
+- Pages accept 1–100 workers and bound escaped JSON to 1 MiB with 1 KiB reserved
+  for a future public envelope. Continuation uses the last returned UUID, so
+  membership removal cannot strand later hosts. Shared-host reservations include
+  other projects without job identities, credentials, or session details.
+- Initial checks failed for the missing query. Focused PostgreSQL/race checks
+  passed (2.027 seconds), covering assignment, quarantine/release accounting,
+  reduced claims, shared hosts, large escaped labels, and complete traversal after
+  membership removal. Fixture SQL advances time and marks release for accounting;
+  it does not prove runtime cleanup. Full store regressions passed (50.089 seconds)
+  and native test/lint/smoke gates passed. Review found no blockers.
+- Evidence: ignored `.local/verification/worker-listing-{red,store,store-bounds,postgres,native-final}.log`.
+  HTTP and CLI exposure is the next dependent slice; the release audit remains open.
