@@ -3,9 +3,11 @@
 Specification §13.3 requires multipart outputs above a configurable threshold.
 The storage lifecycle is implemented and verified against the local versioned
 backend. Part plans, initialization identities, and completion intent/version
-are durable. Public coordination, worker RPCs, Rust delivery, larger object limits,
-and the submitted-job demonstration remain required. The public upload path
-still accepts one part and at most 64 MiB; R02 is not complete.
+are durable. The authenticated worker API coordinates multipart initialization,
+individual part grants, completion recovery, and verified publication. Paired
+Rust client contracts are implemented; automatic journaled delivery, larger
+object limits, and the submitted-job demonstration remain required. Public
+uploads retain the 64 MiB cap; R02 is not complete.
 
 ## Storage lifecycle
 
@@ -67,10 +69,12 @@ checks. Concurrent identical declarations return the same identity; competing
 backend IDs have one winner, and a repeat of the winner is idempotent. Binding
 and its audit event commit together. Backend IDs are omitted from public events.
 
-The future coordinator must create the declaration before storage initialization,
-perform storage I/O outside the transaction, and bind afterward. A losing or
-fenced initializer must abort its unused backend upload. This slice does not
-recover ambiguous storage responses or implement automatic orphan cleanup.
+The coordinator creates the declaration before storage initialization, performs
+storage I/O outside the transaction, and binds afterward. A confirmed losing or
+fenced initializer aborts its unused backend upload with a separate bounded
+context. A generic binding error can hide a successful database commit, so it
+preserves the backend for replay or reconciliation. Ambiguous storage creation
+responses and automatic orphan cleanup remain unresolved.
 The initialization UUID alone is not proof of a completed storage version.
 Only the winning backend identity may receive part grants or completion calls;
 unused initializers must be aborted. Recovery rejects multiple completed versions
@@ -101,7 +105,7 @@ accept a job result.
 to use this stored version. The existing trusted full-byte verifier and fenced
 artifact transaction still apply. Another version with matching bytes cannot
 substitute for the completed version. These internal paths currently retain the
-64 MiB artifact limit; larger size policy and public worker integration remain
+64 MiB artifact limit; larger size policy and automatic Rust delivery remain
 pending.
 
 ## Durable part grants
@@ -114,22 +118,41 @@ immutable declaration. A completed upload cannot acquire another part grant.
 Completion intent must match every previously declared part hash in both Go and
 SQL. The migration backfills part hashes from existing completion intents and
 refuses to discard any bound part evidence on downgrade. This is the metadata
-prerequisite for bounded part RPCs; it does not yet issue public capabilities.
+prerequisite for bounded part RPCs.
+
+## Authenticated worker API
+
+`CreateUpload` accepts an OUTPUT plan with `part_count` and `part_size_bytes`.
+Initialization returns the stable public upload ID, object key, and plan; it
+returns no inline part capabilities or backend upload ID. Equal retries return
+the winning binding after a fresh authority check.
+
+`GrantUploadPart` accepts the attempt authority, public upload ID, part number,
+and lowercase SHA-256. It persists the content identity before signing one
+30-second PUT capability with its required headers and expiry. It rechecks
+authority after signing, so cancellation or fencing during storage I/O prevents
+delivery. Changing the checksum for an already bound part conflicts.
+
+Multipart `FinalizeUpload` takes the expected key, full size and SHA-256 with an
+empty version, plus ordered part numbers, ETags, and checksums. It binds the
+expected object and part evidence to durable completion intent, completes or
+recovers the identified storage version, then verifies every byte before fenced
+artifact publication. A replay returns the same artifact and exact version.
+Single-part requests retain their existing version-bearing contract.
+
+Rust's control client validates these requests and responses, including plan
+consistency, consecutive parts, checksums, capability bounds, and returned exact
+versions. The current worker transfer loop still requests single-part uploads.
 
 ## Remaining R02 implementation
 
-1. Connect the durable initialization/completion paths to identified storage calls
-   and recovery, handling ambiguous create/complete responses without issuing a
-   new accepted identity. Preserve the transaction boundaries and fresh authority
-   checks in the public coordinator.
-2. Add bounded part-grant/completion RPCs and paired Go/Rust protocol validation.
-   Avoid returning thousands of capabilities in one message. Bind part evidence
-   to durable declarations and reject changed replay payloads or fenced owners.
-3. Wire journaled Rust part delivery with configurable threshold/part sizing,
+1. Reconcile unknown storage creation/binding outcomes and abandoned initializers
+   through R03 cleanup without deleting the winning backend identity.
+2. Wire journaled Rust part delivery with configurable threshold/part sizing,
    bounded concurrency, source hashing, same-content retries, cancellation and
    lease/finalization deadlines. Extend object-size policy together with
    verification/download bounds; changing only the upload cap is insufficient.
-4. Run a submitted job exceeding the old 64 MiB cap, retrieve its exact result,
+3. Run a submitted job exceeding the old 64 MiB cap, retrieve its exact result,
    and inject lost responses, interrupted transfers, and stale completion.
    Connect abandoned-upload cleanup to R03 retention.
 
@@ -137,6 +160,13 @@ Each step is a verified slice of the same release feature. None is satisfied by
 the low-level storage gate alone.
 
 ## Observed evidence
+
+The real mTLS worker test initializes a two-part output, uploads both signed
+checksum-bound parts, rejects changed checksum replay, and verifies the exact
+completed version and stable finalization replay. Cancellation prevents another
+part capability. A focused regression preserves the backend on generic binding
+errors; five Go-to-Rust-to-Go fixtures preserve initialization, part grant, and
+completion fields.
 
 The real storage gate creates two multipart versions of one object, checks each
 with full SHA-256, rejects altered part content, and confirms a wrong full hash

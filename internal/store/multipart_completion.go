@@ -25,6 +25,7 @@ type MultipartCompletionRequest struct {
 	RequestID string                    `json:"-"`
 	UploadID  string                    `json:"uploadId"`
 	Parts     []MultipartCompletionPart `json:"parts"`
+	Object    *ArtifactObject           `json:"object,omitempty"`
 }
 
 type MultipartCompletionResult struct {
@@ -45,6 +46,9 @@ func (r MultipartCompletionRequest) hash(worker string) (string, error) {
 		if p.Number != i+1 || !validMultipartValue(p.ETag) || !hashPattern.MatchString(p.SHA256) {
 			return "", ErrInvalid
 		}
+	}
+	if o := r.Object; o != nil && (o.Version != "" || o.SizeBytes < 0 || o.SizeBytes > MaxUploadBytes || !artifactKeyPattern.MatchString(o.Key) || len(o.Key) > 1024 || !hashPattern.MatchString(o.SHA256)) {
+		return "", ErrInvalid
 	}
 	body, err := json.Marshal(r)
 	if err != nil {
@@ -67,6 +71,10 @@ func CompleteMultipartUpload(ctx context.Context, pool *pgxpool.Pool, id WorkerI
 	// Snapshot caller-owned slices before hashing or passing them across storage
 	// work; a callback must not change the intent used by the second transaction.
 	r.Parts = slices.Clone(r.Parts)
+	if r.Object != nil {
+		object := *r.Object
+		r.Object = &object
+	}
 	hash, err := r.hash(id.WorkerID)
 	if err != nil || complete == nil {
 		return MultipartCompletionResult{}, ErrInvalid
@@ -116,6 +124,9 @@ func multipartCompletionTx(ctx context.Context, pool *pgxpool.Pool, id WorkerIde
 		return MultipartCompletionResult{}, err
 	}
 	if upload.PartCount != len(r.Parts) {
+		return MultipartCompletionResult{}, ErrInvalid
+	}
+	if r.Object != nil && *r.Object != (ArtifactObject{Key: upload.ObjectKey, SizeBytes: upload.SizeBytes, SHA256: upload.SHA256}) {
 		return MultipartCompletionResult{}, ErrInvalid
 	}
 	body, err := json.Marshal(r.Parts)

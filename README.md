@@ -82,7 +82,8 @@ The [multipart implementation](docs/multipart-uploads.md) includes verified
 storage operations, recovery after lost completion replies, and durable part plans
 and completion versions. Part retries bind immutable hashes; multipart verification
 requires the stored exact version.
-Public worker uploads remain single-part until RPCs and delivery are connected.
+The authenticated API supports multipart uploads within the current 64 MiB cap.
+Automatic Rust multipart delivery and larger-file support remain in progress.
 
 ## Development
 

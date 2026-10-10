@@ -21,13 +21,20 @@ func (s *Service) FinalizeUpload(ctx context.Context, r *pb.FinalizeUploadReques
 		return nil, err
 	}
 	a, o := r.GetAuthority(), r.GetObject()
-	if a.GetGeneration() > math.MaxInt64 || o == nil || o.GetSizeBytes() > uint64(store.MaxUploadBytes) || len(r.GetParts()) != 0 {
+	if a.GetGeneration() > math.MaxInt64 || o == nil || o.GetSizeBytes() > uint64(store.MaxUploadBytes) || len(r.GetParts()) == 1 || len(r.GetParts()) > store.MaxUploadParts || len(r.GetParts()) > 0 && o.GetVersionId() != "" {
 		return nil, rpcError(store.ErrInvalid)
 	}
 	if s.objects == nil {
 		return nil, status.Error(codes.FailedPrecondition, "OBJECT_STORAGE_NOT_CONFIGURED")
 	}
 	request := store.FinalizeUploadRequest{Authority: store.AttemptAuthority{JobID: a.GetJobId(), AttemptID: a.GetAttemptId(), WorkerID: a.GetWorkerId(), SessionID: a.GetSessionId(), Generation: int64(a.GetGeneration())}, RequestID: r.GetRequestId(), UploadID: r.GetUploadId(), Object: store.ArtifactObject{Key: o.GetKey(), Version: o.GetVersionId(), SizeBytes: int64(o.GetSizeBytes()), SHA256: o.GetSha256()}}
+	if len(r.GetParts()) > 0 {
+		version, err := s.completeMultipart(ctx, id, r, request)
+		if err != nil {
+			return nil, err
+		}
+		request.Object.Version = version
+	}
 	// The store invokes this only after matching durable upload scope, with no
 	// transaction open, and must recheck authority before recording its success.
 	result, err := store.FinalizeUpload(ctx, s.pool, id, request, func(ctx context.Context, o store.ArtifactObject) error {

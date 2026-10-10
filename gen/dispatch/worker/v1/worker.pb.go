@@ -1810,6 +1810,7 @@ type CreateUploadRequest struct {
 	SizeBytes     uint64                 `protobuf:"varint,5,opt,name=size_bytes,json=sizeBytes,proto3" json:"size_bytes,omitempty"`
 	Sha256        string                 `protobuf:"bytes,6,opt,name=sha256,proto3" json:"sha256,omitempty"`
 	PartCount     uint32                 `protobuf:"varint,7,opt,name=part_count,json=partCount,proto3" json:"part_count,omitempty"`
+	PartSizeBytes uint64                 `protobuf:"varint,8,opt,name=part_size_bytes,json=partSizeBytes,proto3" json:"part_size_bytes,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1893,17 +1894,95 @@ func (x *CreateUploadRequest) GetPartCount() uint32 {
 	return 0
 }
 
-type UploadPart struct {
+func (x *CreateUploadRequest) GetPartSizeBytes() uint64 {
+	if x != nil {
+		return x.PartSizeBytes
+	}
+	return 0
+}
+
+// One part capability per call keeps replies bounded independently of file size.
+type GrantUploadPartRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Number        uint32                 `protobuf:"varint,1,opt,name=number,proto3" json:"number,omitempty"`
-	Url           string                 `protobuf:"bytes,2,opt,name=url,proto3" json:"url,omitempty"`
+	Authority     *AttemptAuthority      `protobuf:"bytes,1,opt,name=authority,proto3" json:"authority,omitempty"`
+	UploadId      string                 `protobuf:"bytes,2,opt,name=upload_id,json=uploadId,proto3" json:"upload_id,omitempty"`
+	Number        uint32                 `protobuf:"varint,3,opt,name=number,proto3" json:"number,omitempty"`
+	Sha256        string                 `protobuf:"bytes,4,opt,name=sha256,proto3" json:"sha256,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
+func (x *GrantUploadPartRequest) Reset() {
+	*x = GrantUploadPartRequest{}
+	mi := &file_dispatch_worker_v1_worker_proto_msgTypes[21]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GrantUploadPartRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GrantUploadPartRequest) ProtoMessage() {}
+
+func (x *GrantUploadPartRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_dispatch_worker_v1_worker_proto_msgTypes[21]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GrantUploadPartRequest.ProtoReflect.Descriptor instead.
+func (*GrantUploadPartRequest) Descriptor() ([]byte, []int) {
+	return file_dispatch_worker_v1_worker_proto_rawDescGZIP(), []int{21}
+}
+
+func (x *GrantUploadPartRequest) GetAuthority() *AttemptAuthority {
+	if x != nil {
+		return x.Authority
+	}
+	return nil
+}
+
+func (x *GrantUploadPartRequest) GetUploadId() string {
+	if x != nil {
+		return x.UploadId
+	}
+	return ""
+}
+
+func (x *GrantUploadPartRequest) GetNumber() uint32 {
+	if x != nil {
+		return x.Number
+	}
+	return 0
+}
+
+func (x *GrantUploadPartRequest) GetSha256() string {
+	if x != nil {
+		return x.Sha256
+	}
+	return ""
+}
+
+type UploadPart struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	Number          uint32                 `protobuf:"varint,1,opt,name=number,proto3" json:"number,omitempty"`
+	Url             string                 `protobuf:"bytes,2,opt,name=url,proto3" json:"url,omitempty"`
+	RequiredHeaders map[string]string      `protobuf:"bytes,3,rep,name=required_headers,json=requiredHeaders,proto3" json:"required_headers,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	ExpiresUnixMs   int64                  `protobuf:"varint,4,opt,name=expires_unix_ms,json=expiresUnixMs,proto3" json:"expires_unix_ms,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
 func (x *UploadPart) Reset() {
 	*x = UploadPart{}
-	mi := &file_dispatch_worker_v1_worker_proto_msgTypes[21]
+	mi := &file_dispatch_worker_v1_worker_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1915,7 +1994,7 @@ func (x *UploadPart) String() string {
 func (*UploadPart) ProtoMessage() {}
 
 func (x *UploadPart) ProtoReflect() protoreflect.Message {
-	mi := &file_dispatch_worker_v1_worker_proto_msgTypes[21]
+	mi := &file_dispatch_worker_v1_worker_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1928,7 +2007,7 @@ func (x *UploadPart) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UploadPart.ProtoReflect.Descriptor instead.
 func (*UploadPart) Descriptor() ([]byte, []int) {
-	return file_dispatch_worker_v1_worker_proto_rawDescGZIP(), []int{21}
+	return file_dispatch_worker_v1_worker_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *UploadPart) GetNumber() uint32 {
@@ -1945,6 +2024,20 @@ func (x *UploadPart) GetUrl() string {
 	return ""
 }
 
+func (x *UploadPart) GetRequiredHeaders() map[string]string {
+	if x != nil {
+		return x.RequiredHeaders
+	}
+	return nil
+}
+
+func (x *UploadPart) GetExpiresUnixMs() int64 {
+	if x != nil {
+		return x.ExpiresUnixMs
+	}
+	return 0
+}
+
 type CreateUploadResponse struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
 	UploadId        string                 `protobuf:"bytes,1,opt,name=upload_id,json=uploadId,proto3" json:"upload_id,omitempty"`
@@ -1953,13 +2046,15 @@ type CreateUploadResponse struct {
 	RequiredHeaders map[string]string      `protobuf:"bytes,4,rep,name=required_headers,json=requiredHeaders,proto3" json:"required_headers,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	ExpiresUnixMs   int64                  `protobuf:"varint,5,opt,name=expires_unix_ms,json=expiresUnixMs,proto3" json:"expires_unix_ms,omitempty"`
 	Parts           []*UploadPart          `protobuf:"bytes,6,rep,name=parts,proto3" json:"parts,omitempty"`
+	PartSizeBytes   uint64                 `protobuf:"varint,7,opt,name=part_size_bytes,json=partSizeBytes,proto3" json:"part_size_bytes,omitempty"`
+	PartCount       uint32                 `protobuf:"varint,8,opt,name=part_count,json=partCount,proto3" json:"part_count,omitempty"`
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
 }
 
 func (x *CreateUploadResponse) Reset() {
 	*x = CreateUploadResponse{}
-	mi := &file_dispatch_worker_v1_worker_proto_msgTypes[22]
+	mi := &file_dispatch_worker_v1_worker_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1971,7 +2066,7 @@ func (x *CreateUploadResponse) String() string {
 func (*CreateUploadResponse) ProtoMessage() {}
 
 func (x *CreateUploadResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_dispatch_worker_v1_worker_proto_msgTypes[22]
+	mi := &file_dispatch_worker_v1_worker_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1984,7 +2079,7 @@ func (x *CreateUploadResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateUploadResponse.ProtoReflect.Descriptor instead.
 func (*CreateUploadResponse) Descriptor() ([]byte, []int) {
-	return file_dispatch_worker_v1_worker_proto_rawDescGZIP(), []int{22}
+	return file_dispatch_worker_v1_worker_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *CreateUploadResponse) GetUploadId() string {
@@ -2029,17 +2124,32 @@ func (x *CreateUploadResponse) GetParts() []*UploadPart {
 	return nil
 }
 
+func (x *CreateUploadResponse) GetPartSizeBytes() uint64 {
+	if x != nil {
+		return x.PartSizeBytes
+	}
+	return 0
+}
+
+func (x *CreateUploadResponse) GetPartCount() uint32 {
+	if x != nil {
+		return x.PartCount
+	}
+	return 0
+}
+
 type CompletedPart struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Number        uint32                 `protobuf:"varint,1,opt,name=number,proto3" json:"number,omitempty"`
 	Etag          string                 `protobuf:"bytes,2,opt,name=etag,proto3" json:"etag,omitempty"`
+	Sha256        string                 `protobuf:"bytes,3,opt,name=sha256,proto3" json:"sha256,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *CompletedPart) Reset() {
 	*x = CompletedPart{}
-	mi := &file_dispatch_worker_v1_worker_proto_msgTypes[23]
+	mi := &file_dispatch_worker_v1_worker_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2051,7 +2161,7 @@ func (x *CompletedPart) String() string {
 func (*CompletedPart) ProtoMessage() {}
 
 func (x *CompletedPart) ProtoReflect() protoreflect.Message {
-	mi := &file_dispatch_worker_v1_worker_proto_msgTypes[23]
+	mi := &file_dispatch_worker_v1_worker_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2064,7 +2174,7 @@ func (x *CompletedPart) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CompletedPart.ProtoReflect.Descriptor instead.
 func (*CompletedPart) Descriptor() ([]byte, []int) {
-	return file_dispatch_worker_v1_worker_proto_rawDescGZIP(), []int{23}
+	return file_dispatch_worker_v1_worker_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *CompletedPart) GetNumber() uint32 {
@@ -2077,6 +2187,13 @@ func (x *CompletedPart) GetNumber() uint32 {
 func (x *CompletedPart) GetEtag() string {
 	if x != nil {
 		return x.Etag
+	}
+	return ""
+}
+
+func (x *CompletedPart) GetSha256() string {
+	if x != nil {
+		return x.Sha256
 	}
 	return ""
 }
@@ -2094,7 +2211,7 @@ type FinalizeUploadRequest struct {
 
 func (x *FinalizeUploadRequest) Reset() {
 	*x = FinalizeUploadRequest{}
-	mi := &file_dispatch_worker_v1_worker_proto_msgTypes[24]
+	mi := &file_dispatch_worker_v1_worker_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2106,7 +2223,7 @@ func (x *FinalizeUploadRequest) String() string {
 func (*FinalizeUploadRequest) ProtoMessage() {}
 
 func (x *FinalizeUploadRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_dispatch_worker_v1_worker_proto_msgTypes[24]
+	mi := &file_dispatch_worker_v1_worker_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2119,7 +2236,7 @@ func (x *FinalizeUploadRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FinalizeUploadRequest.ProtoReflect.Descriptor instead.
 func (*FinalizeUploadRequest) Descriptor() ([]byte, []int) {
-	return file_dispatch_worker_v1_worker_proto_rawDescGZIP(), []int{24}
+	return file_dispatch_worker_v1_worker_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *FinalizeUploadRequest) GetAuthority() *AttemptAuthority {
@@ -2167,7 +2284,7 @@ type FinalizeUploadResponse struct {
 
 func (x *FinalizeUploadResponse) Reset() {
 	*x = FinalizeUploadResponse{}
-	mi := &file_dispatch_worker_v1_worker_proto_msgTypes[25]
+	mi := &file_dispatch_worker_v1_worker_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2179,7 +2296,7 @@ func (x *FinalizeUploadResponse) String() string {
 func (*FinalizeUploadResponse) ProtoMessage() {}
 
 func (x *FinalizeUploadResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_dispatch_worker_v1_worker_proto_msgTypes[25]
+	mi := &file_dispatch_worker_v1_worker_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2192,7 +2309,7 @@ func (x *FinalizeUploadResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FinalizeUploadResponse.ProtoReflect.Descriptor instead.
 func (*FinalizeUploadResponse) Descriptor() ([]byte, []int) {
-	return file_dispatch_worker_v1_worker_proto_rawDescGZIP(), []int{25}
+	return file_dispatch_worker_v1_worker_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *FinalizeUploadResponse) GetArtifactId() string {
@@ -2220,7 +2337,7 @@ type LogGap struct {
 
 func (x *LogGap) Reset() {
 	*x = LogGap{}
-	mi := &file_dispatch_worker_v1_worker_proto_msgTypes[26]
+	mi := &file_dispatch_worker_v1_worker_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2232,7 +2349,7 @@ func (x *LogGap) String() string {
 func (*LogGap) ProtoMessage() {}
 
 func (x *LogGap) ProtoReflect() protoreflect.Message {
-	mi := &file_dispatch_worker_v1_worker_proto_msgTypes[26]
+	mi := &file_dispatch_worker_v1_worker_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2245,7 +2362,7 @@ func (x *LogGap) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LogGap.ProtoReflect.Descriptor instead.
 func (*LogGap) Descriptor() ([]byte, []int) {
-	return file_dispatch_worker_v1_worker_proto_rawDescGZIP(), []int{26}
+	return file_dispatch_worker_v1_worker_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *LogGap) GetStream() LogStream {
@@ -2284,7 +2401,7 @@ type RegisterLogSegmentRequest struct {
 
 func (x *RegisterLogSegmentRequest) Reset() {
 	*x = RegisterLogSegmentRequest{}
-	mi := &file_dispatch_worker_v1_worker_proto_msgTypes[27]
+	mi := &file_dispatch_worker_v1_worker_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2296,7 +2413,7 @@ func (x *RegisterLogSegmentRequest) String() string {
 func (*RegisterLogSegmentRequest) ProtoMessage() {}
 
 func (x *RegisterLogSegmentRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_dispatch_worker_v1_worker_proto_msgTypes[27]
+	mi := &file_dispatch_worker_v1_worker_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2309,7 +2426,7 @@ func (x *RegisterLogSegmentRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RegisterLogSegmentRequest.ProtoReflect.Descriptor instead.
 func (*RegisterLogSegmentRequest) Descriptor() ([]byte, []int) {
-	return file_dispatch_worker_v1_worker_proto_rawDescGZIP(), []int{27}
+	return file_dispatch_worker_v1_worker_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *RegisterLogSegmentRequest) GetAuthority() *AttemptAuthority {
@@ -2371,7 +2488,7 @@ type OutputReference struct {
 
 func (x *OutputReference) Reset() {
 	*x = OutputReference{}
-	mi := &file_dispatch_worker_v1_worker_proto_msgTypes[28]
+	mi := &file_dispatch_worker_v1_worker_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2383,7 +2500,7 @@ func (x *OutputReference) String() string {
 func (*OutputReference) ProtoMessage() {}
 
 func (x *OutputReference) ProtoReflect() protoreflect.Message {
-	mi := &file_dispatch_worker_v1_worker_proto_msgTypes[28]
+	mi := &file_dispatch_worker_v1_worker_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2396,7 +2513,7 @@ func (x *OutputReference) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OutputReference.ProtoReflect.Descriptor instead.
 func (*OutputReference) Descriptor() ([]byte, []int) {
-	return file_dispatch_worker_v1_worker_proto_rawDescGZIP(), []int{28}
+	return file_dispatch_worker_v1_worker_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *OutputReference) GetName() string {
@@ -2431,7 +2548,7 @@ type CompleteAttemptRequest struct {
 
 func (x *CompleteAttemptRequest) Reset() {
 	*x = CompleteAttemptRequest{}
-	mi := &file_dispatch_worker_v1_worker_proto_msgTypes[29]
+	mi := &file_dispatch_worker_v1_worker_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2443,7 +2560,7 @@ func (x *CompleteAttemptRequest) String() string {
 func (*CompleteAttemptRequest) ProtoMessage() {}
 
 func (x *CompleteAttemptRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_dispatch_worker_v1_worker_proto_msgTypes[29]
+	mi := &file_dispatch_worker_v1_worker_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2456,7 +2573,7 @@ func (x *CompleteAttemptRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CompleteAttemptRequest.ProtoReflect.Descriptor instead.
 func (*CompleteAttemptRequest) Descriptor() ([]byte, []int) {
-	return file_dispatch_worker_v1_worker_proto_rawDescGZIP(), []int{29}
+	return file_dispatch_worker_v1_worker_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *CompleteAttemptRequest) GetAuthority() *AttemptAuthority {
@@ -2540,7 +2657,7 @@ type CompleteAttemptResponse struct {
 
 func (x *CompleteAttemptResponse) Reset() {
 	*x = CompleteAttemptResponse{}
-	mi := &file_dispatch_worker_v1_worker_proto_msgTypes[30]
+	mi := &file_dispatch_worker_v1_worker_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2552,7 +2669,7 @@ func (x *CompleteAttemptResponse) String() string {
 func (*CompleteAttemptResponse) ProtoMessage() {}
 
 func (x *CompleteAttemptResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_dispatch_worker_v1_worker_proto_msgTypes[30]
+	mi := &file_dispatch_worker_v1_worker_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2565,7 +2682,7 @@ func (x *CompleteAttemptResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CompleteAttemptResponse.ProtoReflect.Descriptor instead.
 func (*CompleteAttemptResponse) Descriptor() ([]byte, []int) {
-	return file_dispatch_worker_v1_worker_proto_rawDescGZIP(), []int{30}
+	return file_dispatch_worker_v1_worker_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *CompleteAttemptResponse) GetDecision() Decision {
@@ -2721,7 +2838,7 @@ const file_dispatch_worker_v1_worker_proto_rawDesc = "" +
 	"\x13server_time_unix_ms\x18\x04 \x01(\x03R\x10serverTimeUnixMs\x12,\n" +
 	"\x12phase_remaining_ms\x18\x05 \x01(\x04R\x10phaseRemainingMs\"P\n" +
 	"\x13RenewLeasesResponse\x129\n" +
-	"\aresults\x18\x01 \x03(\v2\x1f.dispatch.worker.v1.LeaseResultR\aresults\"\x98\x02\n" +
+	"\aresults\x18\x01 \x03(\v2\x1f.dispatch.worker.v1.LeaseResultR\aresults\"\xc0\x02\n" +
 	"\x13CreateUploadRequest\x12B\n" +
 	"\tauthority\x18\x01 \x01(\v2$.dispatch.worker.v1.AttemptAuthorityR\tauthority\x12\x1d\n" +
 	"\n" +
@@ -2732,11 +2849,22 @@ const file_dispatch_worker_v1_worker_proto_rawDesc = "" +
 	"size_bytes\x18\x05 \x01(\x04R\tsizeBytes\x12\x16\n" +
 	"\x06sha256\x18\x06 \x01(\tR\x06sha256\x12\x1d\n" +
 	"\n" +
-	"part_count\x18\a \x01(\rR\tpartCount\"6\n" +
+	"part_count\x18\a \x01(\rR\tpartCount\x12&\n" +
+	"\x0fpart_size_bytes\x18\b \x01(\x04R\rpartSizeBytes\"\xa9\x01\n" +
+	"\x16GrantUploadPartRequest\x12B\n" +
+	"\tauthority\x18\x01 \x01(\v2$.dispatch.worker.v1.AttemptAuthorityR\tauthority\x12\x1b\n" +
+	"\tupload_id\x18\x02 \x01(\tR\buploadId\x12\x16\n" +
+	"\x06number\x18\x03 \x01(\rR\x06number\x12\x16\n" +
+	"\x06sha256\x18\x04 \x01(\tR\x06sha256\"\x82\x02\n" +
 	"\n" +
 	"UploadPart\x12\x16\n" +
 	"\x06number\x18\x01 \x01(\rR\x06number\x12\x10\n" +
-	"\x03url\x18\x02 \x01(\tR\x03url\"\xfd\x02\n" +
+	"\x03url\x18\x02 \x01(\tR\x03url\x12^\n" +
+	"\x10required_headers\x18\x03 \x03(\v23.dispatch.worker.v1.UploadPart.RequiredHeadersEntryR\x0frequiredHeaders\x12&\n" +
+	"\x0fexpires_unix_ms\x18\x04 \x01(\x03R\rexpiresUnixMs\x1aB\n" +
+	"\x14RequiredHeadersEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xc4\x03\n" +
 	"\x14CreateUploadResponse\x12\x1b\n" +
 	"\tupload_id\x18\x01 \x01(\tR\buploadId\x12\x1d\n" +
 	"\n" +
@@ -2745,13 +2873,17 @@ const file_dispatch_worker_v1_worker_proto_rawDesc = "" +
 	"upload_url\x18\x03 \x01(\tR\tuploadUrl\x12h\n" +
 	"\x10required_headers\x18\x04 \x03(\v2=.dispatch.worker.v1.CreateUploadResponse.RequiredHeadersEntryR\x0frequiredHeaders\x12&\n" +
 	"\x0fexpires_unix_ms\x18\x05 \x01(\x03R\rexpiresUnixMs\x124\n" +
-	"\x05parts\x18\x06 \x03(\v2\x1e.dispatch.worker.v1.UploadPartR\x05parts\x1aB\n" +
+	"\x05parts\x18\x06 \x03(\v2\x1e.dispatch.worker.v1.UploadPartR\x05parts\x12&\n" +
+	"\x0fpart_size_bytes\x18\a \x01(\x04R\rpartSizeBytes\x12\x1d\n" +
+	"\n" +
+	"part_count\x18\b \x01(\rR\tpartCount\x1aB\n" +
 	"\x14RequiredHeadersEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\";\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"S\n" +
 	"\rCompletedPart\x12\x16\n" +
 	"\x06number\x18\x01 \x01(\rR\x06number\x12\x12\n" +
-	"\x04etag\x18\x02 \x01(\tR\x04etag\"\x8b\x02\n" +
+	"\x04etag\x18\x02 \x01(\tR\x04etag\x12\x16\n" +
+	"\x06sha256\x18\x03 \x01(\tR\x06sha256\"\x8b\x02\n" +
 	"\x15FinalizeUploadRequest\x12B\n" +
 	"\tauthority\x18\x01 \x01(\v2$.dispatch.worker.v1.AttemptAuthorityR\tauthority\x12\x1d\n" +
 	"\n" +
@@ -2850,7 +2982,7 @@ const file_dispatch_worker_v1_worker_proto_rawDesc = "" +
 	"\n" +
 	"\x06STDOUT\x10\x01\x12\n" +
 	"\n" +
-	"\x06STDERR\x10\x022\xfe\a\n" +
+	"\x06STDERR\x10\x022\xdd\b\n" +
 	"\rWorkerService\x12g\n" +
 	"\x0eRegisterWorker\x12).dispatch.worker.v1.RegisterWorkerRequest\x1a*.dispatch.worker.v1.RegisterWorkerResponse\x12X\n" +
 	"\tHeartbeat\x12$.dispatch.worker.v1.HeartbeatRequest\x1a%.dispatch.worker.v1.HeartbeatResponse\x12^\n" +
@@ -2858,7 +2990,8 @@ const file_dispatch_worker_v1_worker_proto_rawDesc = "" +
 	"\x0fListAssignments\x12*.dispatch.worker.v1.ListAssignmentsRequest\x1a+.dispatch.worker.v1.ListAssignmentsResponse\x12[\n" +
 	"\vReportPhase\x12&.dispatch.worker.v1.ReportPhaseRequest\x1a$.dispatch.worker.v1.MutationResponse\x12^\n" +
 	"\vRenewLeases\x12&.dispatch.worker.v1.RenewLeasesRequest\x1a'.dispatch.worker.v1.RenewLeasesResponse\x12a\n" +
-	"\fCreateUpload\x12'.dispatch.worker.v1.CreateUploadRequest\x1a(.dispatch.worker.v1.CreateUploadResponse\x12g\n" +
+	"\fCreateUpload\x12'.dispatch.worker.v1.CreateUploadRequest\x1a(.dispatch.worker.v1.CreateUploadResponse\x12]\n" +
+	"\x0fGrantUploadPart\x12*.dispatch.worker.v1.GrantUploadPartRequest\x1a\x1e.dispatch.worker.v1.UploadPart\x12g\n" +
 	"\x0eFinalizeUpload\x12).dispatch.worker.v1.FinalizeUploadRequest\x1a*.dispatch.worker.v1.FinalizeUploadResponse\x12i\n" +
 	"\x12RegisterLogSegment\x12-.dispatch.worker.v1.RegisterLogSegmentRequest\x1a$.dispatch.worker.v1.MutationResponse\x12j\n" +
 	"\x0fCompleteAttempt\x12*.dispatch.worker.v1.CompleteAttemptRequest\x1a+.dispatch.worker.v1.CompleteAttemptResponseB9Z7dispatch.local/dispatch/gen/dispatch/worker/v1;workerv1b\x06proto3"
@@ -2876,7 +3009,7 @@ func file_dispatch_worker_v1_worker_proto_rawDescGZIP() []byte {
 }
 
 var file_dispatch_worker_v1_worker_proto_enumTypes = make([]protoimpl.EnumInfo, 6)
-var file_dispatch_worker_v1_worker_proto_msgTypes = make([]protoimpl.MessageInfo, 33)
+var file_dispatch_worker_v1_worker_proto_msgTypes = make([]protoimpl.MessageInfo, 35)
 var file_dispatch_worker_v1_worker_proto_goTypes = []any{
 	(AttemptState)(0),                 // 0: dispatch.worker.v1.AttemptState
 	(FailureReason)(0),                // 1: dispatch.worker.v1.FailureReason
@@ -2905,24 +3038,26 @@ var file_dispatch_worker_v1_worker_proto_goTypes = []any{
 	(*LeaseResult)(nil),               // 24: dispatch.worker.v1.LeaseResult
 	(*RenewLeasesResponse)(nil),       // 25: dispatch.worker.v1.RenewLeasesResponse
 	(*CreateUploadRequest)(nil),       // 26: dispatch.worker.v1.CreateUploadRequest
-	(*UploadPart)(nil),                // 27: dispatch.worker.v1.UploadPart
-	(*CreateUploadResponse)(nil),      // 28: dispatch.worker.v1.CreateUploadResponse
-	(*CompletedPart)(nil),             // 29: dispatch.worker.v1.CompletedPart
-	(*FinalizeUploadRequest)(nil),     // 30: dispatch.worker.v1.FinalizeUploadRequest
-	(*FinalizeUploadResponse)(nil),    // 31: dispatch.worker.v1.FinalizeUploadResponse
-	(*LogGap)(nil),                    // 32: dispatch.worker.v1.LogGap
-	(*RegisterLogSegmentRequest)(nil), // 33: dispatch.worker.v1.RegisterLogSegmentRequest
-	(*OutputReference)(nil),           // 34: dispatch.worker.v1.OutputReference
-	(*CompleteAttemptRequest)(nil),    // 35: dispatch.worker.v1.CompleteAttemptRequest
-	(*CompleteAttemptResponse)(nil),   // 36: dispatch.worker.v1.CompleteAttemptResponse
-	nil,                               // 37: dispatch.worker.v1.RegisterWorkerRequest.LabelsEntry
-	nil,                               // 38: dispatch.worker.v1.CreateUploadResponse.RequiredHeadersEntry
+	(*GrantUploadPartRequest)(nil),    // 27: dispatch.worker.v1.GrantUploadPartRequest
+	(*UploadPart)(nil),                // 28: dispatch.worker.v1.UploadPart
+	(*CreateUploadResponse)(nil),      // 29: dispatch.worker.v1.CreateUploadResponse
+	(*CompletedPart)(nil),             // 30: dispatch.worker.v1.CompletedPart
+	(*FinalizeUploadRequest)(nil),     // 31: dispatch.worker.v1.FinalizeUploadRequest
+	(*FinalizeUploadResponse)(nil),    // 32: dispatch.worker.v1.FinalizeUploadResponse
+	(*LogGap)(nil),                    // 33: dispatch.worker.v1.LogGap
+	(*RegisterLogSegmentRequest)(nil), // 34: dispatch.worker.v1.RegisterLogSegmentRequest
+	(*OutputReference)(nil),           // 35: dispatch.worker.v1.OutputReference
+	(*CompleteAttemptRequest)(nil),    // 36: dispatch.worker.v1.CompleteAttemptRequest
+	(*CompleteAttemptResponse)(nil),   // 37: dispatch.worker.v1.CompleteAttemptResponse
+	nil,                               // 38: dispatch.worker.v1.RegisterWorkerRequest.LabelsEntry
+	nil,                               // 39: dispatch.worker.v1.UploadPart.RequiredHeadersEntry
+	nil,                               // 40: dispatch.worker.v1.CreateUploadResponse.RequiredHeadersEntry
 }
 var file_dispatch_worker_v1_worker_proto_depIdxs = []int32{
 	2,  // 0: dispatch.worker.v1.MutationResponse.decision:type_name -> dispatch.worker.v1.Decision
 	0,  // 1: dispatch.worker.v1.MutationResponse.state:type_name -> dispatch.worker.v1.AttemptState
 	8,  // 2: dispatch.worker.v1.RegisterWorkerRequest.allocatable:type_name -> dispatch.worker.v1.Resources
-	37, // 3: dispatch.worker.v1.RegisterWorkerRequest.labels:type_name -> dispatch.worker.v1.RegisterWorkerRequest.LabelsEntry
+	38, // 3: dispatch.worker.v1.RegisterWorkerRequest.labels:type_name -> dispatch.worker.v1.RegisterWorkerRequest.LabelsEntry
 	6,  // 4: dispatch.worker.v1.RegisterWorkerResponse.session:type_name -> dispatch.worker.v1.WorkerSession
 	7,  // 5: dispatch.worker.v1.ExecutionInventory.authority:type_name -> dispatch.worker.v1.AttemptAuthority
 	6,  // 6: dispatch.worker.v1.HeartbeatRequest.session:type_name -> dispatch.worker.v1.WorkerSession
@@ -2947,47 +3082,51 @@ var file_dispatch_worker_v1_worker_proto_depIdxs = []int32{
 	24, // 25: dispatch.worker.v1.RenewLeasesResponse.results:type_name -> dispatch.worker.v1.LeaseResult
 	7,  // 26: dispatch.worker.v1.CreateUploadRequest.authority:type_name -> dispatch.worker.v1.AttemptAuthority
 	4,  // 27: dispatch.worker.v1.CreateUploadRequest.kind:type_name -> dispatch.worker.v1.ArtifactKind
-	38, // 28: dispatch.worker.v1.CreateUploadResponse.required_headers:type_name -> dispatch.worker.v1.CreateUploadResponse.RequiredHeadersEntry
-	27, // 29: dispatch.worker.v1.CreateUploadResponse.parts:type_name -> dispatch.worker.v1.UploadPart
-	7,  // 30: dispatch.worker.v1.FinalizeUploadRequest.authority:type_name -> dispatch.worker.v1.AttemptAuthority
-	17, // 31: dispatch.worker.v1.FinalizeUploadRequest.object:type_name -> dispatch.worker.v1.ObjectVersion
-	29, // 32: dispatch.worker.v1.FinalizeUploadRequest.parts:type_name -> dispatch.worker.v1.CompletedPart
-	17, // 33: dispatch.worker.v1.FinalizeUploadResponse.object:type_name -> dispatch.worker.v1.ObjectVersion
-	5,  // 34: dispatch.worker.v1.LogGap.stream:type_name -> dispatch.worker.v1.LogStream
-	7,  // 35: dispatch.worker.v1.RegisterLogSegmentRequest.authority:type_name -> dispatch.worker.v1.AttemptAuthority
-	5,  // 36: dispatch.worker.v1.RegisterLogSegmentRequest.stream:type_name -> dispatch.worker.v1.LogStream
-	32, // 37: dispatch.worker.v1.RegisterLogSegmentRequest.gaps:type_name -> dispatch.worker.v1.LogGap
-	7,  // 38: dispatch.worker.v1.CompleteAttemptRequest.authority:type_name -> dispatch.worker.v1.AttemptAuthority
-	1,  // 39: dispatch.worker.v1.CompleteAttemptRequest.reason:type_name -> dispatch.worker.v1.FailureReason
-	34, // 40: dispatch.worker.v1.CompleteAttemptRequest.outputs:type_name -> dispatch.worker.v1.OutputReference
-	32, // 41: dispatch.worker.v1.CompleteAttemptRequest.gaps:type_name -> dispatch.worker.v1.LogGap
-	2,  // 42: dispatch.worker.v1.CompleteAttemptResponse.decision:type_name -> dispatch.worker.v1.Decision
-	0,  // 43: dispatch.worker.v1.CompleteAttemptResponse.state:type_name -> dispatch.worker.v1.AttemptState
-	10, // 44: dispatch.worker.v1.WorkerService.RegisterWorker:input_type -> dispatch.worker.v1.RegisterWorkerRequest
-	13, // 45: dispatch.worker.v1.WorkerService.Heartbeat:input_type -> dispatch.worker.v1.HeartbeatRequest
-	18, // 46: dispatch.worker.v1.WorkerService.AcquireWork:input_type -> dispatch.worker.v1.AcquireWorkRequest
-	20, // 47: dispatch.worker.v1.WorkerService.ListAssignments:input_type -> dispatch.worker.v1.ListAssignmentsRequest
-	22, // 48: dispatch.worker.v1.WorkerService.ReportPhase:input_type -> dispatch.worker.v1.ReportPhaseRequest
-	23, // 49: dispatch.worker.v1.WorkerService.RenewLeases:input_type -> dispatch.worker.v1.RenewLeasesRequest
-	26, // 50: dispatch.worker.v1.WorkerService.CreateUpload:input_type -> dispatch.worker.v1.CreateUploadRequest
-	30, // 51: dispatch.worker.v1.WorkerService.FinalizeUpload:input_type -> dispatch.worker.v1.FinalizeUploadRequest
-	33, // 52: dispatch.worker.v1.WorkerService.RegisterLogSegment:input_type -> dispatch.worker.v1.RegisterLogSegmentRequest
-	35, // 53: dispatch.worker.v1.WorkerService.CompleteAttempt:input_type -> dispatch.worker.v1.CompleteAttemptRequest
-	11, // 54: dispatch.worker.v1.WorkerService.RegisterWorker:output_type -> dispatch.worker.v1.RegisterWorkerResponse
-	14, // 55: dispatch.worker.v1.WorkerService.Heartbeat:output_type -> dispatch.worker.v1.HeartbeatResponse
-	19, // 56: dispatch.worker.v1.WorkerService.AcquireWork:output_type -> dispatch.worker.v1.AcquireWorkResponse
-	21, // 57: dispatch.worker.v1.WorkerService.ListAssignments:output_type -> dispatch.worker.v1.ListAssignmentsResponse
-	9,  // 58: dispatch.worker.v1.WorkerService.ReportPhase:output_type -> dispatch.worker.v1.MutationResponse
-	25, // 59: dispatch.worker.v1.WorkerService.RenewLeases:output_type -> dispatch.worker.v1.RenewLeasesResponse
-	28, // 60: dispatch.worker.v1.WorkerService.CreateUpload:output_type -> dispatch.worker.v1.CreateUploadResponse
-	31, // 61: dispatch.worker.v1.WorkerService.FinalizeUpload:output_type -> dispatch.worker.v1.FinalizeUploadResponse
-	9,  // 62: dispatch.worker.v1.WorkerService.RegisterLogSegment:output_type -> dispatch.worker.v1.MutationResponse
-	36, // 63: dispatch.worker.v1.WorkerService.CompleteAttempt:output_type -> dispatch.worker.v1.CompleteAttemptResponse
-	54, // [54:64] is the sub-list for method output_type
-	44, // [44:54] is the sub-list for method input_type
-	44, // [44:44] is the sub-list for extension type_name
-	44, // [44:44] is the sub-list for extension extendee
-	0,  // [0:44] is the sub-list for field type_name
+	7,  // 28: dispatch.worker.v1.GrantUploadPartRequest.authority:type_name -> dispatch.worker.v1.AttemptAuthority
+	39, // 29: dispatch.worker.v1.UploadPart.required_headers:type_name -> dispatch.worker.v1.UploadPart.RequiredHeadersEntry
+	40, // 30: dispatch.worker.v1.CreateUploadResponse.required_headers:type_name -> dispatch.worker.v1.CreateUploadResponse.RequiredHeadersEntry
+	28, // 31: dispatch.worker.v1.CreateUploadResponse.parts:type_name -> dispatch.worker.v1.UploadPart
+	7,  // 32: dispatch.worker.v1.FinalizeUploadRequest.authority:type_name -> dispatch.worker.v1.AttemptAuthority
+	17, // 33: dispatch.worker.v1.FinalizeUploadRequest.object:type_name -> dispatch.worker.v1.ObjectVersion
+	30, // 34: dispatch.worker.v1.FinalizeUploadRequest.parts:type_name -> dispatch.worker.v1.CompletedPart
+	17, // 35: dispatch.worker.v1.FinalizeUploadResponse.object:type_name -> dispatch.worker.v1.ObjectVersion
+	5,  // 36: dispatch.worker.v1.LogGap.stream:type_name -> dispatch.worker.v1.LogStream
+	7,  // 37: dispatch.worker.v1.RegisterLogSegmentRequest.authority:type_name -> dispatch.worker.v1.AttemptAuthority
+	5,  // 38: dispatch.worker.v1.RegisterLogSegmentRequest.stream:type_name -> dispatch.worker.v1.LogStream
+	33, // 39: dispatch.worker.v1.RegisterLogSegmentRequest.gaps:type_name -> dispatch.worker.v1.LogGap
+	7,  // 40: dispatch.worker.v1.CompleteAttemptRequest.authority:type_name -> dispatch.worker.v1.AttemptAuthority
+	1,  // 41: dispatch.worker.v1.CompleteAttemptRequest.reason:type_name -> dispatch.worker.v1.FailureReason
+	35, // 42: dispatch.worker.v1.CompleteAttemptRequest.outputs:type_name -> dispatch.worker.v1.OutputReference
+	33, // 43: dispatch.worker.v1.CompleteAttemptRequest.gaps:type_name -> dispatch.worker.v1.LogGap
+	2,  // 44: dispatch.worker.v1.CompleteAttemptResponse.decision:type_name -> dispatch.worker.v1.Decision
+	0,  // 45: dispatch.worker.v1.CompleteAttemptResponse.state:type_name -> dispatch.worker.v1.AttemptState
+	10, // 46: dispatch.worker.v1.WorkerService.RegisterWorker:input_type -> dispatch.worker.v1.RegisterWorkerRequest
+	13, // 47: dispatch.worker.v1.WorkerService.Heartbeat:input_type -> dispatch.worker.v1.HeartbeatRequest
+	18, // 48: dispatch.worker.v1.WorkerService.AcquireWork:input_type -> dispatch.worker.v1.AcquireWorkRequest
+	20, // 49: dispatch.worker.v1.WorkerService.ListAssignments:input_type -> dispatch.worker.v1.ListAssignmentsRequest
+	22, // 50: dispatch.worker.v1.WorkerService.ReportPhase:input_type -> dispatch.worker.v1.ReportPhaseRequest
+	23, // 51: dispatch.worker.v1.WorkerService.RenewLeases:input_type -> dispatch.worker.v1.RenewLeasesRequest
+	26, // 52: dispatch.worker.v1.WorkerService.CreateUpload:input_type -> dispatch.worker.v1.CreateUploadRequest
+	27, // 53: dispatch.worker.v1.WorkerService.GrantUploadPart:input_type -> dispatch.worker.v1.GrantUploadPartRequest
+	31, // 54: dispatch.worker.v1.WorkerService.FinalizeUpload:input_type -> dispatch.worker.v1.FinalizeUploadRequest
+	34, // 55: dispatch.worker.v1.WorkerService.RegisterLogSegment:input_type -> dispatch.worker.v1.RegisterLogSegmentRequest
+	36, // 56: dispatch.worker.v1.WorkerService.CompleteAttempt:input_type -> dispatch.worker.v1.CompleteAttemptRequest
+	11, // 57: dispatch.worker.v1.WorkerService.RegisterWorker:output_type -> dispatch.worker.v1.RegisterWorkerResponse
+	14, // 58: dispatch.worker.v1.WorkerService.Heartbeat:output_type -> dispatch.worker.v1.HeartbeatResponse
+	19, // 59: dispatch.worker.v1.WorkerService.AcquireWork:output_type -> dispatch.worker.v1.AcquireWorkResponse
+	21, // 60: dispatch.worker.v1.WorkerService.ListAssignments:output_type -> dispatch.worker.v1.ListAssignmentsResponse
+	9,  // 61: dispatch.worker.v1.WorkerService.ReportPhase:output_type -> dispatch.worker.v1.MutationResponse
+	25, // 62: dispatch.worker.v1.WorkerService.RenewLeases:output_type -> dispatch.worker.v1.RenewLeasesResponse
+	29, // 63: dispatch.worker.v1.WorkerService.CreateUpload:output_type -> dispatch.worker.v1.CreateUploadResponse
+	28, // 64: dispatch.worker.v1.WorkerService.GrantUploadPart:output_type -> dispatch.worker.v1.UploadPart
+	32, // 65: dispatch.worker.v1.WorkerService.FinalizeUpload:output_type -> dispatch.worker.v1.FinalizeUploadResponse
+	9,  // 66: dispatch.worker.v1.WorkerService.RegisterLogSegment:output_type -> dispatch.worker.v1.MutationResponse
+	37, // 67: dispatch.worker.v1.WorkerService.CompleteAttempt:output_type -> dispatch.worker.v1.CompleteAttemptResponse
+	57, // [57:68] is the sub-list for method output_type
+	46, // [46:57] is the sub-list for method input_type
+	46, // [46:46] is the sub-list for extension type_name
+	46, // [46:46] is the sub-list for extension extendee
+	0,  // [0:46] is the sub-list for field type_name
 }
 
 func init() { file_dispatch_worker_v1_worker_proto_init() }
@@ -3001,14 +3140,14 @@ func file_dispatch_worker_v1_worker_proto_init() {
 		(*AcquireWorkResponse_Rejected)(nil),
 	}
 	file_dispatch_worker_v1_worker_proto_msgTypes[16].OneofWrappers = []any{}
-	file_dispatch_worker_v1_worker_proto_msgTypes[29].OneofWrappers = []any{}
+	file_dispatch_worker_v1_worker_proto_msgTypes[30].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_dispatch_worker_v1_worker_proto_rawDesc), len(file_dispatch_worker_v1_worker_proto_rawDesc)),
 			NumEnums:      6,
-			NumMessages:   33,
+			NumMessages:   35,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

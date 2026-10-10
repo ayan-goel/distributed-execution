@@ -12,6 +12,7 @@ service WorkerService {
   rpc ReportPhase(ReportPhaseRequest) returns (MutationResponse);
   rpc RenewLeases(RenewLeasesRequest) returns (RenewLeasesResponse);
   rpc CreateUpload(CreateUploadRequest) returns (CreateUploadResponse);
+  rpc GrantUploadPart(GrantUploadPartRequest) returns (UploadPart);
   rpc FinalizeUpload(FinalizeUploadRequest) returns (FinalizeUploadResponse);
   rpc RegisterLogSegment(RegisterLogSegmentRequest) returns (MutationResponse);
   rpc CompleteAttempt(CompleteAttemptRequest) returns (CompleteAttemptResponse);
@@ -162,8 +163,20 @@ message CreateUploadRequest {
   uint64 size_bytes = 5;
   string sha256 = 6;
   uint32 part_count = 7;
+  uint64 part_size_bytes = 8;
 }
-message UploadPart { uint32 number = 1; string url = 2; }
+// One part capability per call keeps replies bounded independently of file size.
+message GrantUploadPartRequest {
+  AttemptAuthority authority = 1;
+  string upload_id = 2;
+  uint32 number = 3;
+  string sha256 = 4;
+}
+message UploadPart {
+  uint32 number = 1; string url = 2;
+  map<string,string> required_headers = 3;
+  int64 expires_unix_ms = 4;
+}
 message CreateUploadResponse {
   string upload_id = 1;
   string object_key = 2;
@@ -171,8 +184,10 @@ message CreateUploadResponse {
   map<string,string> required_headers = 4;
   int64 expires_unix_ms = 5;
   repeated UploadPart parts = 6;
+  uint64 part_size_bytes = 7;
+  uint32 part_count = 8;
 }
-message CompletedPart { uint32 number = 1; string etag = 2; }
+message CompletedPart { uint32 number = 1; string etag = 2; string sha256 = 3; }
 message FinalizeUploadRequest {
   AttemptAuthority authority = 1;
   string request_id = 2;

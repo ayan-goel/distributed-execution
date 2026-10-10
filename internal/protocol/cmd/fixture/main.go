@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	pb "dispatch.local/dispatch/gen/dispatch/worker/v1"
 	"google.golang.org/protobuf/proto"
@@ -39,8 +40,13 @@ func main() {
 		expected = &pb.ListAssignmentsResponse{Assignments: []*pb.Assignment{golden()}, NextAfterJobId: "00000000-0000-0000-0000-000000000001"}
 		actual = &pb.ListAssignmentsResponse{}
 	}
+	kind := strings.TrimPrefix(strings.TrimPrefix(os.Args[1], "create-"), "check-")
+	if message := multipartGolden(kind); message != nil {
+		expected = message
+		actual = message.ProtoReflect().Type().New().Interface()
+	}
 	switch os.Args[1] {
-	case "create", "create-page":
+	case "create", "create-page", "create-upload-request", "create-upload-response", "create-part-request", "create-part-response", "create-finalize":
 		b, err := proto.Marshal(expected)
 		if err != nil {
 			panic(err)
@@ -48,7 +54,7 @@ func main() {
 		if _, err = os.Stdout.Write(b); err != nil {
 			panic(err)
 		}
-	case "check", "check-page":
+	case "check", "check-page", "check-upload-request", "check-upload-response", "check-part-request", "check-part-response", "check-finalize":
 		b, err := io.ReadAll(io.LimitReader(os.Stdin, 4<<20))
 		if err != nil {
 			panic(err)

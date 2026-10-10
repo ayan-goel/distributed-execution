@@ -79,6 +79,7 @@ impl Journal {
             size_bytes: size,
             sha256: sha256.into(),
             part_count: 1,
+            part_size_bytes: 0,
         };
         record.outputs.push(OutputUpload {
             declaration: request.clone(),

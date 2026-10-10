@@ -28,6 +28,7 @@ fn request() -> CreateUploadRequest {
         size_bytes: 3,
         sha256: "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad".into(),
         part_count: 1,
+        part_size_bytes: 0,
     }
 }
 fn grant(endpoint: &str) -> CreateUploadResponse {
@@ -43,6 +44,8 @@ fn grant(endpoint: &str) -> CreateUploadResponse {
             .as_millis() as i64
             + 30_000,
         parts: vec![],
+        part_count: 0,
+        part_size_bytes: 0,
     }
 }
 fn file(bytes: &[u8]) -> fs::File {

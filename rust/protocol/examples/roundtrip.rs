@@ -1,4 +1,7 @@
-use dispatch_protocol::v1::{Assignment, ListAssignmentsResponse};
+use dispatch_protocol::v1::{
+    Assignment, CreateUploadRequest, CreateUploadResponse, FinalizeUploadRequest,
+    GrantUploadPartRequest, ListAssignmentsResponse, UploadPart,
+};
 use prost::Message;
 use std::io::{self, Read, Write};
 
@@ -9,6 +12,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .read_to_end(&mut bytes)?;
     if bytes.len() > dispatch_protocol::MAX_MESSAGE_BYTES {
         return Err("message too large".into());
+    }
+    match std::env::args().nth(1).as_deref() {
+        Some("upload-request") => return roundtrip::<CreateUploadRequest>(&bytes),
+        Some("upload-response") => return roundtrip::<CreateUploadResponse>(&bytes),
+        Some("part-request") => return roundtrip::<GrantUploadPartRequest>(&bytes),
+        Some("part-response") => return roundtrip::<UploadPart>(&bytes),
+        Some("finalize") => return roundtrip::<FinalizeUploadRequest>(&bytes),
+        _ => {}
     }
     let page = if std::env::args().nth(1).as_deref() == Some("page") {
         Some(ListAssignmentsResponse::decode(bytes.as_slice())?)
@@ -60,5 +71,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(page) => page.encode_to_vec(),
         None => assignment.encode_to_vec(),
     })?;
+    Ok(())
+}
+
+fn roundtrip<M: Message + Default>(bytes: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
+    io::stdout().write_all(&M::decode(bytes)?.encode_to_vec())?;
     Ok(())
 }

@@ -26,6 +26,7 @@ const (
 	WorkerService_ReportPhase_FullMethodName        = "/dispatch.worker.v1.WorkerService/ReportPhase"
 	WorkerService_RenewLeases_FullMethodName        = "/dispatch.worker.v1.WorkerService/RenewLeases"
 	WorkerService_CreateUpload_FullMethodName       = "/dispatch.worker.v1.WorkerService/CreateUpload"
+	WorkerService_GrantUploadPart_FullMethodName    = "/dispatch.worker.v1.WorkerService/GrantUploadPart"
 	WorkerService_FinalizeUpload_FullMethodName     = "/dispatch.worker.v1.WorkerService/FinalizeUpload"
 	WorkerService_RegisterLogSegment_FullMethodName = "/dispatch.worker.v1.WorkerService/RegisterLogSegment"
 	WorkerService_CompleteAttempt_FullMethodName    = "/dispatch.worker.v1.WorkerService/CompleteAttempt"
@@ -45,6 +46,7 @@ type WorkerServiceClient interface {
 	ReportPhase(ctx context.Context, in *ReportPhaseRequest, opts ...grpc.CallOption) (*MutationResponse, error)
 	RenewLeases(ctx context.Context, in *RenewLeasesRequest, opts ...grpc.CallOption) (*RenewLeasesResponse, error)
 	CreateUpload(ctx context.Context, in *CreateUploadRequest, opts ...grpc.CallOption) (*CreateUploadResponse, error)
+	GrantUploadPart(ctx context.Context, in *GrantUploadPartRequest, opts ...grpc.CallOption) (*UploadPart, error)
 	FinalizeUpload(ctx context.Context, in *FinalizeUploadRequest, opts ...grpc.CallOption) (*FinalizeUploadResponse, error)
 	RegisterLogSegment(ctx context.Context, in *RegisterLogSegmentRequest, opts ...grpc.CallOption) (*MutationResponse, error)
 	CompleteAttempt(ctx context.Context, in *CompleteAttemptRequest, opts ...grpc.CallOption) (*CompleteAttemptResponse, error)
@@ -128,6 +130,16 @@ func (c *workerServiceClient) CreateUpload(ctx context.Context, in *CreateUpload
 	return out, nil
 }
 
+func (c *workerServiceClient) GrantUploadPart(ctx context.Context, in *GrantUploadPartRequest, opts ...grpc.CallOption) (*UploadPart, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(UploadPart)
+	err := c.cc.Invoke(ctx, WorkerService_GrantUploadPart_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *workerServiceClient) FinalizeUpload(ctx context.Context, in *FinalizeUploadRequest, opts ...grpc.CallOption) (*FinalizeUploadResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(FinalizeUploadResponse)
@@ -172,6 +184,7 @@ type WorkerServiceServer interface {
 	ReportPhase(context.Context, *ReportPhaseRequest) (*MutationResponse, error)
 	RenewLeases(context.Context, *RenewLeasesRequest) (*RenewLeasesResponse, error)
 	CreateUpload(context.Context, *CreateUploadRequest) (*CreateUploadResponse, error)
+	GrantUploadPart(context.Context, *GrantUploadPartRequest) (*UploadPart, error)
 	FinalizeUpload(context.Context, *FinalizeUploadRequest) (*FinalizeUploadResponse, error)
 	RegisterLogSegment(context.Context, *RegisterLogSegmentRequest) (*MutationResponse, error)
 	CompleteAttempt(context.Context, *CompleteAttemptRequest) (*CompleteAttemptResponse, error)
@@ -205,6 +218,9 @@ func (UnimplementedWorkerServiceServer) RenewLeases(context.Context, *RenewLease
 }
 func (UnimplementedWorkerServiceServer) CreateUpload(context.Context, *CreateUploadRequest) (*CreateUploadResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CreateUpload not implemented")
+}
+func (UnimplementedWorkerServiceServer) GrantUploadPart(context.Context, *GrantUploadPartRequest) (*UploadPart, error) {
+	return nil, status.Error(codes.Unimplemented, "method GrantUploadPart not implemented")
 }
 func (UnimplementedWorkerServiceServer) FinalizeUpload(context.Context, *FinalizeUploadRequest) (*FinalizeUploadResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method FinalizeUpload not implemented")
@@ -362,6 +378,24 @@ func _WorkerService_CreateUpload_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
+func _WorkerService_GrantUploadPart_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GrantUploadPartRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WorkerServiceServer).GrantUploadPart(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: WorkerService_GrantUploadPart_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WorkerServiceServer).GrantUploadPart(ctx, req.(*GrantUploadPartRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _WorkerService_FinalizeUpload_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(FinalizeUploadRequest)
 	if err := dec(in); err != nil {
@@ -450,6 +484,10 @@ var WorkerService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CreateUpload",
 			Handler:    _WorkerService_CreateUpload_Handler,
+		},
+		{
+			MethodName: "GrantUploadPart",
+			Handler:    _WorkerService_GrantUploadPart_Handler,
 		},
 		{
 			MethodName: "FinalizeUpload",

@@ -4061,3 +4061,32 @@ This recorded gap is resolved by D17l/D17m below; the live sweep gate remains op
   `.local/verification/multipart-parts-{red,store,schema,gate}.log`. Public part
   capabilities, paired worker protocol/delivery, larger size policy, and the
   submitted-job demonstration remain open in R02.
+
+### R02f: Authenticated multipart coordination and paired worker contracts
+
+- Connected public initialization, one-part capability grants, and multipart
+  finalization to the durable store and identified storage lifecycle. Plans and
+  expected object identity are checked before storage completion. Full-byte
+  verification and fenced publication use the saved exact version.
+- Initialization replay returns the winning public identity. Confirmed losing
+  or fenced initializers abort their unused backend with a separate bounded
+  context. Review found that a generic bind error could hide a successful commit;
+  the fix preserves that backend for replay/reconciliation. Its focused regression
+  failed before the fix and passed afterward. Unknown creation outcomes and
+  abandoned-upload reconciliation remain required.
+- Part grants persist immutable SHA-256 before signing one 30-second capability,
+  then recheck authority. Added matching Rust control-client contracts and five
+  Go-to-Rust-to-Go fixtures for initialization, part grants, and completion.
+  Existing Rust execution still requests single-part uploads.
+- Real mTLS/PostgreSQL/versioned-storage verification passed: two-part upload,
+  changed-checksum rejection, mismatched object rejection before completion,
+  exact-version verification, stable replay, and cancellation. Final affected
+  store and worker API gates passed in 4.071 and 2.193 seconds respectively;
+  the real multipart case took 0.68 seconds.
+- Repository `make test lint smoke` and `make generate-check` passed. Read-only
+  review confirmed the initialization fix and found no remaining blockers.
+  Evidence: `.local/verification/multipart-rpc-{bind-red,bind-green,regression-final,gate,generated-check}.log`.
+  Updated README, multipart guide, and release checklist. R02 remains open for
+  automatic journaled Rust transfers, configurable thresholds, larger size policy,
+  cleanup, and a submitted-job fault demonstration. Public uploads remain capped
+  at 64 MiB.

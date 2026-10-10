@@ -143,6 +143,8 @@ func requestWorkerID(request any) string {
 		return r.GetSession().GetWorkerId()
 	case *pb.CreateUploadRequest:
 		return r.GetAuthority().GetWorkerId()
+	case *pb.GrantUploadPartRequest:
+		return r.GetAuthority().GetWorkerId()
 	case *pb.FinalizeUploadRequest:
 		return r.GetAuthority().GetWorkerId()
 	case *pb.RegisterLogSegmentRequest:

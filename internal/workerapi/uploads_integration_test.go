@@ -55,7 +55,7 @@ func uploadRPCFixture(t *testing.T, handler http.HandlerFunc) (*pgxpool.Pool, pb
 	return uploadRPCFixtureWithStorage(t, objects)
 }
 
-func uploadRPCFixtureWithStorage(t *testing.T, objects *objectstore.Store) (*pgxpool.Pool, pb.WorkerServiceClient, *pb.CreateUploadRequest) {
+func uploadRPCFixtureWithStorage(t *testing.T, objects *objectstore.Store, outputLimits ...int64) (*pgxpool.Pool, pb.WorkerServiceClient, *pb.CreateUploadRequest) {
 	t.Helper()
 	ctx := context.Background()
 	pool := workerTestPool(t)
@@ -85,7 +85,11 @@ func uploadRPCFixtureWithStorage(t *testing.T, objects *objectstore.Store) (*pgx
 	job.Spec.Inputs = nil
 	job.Spec.Placement.Labels["architecture"] = "arm64"
 	job.Spec.Image = "registry.example.org/eval@sha256:" + strings.Repeat("a", 64)
-	job.Spec.Outputs = []spec.Output{{Name: "result", Path: "/outputs/result", MaxBytes: 1024, Required: true}}
+	limit := int64(1024)
+	if len(outputLimits) > 0 {
+		limit = outputLimits[0]
+	}
+	job.Spec.Outputs = []spec.Output{{Name: "result", Path: "/outputs/result", MaxBytes: limit, Required: true}}
 	_, hash, err := job.Canonical()
 	if err != nil {
 		t.Fatal(err)

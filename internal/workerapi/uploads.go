@@ -24,13 +24,13 @@ func (s *Service) CreateUpload(ctx context.Context, r *pb.CreateUploadRequest) (
 		return nil, err
 	}
 	a := r.GetAuthority()
-	if a.GetGeneration() > math.MaxInt64 || r.GetSizeBytes() > uint64(store.MaxUploadBytes) || r.GetPartCount() != 1 || !slices.Contains([]pb.ArtifactKind{pb.ArtifactKind_OUTPUT, pb.ArtifactKind_LOG, pb.ArtifactKind_MANIFEST}, r.GetKind()) {
+	if a.GetGeneration() > math.MaxInt64 || r.GetSizeBytes() > uint64(store.MaxUploadBytes) || !validWireUploadPlan(r) || !slices.Contains([]pb.ArtifactKind{pb.ArtifactKind_OUTPUT, pb.ArtifactKind_LOG, pb.ArtifactKind_MANIFEST}, r.GetKind()) {
 		return nil, rpcError(store.ErrInvalid)
 	}
 	if s.objects == nil {
 		return nil, status.Error(codes.FailedPrecondition, "OBJECT_STORAGE_NOT_CONFIGURED")
 	}
-	request := store.UploadRequest{Authority: store.AttemptAuthority{JobID: a.GetJobId(), AttemptID: a.GetAttemptId(), WorkerID: a.GetWorkerId(), SessionID: a.GetSessionId(), Generation: int64(a.GetGeneration())}, RequestID: r.GetRequestId(), Kind: r.GetKind().String(), LogicalName: r.GetName(), SizeBytes: int64(r.GetSizeBytes()), SHA256: r.GetSha256(), PartCount: int(r.GetPartCount())}
+	request := store.UploadRequest{Authority: store.AttemptAuthority{JobID: a.GetJobId(), AttemptID: a.GetAttemptId(), WorkerID: a.GetWorkerId(), SessionID: a.GetSessionId(), Generation: int64(a.GetGeneration())}, RequestID: r.GetRequestId(), Kind: r.GetKind().String(), LogicalName: r.GetName(), SizeBytes: int64(r.GetSizeBytes()), SHA256: r.GetSha256(), PartCount: int(r.GetPartCount()), PartSizeBytes: int64(r.GetPartSizeBytes())}
 	initial, err := store.CreateUpload(ctx, s.pool, id, request)
 	if err != nil {
 		return nil, rpcError(err)
@@ -39,6 +39,9 @@ func (s *Service) CreateUpload(ctx context.Context, r *pb.CreateUploadRequest) (
 		return nil, err
 	}
 	upload := initial.Upload
+	if upload.PartCount > 1 {
+		return s.createMultipart(ctx, id, request, initial)
+	}
 	// Storage versioning checks run after the declaration transaction commits.
 	// Capabilities last 30 seconds and authorize only this attempt's object key;
 	// they can outlive ownership but never authorize accepting a job result.
@@ -69,6 +72,14 @@ func (s *Service) CreateUpload(ctx context.Context, r *pb.CreateUploadRequest) (
 		headers[name] = strings.Join(values, ",")
 	}
 	return &pb.CreateUploadResponse{UploadId: upload.UploadID, ObjectKey: upload.ObjectKey, UploadUrl: grant.URL, RequiredHeaders: headers, ExpiresUnixMs: grant.ExpiresAt.UnixMilli()}, nil
+}
+
+func validWireUploadPlan(r *pb.CreateUploadRequest) bool {
+	if r.GetPartCount() == 1 {
+		return r.GetPartSizeBytes() == 0
+	}
+	size, part := r.GetSizeBytes(), r.GetPartSizeBytes()
+	return r.GetKind() == pb.ArtifactKind_OUTPUT && r.GetPartCount() >= 2 && r.GetPartCount() <= store.MaxUploadParts && size > 0 && part >= uint64(store.MinUploadPartBytes) && part <= uint64(store.MaxUploadBytes) && uint64(r.GetPartCount()) == 1+(size-1)/part
 }
 
 func uploadAllowed(result store.UploadResult) error {
