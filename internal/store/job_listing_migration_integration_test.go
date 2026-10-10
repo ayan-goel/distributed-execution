@@ -14,6 +14,7 @@ import (
 
 func rollbackJobListing(t *testing.T, ctx context.Context, tx pgx.Tx) {
 	t.Helper()
+	rollbackActiveDeadlines(t, ctx, tx)
 	down, err := os.ReadFile("../../migrations/0019_job_listing.down.sql")
 	if err != nil {
 		t.Fatal(err)

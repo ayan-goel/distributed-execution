@@ -62,10 +62,23 @@ func TestExpiredAttemptReaperRecordsRetryOrTerminalFailureOnce(t *testing.T) {
 }
 
 func TestExpiredAttemptReaperRollsBackFailedEvent(t *testing.T) {
+	testReaperRollsBackFailedEvent(t, false)
+}
+
+func TestPhaseDeadlineReaperRollsBackFailedEvent(t *testing.T) {
+	testReaperRollsBackFailedEvent(t, true)
+}
+
+func testReaperRollsBackFailedEvent(t *testing.T, phaseTimeout bool) {
+	t.Helper()
 	pool, identity, registration := sessionFixture(t)
 	ctx := context.Background()
 	job, attempt := assignedForRecovery(t, pool, identity, registration, nil)
-	if _, err := pool.Exec(ctx, "UPDATE attempts SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE id=$1", attempt); err != nil {
+	expire := "UPDATE attempts SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE id=$1"
+	if phaseTimeout {
+		expire = "UPDATE attempts SET phase_deadline=clock_timestamp()-interval '1 second' WHERE id=$1"
+	}
+	if _, err := pool.Exec(ctx, expire, attempt); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `CREATE FUNCTION reject_reaper_event() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected event failure'; END $$;
@@ -88,11 +101,24 @@ func TestExpiredAttemptReaperRollsBackFailedEvent(t *testing.T) {
 }
 
 func TestExpiredAttemptReaperRechecksLeaseAfterWaitingForJobLock(t *testing.T) {
+	testReaperRechecksDeadlineAfterJobLock(t, false)
+}
+
+func TestPhaseDeadlineReaperRechecksAdvancedPhaseAfterWaitingForJobLock(t *testing.T) {
+	testReaperRechecksDeadlineAfterJobLock(t, true)
+}
+
+func testReaperRechecksDeadlineAfterJobLock(t *testing.T, phaseTransition bool) {
+	t.Helper()
 	pool, identity, registration := sessionFixture(t)
 	ctx := context.Background()
 	job, attempt := assignedForRecovery(t, pool, identity, registration, nil)
 	var oldExpiry time.Time
-	if err := pool.QueryRow(ctx, "UPDATE attempts SET lease_expires_at=clock_timestamp()+interval '1 second' WHERE id=$1 RETURNING lease_expires_at", attempt).Scan(&oldExpiry); err != nil {
+	initial := "UPDATE attempts SET lease_expires_at=clock_timestamp()+interval '1 second' WHERE id=$1 RETURNING lease_expires_at"
+	if phaseTransition {
+		initial = "UPDATE attempts SET state='STARTING',phase_deadline=clock_timestamp()+interval '1 second' WHERE id=$1 RETURNING phase_deadline"
+	}
+	if err := pool.QueryRow(ctx, initial, attempt).Scan(&oldExpiry); err != nil {
 		t.Fatal(err)
 	}
 	lock, err := pool.Begin(ctx)
@@ -103,9 +129,13 @@ func TestExpiredAttemptReaperRechecksLeaseAfterWaitingForJobLock(t *testing.T) {
 	if _, err := lock.Exec(ctx, "SELECT id FROM jobs WHERE id=$1 FOR UPDATE", job); err != nil {
 		t.Fatal(err)
 	}
-	// The renewal wins the job lock before old expiry but has not committed when
-	// the reaper scans. The reaper must use the post-lock lease, not that scan.
-	if _, err := lock.Exec(ctx, "UPDATE attempts SET lease_expires_at=clock_timestamp()+interval '30 seconds' WHERE id=$1", attempt); err != nil {
+	// A renewal or phase transition wins the job lock before old expiry but has
+	// not committed when the reaper scans. Only the post-lock deadlines apply.
+	advance := "UPDATE attempts SET lease_expires_at=clock_timestamp()+interval '30 seconds' WHERE id=$1"
+	if phaseTransition {
+		advance = "UPDATE attempts SET state='RUNNING',phase_deadline=clock_timestamp()+interval '30 seconds' WHERE id=$1"
+	}
+	if _, err := lock.Exec(ctx, advance, attempt); err != nil {
 		t.Fatal(err)
 	}
 	for {
@@ -158,7 +188,11 @@ func TestExpiredAttemptReaperRechecksLeaseAfterWaitingForJobLock(t *testing.T) {
 		t.Fatal("reaper fenced a renewed lease", result)
 	}
 	var state, reservation string
-	if err := pool.QueryRow(ctx, "SELECT a.state,r.state FROM attempts a JOIN reservations r ON r.attempt_id=a.id WHERE a.id=$1", attempt).Scan(&state, &reservation); err != nil || state != "ASSIGNED" || reservation != "active" {
+	wantState := "ASSIGNED"
+	if phaseTransition {
+		wantState = "RUNNING"
+	}
+	if err := pool.QueryRow(ctx, "SELECT a.state,r.state FROM attempts a JOIN reservations r ON r.attempt_id=a.id WHERE a.id=$1", attempt).Scan(&state, &reservation); err != nil || state != wantState || reservation != "active" {
 		t.Fatal("reaper changed renewed authority", state, reservation, err)
 	}
 }

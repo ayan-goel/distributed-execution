@@ -275,12 +275,16 @@ successful finalization and production acquisition remain separate work.
 `store.ReapExpiredAttempts` processes at most 64 candidates per call, with one
 transaction per attempt. It takes the reservation transition lock, then locks the
 job before its attempt. Only fresh database time after those locks decides expiry;
-a scan that saw an old lease cannot fence an attempt renewed while the reaper
+a scan that saw an old deadline cannot fence an attempt renewed or advanced to a
+new phase while the reaper
 waited. Renewal, completion, cancellation, and session takeover follow the same
 job-first ownership order.
 
-An expired current attempt becomes `LOST` with `WORKER_LOST`, or `CANCELLED` if
-the job already requested cancellation. The transaction clears current ownership,
+Lease expiry before the phase deadline becomes `LOST` with `WORKER_LOST`. An
+earlier or equal phase deadline becomes `FAILED` with `STARTUP_TIMEOUT`,
+`EXECUTION_TIMEOUT`, or `FINALIZATION_TIMEOUT`, without retry. Previously recorded
+cancellation becomes `CANCELLED`. See [phase-timeouts.md](phase-timeouts.md).
+The transaction clears current ownership,
 quarantines the reservation, records one event, and applies the job's opt-in retry
 policy and deterministic backoff. It marks the worker unreconciled and ineligible
 until a new incarnation proves physical cleanup. Repeating the scan does not create

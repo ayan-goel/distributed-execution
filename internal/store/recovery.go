@@ -155,7 +155,11 @@ func fenceLostAttempt(ctx context.Context, tx pgx.Tx, a recoveryAttempt, now tim
 	var body []byte
 	var cancelled bool
 	var number int
-	err := tx.QueryRow(ctx, "SELECT spec,cancel_requested,attempt_counter FROM jobs WHERE id=$1 AND current_attempt_id=$2", a.JobID, a.ID).Scan(&body, &cancelled, &number)
+	var phaseState string
+	var lease, phase time.Time
+	err := tx.QueryRow(ctx, `SELECT j.spec,j.cancel_requested,j.attempt_counter,a.state,a.lease_expires_at,a.phase_deadline
+		FROM jobs j JOIN attempts a ON a.id=j.current_attempt_id WHERE j.id=$1 AND a.id=$2`, a.JobID, a.ID).
+		Scan(&body, &cancelled, &number, &phaseState, &lease, &phase)
 	if err != nil {
 		return err
 	}
@@ -170,6 +174,8 @@ func fenceLostAttempt(ctx context.Context, tx pgx.Tx, a recoveryAttempt, now tim
 	nextEligible := now
 	if cancelled {
 		jobState, attemptState, reason, event = "CANCELLED", "CANCELLED", "USER_CANCELLED", "ATTEMPT_CANCELLED"
+	} else if timeout := expiredPhaseReason(phaseState, lease, phase, now); timeout != "" {
+		attemptState, reason, event = "FAILED", timeout, "ATTEMPT_TIMED_OUT"
 	} else if number < job.Spec.Retry.MaxAttempts && slices.Contains(job.Spec.Retry.On, "WORKER_LOST") {
 		jobState = "RETRY_WAIT"
 		nextEligible = now.Add(retryDelay(job.Spec.Retry, number, a.ID))
@@ -194,6 +200,24 @@ func fenceLostAttempt(ctx context.Context, tx pgx.Tx, a recoveryAttempt, now tim
 		err = applySweepFailFast(ctx, tx, a.JobID)
 	}
 	return err
+}
+
+func expiredPhaseReason(state string, lease, phase, now time.Time) string {
+	// Prefer the deadline that ended authority first, even if the reaper was late.
+	// Equal deadlines count as timeout; lease loss must not enable timeout retries.
+	if phase.After(now) || lease.Before(phase) {
+		return ""
+	}
+	switch state {
+	case "ASSIGNED", "STARTING":
+		return "STARTUP_TIMEOUT"
+	case "RUNNING":
+		return "EXECUTION_TIMEOUT"
+	case "FINALIZING":
+		return "FINALIZATION_TIMEOUT"
+	default:
+		return ""
+	}
 }
 
 func retryDelay(policy spec.Retry, attemptNumber int, attemptID string) time.Duration {

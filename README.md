@@ -62,6 +62,8 @@ The HTTP API also serves bounded, resumable pages of durable job events.
 capacity, including reservations awaiting cleanup.
 Workers now pull missing pinned image digests under the assignment's startup
 deadline before staging inputs; cached images are reused.
+The server fences expired startup, execution, and finalization phases with explicit
+timeout reasons and preserves uncertain capacity until cleanup is confirmed.
 `dispatch workers drain` lets authorized operators stop new assignments for
 maintenance while existing attempts finish.
 Declared metric outputs are collected into source-bound completion reports.

@@ -3518,3 +3518,33 @@ This recorded gap is resolved by D17l/D17m below; the live sweep gate remains op
   Private registry credentials, complete phase-timeout failure classification,
   strict scratch, independent Linux hosts, and the wider v0.1 release gates remain
   open.
+
+### D13e: Reap expired phase deadlines without worker-loss retries
+
+- The reaper now selects the earlier lease/phase deadline and rereads both after
+  job/attempt locks with fresh database time. Earlier or equal phase expiry maps
+  ASSIGNED/STARTING to `STARTUP_TIMEOUT`, RUNNING to `EXECUTION_TIMEOUT`, and
+  FINALIZING to `FINALIZATION_TIMEOUT`. These fail without retry; earlier lease
+  loss retains the existing `WORKER_LOST` policy. Cancellation takes precedence.
+  Session takeover uses the same durable classification.
+- Timeout transitions append one `ATTEMPT_TIMED_OUT` event, clear ownership,
+  quarantine uncertain reservations, require host reconciliation, and apply the
+  existing permanent-failure sweep policy atomically. No worker completion is
+  invented. Late success cannot publish a canonical result.
+- Migration `0020_active_deadlines` adds a partial expression index for earliest
+  active deadlines. Populated rollback/reapply preserves job/attempt/reservation
+  bytes. Existing upgrade fixtures now also remove migration0020; the first full
+  store run exposed their missing rollback step rather than a lifecycle failure.
+- RED tests reproduced ignored phase-only expiry and incorrect retryable worker
+  loss when the phase expired first. Focused PostgreSQL tests pass all four phases,
+  earliest/equal deadline ordering, cancellation, replay, late-success rejection,
+  session takeover, event-failure rollback, and a phase advancement committed
+  while the reaper waits on the job lock. Affected store/API/RPC/server checks and
+  fresh-schema/full-rollback/reapply passed. `make test lint smoke` passed.
+  Review found no correctness/security blockers. Evidence is ignored under
+  `.local/verification/phase-timeout-*.log`.
+- After fixture repair, the full PostgreSQL store/API suites passed with race
+  detection (52.565/10.211 seconds) in `phase-timeout-full-store-final.log`.
+- Contract and evidence boundaries are in `phase-timeouts.md`. Real-worker timeout
+  termination/reconciliation, strict Linux scratch, and the remaining v0.1 release
+  gates are not claimed by these durable server tests.
