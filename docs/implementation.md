@@ -24,11 +24,11 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D05 durable submission | D02,D03 | HTTP/CLI submission; 100 identical requests yield one job; changed payload conflicts | job admission, auth, image resolution, dataset bindings, filtered HTTP/CLI listing, wait exit codes, CLI attempt history, and paginated HTTP events gates passed |
 | D06 worker identities | D03,D04 | Authenticated registration, session takeover/recovery; stale-session rejection | control-plane, Rust client, startup/health loop, operator drain, and project-scoped HTTP/CLI fleet listing gates passed; broader release audit pending |
 | D07 acquisition | D03,D06 | Atomic assignment/reservations; concurrent quota/capacity races; acquisition replay | store, RPC, Rust client, sequential agent loop, and local operator policy switch passed; broader scheduler pending |
-| D08 Docker adapter | D04 | Real bounded create/start/inspect/stop; ambiguous create reconciles one identity | cached launch, RUNNING/FINALIZING coordination, phase store/RPC/client, and actual daemon execution passed; staging and strict workspaces pending |
+| D08 Docker adapter | D04 | Real bounded create/start/inspect/stop; ambiguous create reconciles one identity | pinned image pulls, staged inputs, RUNNING/FINALIZING coordination, and actual daemon execution passed; strict workspaces pending |
 | D09 leases | D06,D07 | Fresh DB-time expiry checks; delayed grants; local monotonic deadline enforcement | deadline, store/RPC/client, watchdog, periodic renewal, daemon execution, and production lease reaper passed; control-channel partition gate pending |
 | D10 worker recovery | D08,D09 | Durable journal; agent kill/restart stops old containers before new capacity | agent-owned job kill/restart, fencing, container/workspace cleanup, and reservation release passed; broader recovery matrix pending |
 | D11 artifacts | D03,D04 | Scoped grants; verified exact versions; stale publication rejection | grants, verification, completion, public metadata, and verified CLI download gates passed; Rust transfers and multipart support pending |
-| D12 first real job | D05–D11 | CLI submit → gRPC → Docker → verified output → CLI download | full component chain passed with cached digest and fixed fixture resolver; external registry and image pull pending |
+| D12 first real job | D05–D11 | CLI submit → gRPC → Docker → verified output → CLI download | full component chain passed with cached and absent public digests, real registry pull, and fixed fixture resolver; independent Linux-host release gates pending |
 | D13 loss/retry | D09,D12 | Reaper/reconciliation; recorded retry; backoff/deadlines; nonretryable failure | reaper, server loop, natural lease expiry, and real worker-loss retry on one Docker daemon passed; independent hosts and broader retry matrix pending |
 | D14 cancellation | D12,D13 | Both completion/cancellation race orders, repeat requests, uncertain cleanup | pending |
 | D15 logs | D08,D11 | Bounded queues/spool, noisy-job truncation, stream cursors, reconnect | catalog, HTTP cursor/tail gaps, binary format, private spool, Rust registration client, journaled delivery, bounded Docker follower, assembler, completion summary, CLI follow, pre-start capture, and live publication passed; reconnect/fault matrix pending |
@@ -3492,3 +3492,29 @@ This recorded gap is resolved by D17l/D17m below; the live sweep gate remains op
   Review found no code blockers; full digest assertions now cover both pull and
   inspection requests. Final focused checks (five tests, 2.02 seconds) and worker
   clippy passed in `image-pull-component-final.log`.
+
+### D08q: Prepare missing pinned images in the worker agent
+
+- The agent now prepares the admitted digest before staging inputs or creating
+  its container. Live authority supervises the operation so renewals preserve
+  the original startup deadline, and cancellation/fencing interrupt preparation.
+  Observed preparation errors seal replayable `RUNTIME_UNAVAILABLE` evidence only
+  when no container or exit observation exists. Cancellation winning delivery
+  uses the existing confirmed unlaunched-stop path.
+- RED evidence: the new journal test failed for the absent helper; the real
+  missing-image workflow timed out before integration. Journal checks then
+  passed, covering stable completion identity, incompatible reason rejection,
+  and refusal to claim an unlaunched failure after a container is bound.
+- Actual worker execution passed with a cached digest (27.64 seconds) and an
+  initially absent public BusyBox digest (27.35 seconds), using real PostgreSQL,
+  mTLS, Docker, and versioned SeaweedFS. Both verify CLI submission, dataset
+  staging, live logs, exact response replay, verified output publication/download,
+  and cleanup. The cold fixture performs no manual pull and removes only its
+  newly introduced image reference without forced deletion.
+- Evidence: ignored `.local/verification/image-agent-{journal-red,cold-red,
+  journal-green,live-green}.log`. Review found no correctness/security blockers.
+  `make test lint smoke` passed in `image-agent-native.log`, including journal,
+  image-pull fault checks, protocol parity, lint, and all three binary smoke checks.
+  Private registry credentials, complete phase-timeout failure classification,
+  strict scratch, independent Linux hosts, and the wider v0.1 release gates remain
+  open.

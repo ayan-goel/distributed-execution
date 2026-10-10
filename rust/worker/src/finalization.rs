@@ -214,6 +214,23 @@ pub async fn prepare_unlaunched_transfer_failure(
     journal: &AsyncJournal,
     identity: &AttemptAuthority,
 ) -> Result<CompleteAttemptRequest, FinalizationError> {
+    prepare_unlaunched_failure(journal, identity, FailureReason::TransferFailed).await
+}
+
+/// Seal image preparation failure without claiming that a container ran.
+/// Durable evidence permits exact completion replay after a lost reply.
+pub async fn prepare_unlaunched_runtime_failure(
+    journal: &AsyncJournal,
+    identity: &AttemptAuthority,
+) -> Result<CompleteAttemptRequest, FinalizationError> {
+    prepare_unlaunched_failure(journal, identity, FailureReason::RuntimeUnavailable).await
+}
+
+async fn prepare_unlaunched_failure(
+    journal: &AsyncJournal,
+    identity: &AttemptAuthority,
+    reason: FailureReason,
+) -> Result<CompleteAttemptRequest, FinalizationError> {
     let saved = journal
         .load_attempt(identity.attempt_id.clone())
         .await?
@@ -221,13 +238,13 @@ pub async fn prepare_unlaunched_transfer_failure(
     if saved.assignment().authority.as_ref() != Some(identity) {
         return Err(FinalizationError::Identity);
     }
-    // INVARIANT: a transfer failure may release capacity immediately only
+    // INVARIANT: a preparation failure may release capacity immediately only
     // when no container or exit observation exists for this attempt.
     if saved.container_id().is_some() || saved.exit().is_some() {
         return Err(FinalizationError::StopUnconfirmed);
     }
     if let Some(request) = saved.completion() {
-        return if request.reason == FailureReason::TransferFailed as i32 && request.stopped {
+        return if request.reason == reason as i32 && request.stopped {
             Ok(request.clone())
         } else {
             Err(FinalizationError::Identity)
@@ -236,7 +253,7 @@ pub async fn prepare_unlaunched_transfer_failure(
     let mut request = CompleteAttemptRequest {
         authority: Some(identity.clone()),
         completion_id: new_uuid()?,
-        reason: FailureReason::TransferFailed as i32,
+        reason: reason as i32,
         stopped: true,
         logs_complete: false,
         ..Default::default()

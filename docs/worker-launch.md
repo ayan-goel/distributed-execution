@@ -5,16 +5,18 @@ STARTING phase RPC, and the runtime's create/start/inspect operations. This comp
 ends after confirming the container is running or already exited with valid exit
 evidence. It does not report RUNNING/FINALIZING, publish results, or release capacity.
 `launch::execute` builds on it to supervise execution and enter FINALIZING, as
-described below. The agent startup command does not yet call these paths or acquire work.
+described below. The worker agent acquires work and calls these paths after image
+preparation and input staging.
 
 ## Preconditions and sequence
 
 The caller must already have completed session registration/reconciliation, reserved
 local capacity, and obtained a live `GrantedAssignment`. Supply that acknowledged
 session, the current owner's `AsyncJournal`, and a prepared workspace whose final
-directory name is the attempt UUID. The pinned image must already be cached; input
-staging, image pulling, strict scratch preparation, and local reservation orchestration
-remain separate required work. The authority receiver must come from a channel for
+directory name is the attempt UUID. The lower-level launch operation requires the
+pinned image to be cached. The agent now prepares that digest and stages inputs
+before launch; strict scratch preparation remains unfinished. The authority
+receiver must come from a channel for
 the assignment's exact worker/session/job/attempt/generation tuple.
 
 Launch performs these steps under the live authority receiver:

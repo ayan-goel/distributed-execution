@@ -3,11 +3,18 @@
 The actual `dispatch-worker` executable now opens its journal, registers a fresh
 incarnation over mTLS, reconciles previous-session Docker containers, and reports
 health/readiness periodically. It then acquires one job at a time, renews its lease,
-runs its cached image in Docker, verifies and publishes declared outputs, records
+prepares its pinned image in Docker, verifies and publishes declared outputs, records
 completion, and removes the container and private attempt workspace. Startup also
 delivers journaled completion requests and persists their authoritative outcomes.
 This is the soft-scratch development path; the strict Linux release profile and
 other v0.1 features remain unfinished.
+
+Before staging inputs or creating a container, the agent reuses the exact image
+digest or pulls it on a cache miss. Live lease supervision preserves the original
+startup deadline and interrupts preparation on cancellation or fencing. Observed
+preparation errors seal a replayable `RUNTIME_UNAVAILABLE` completion with no
+container or exit evidence. A cancellation that wins completion delivery is
+acknowledged as an unlaunched stop. See [image-preparation.md](image-preparation.md).
 
 ## Development setup
 
@@ -189,8 +196,12 @@ PostgreSQL, mTLS, Docker, and versioned SeaweedFS. It loses committed phase,
 upload, artifact, and completion replies, then verifies exact replay, one accepted
 result, the stored object version, released reservation, and local cleanup. CLI
 submission and verified download surround the worker lifecycle. The fixture pins
-an already cached image through a fixed test resolver, so this gate does not cover
-external registry access or image pulling.
+an already cached image through a fixed test resolver.
+`TestWorkerDaemonPullsMissingPinnedImageAndPublishes` starts with an absent public
+BusyBox digest and verifies the same execution and publication path after the
+agent downloads it. Both passed locally with real Docker, PostgreSQL, mTLS, and
+versioned object storage. Registry admission resolution and private credentials
+are separate from these fixed-resolver execution gates.
 
 The old container in the startup test is fixture-created. A separate
 `TestWorkerRestartFencesAndRemovesItsOwnRunningJob` starts a job through the actual

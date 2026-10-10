@@ -6,8 +6,8 @@ use crate::{
     dataset_cache_store::{CachePin, CacheStore, CacheStoreError},
     dataset_download::DatasetDownloader,
     finalization::{
-        prepare_cancelled_completion, prepare_completion, prepare_unlaunched_transfer_failure,
-        publish_finished_logs, FinalizationError,
+        prepare_cancelled_completion, prepare_completion, prepare_unlaunched_runtime_failure,
+        prepare_unlaunched_transfer_failure, publish_finished_logs, FinalizationError,
     },
     launch::{execute_with_logs, CleanupEvidence, ExecutionError, LaunchCause},
     runtime::Runtime,
@@ -166,6 +166,25 @@ async fn run_assignment(
             return Err(AgentError::Task);
         }
     };
+    // Image preparation owns no container. Live authority preserves the original
+    // startup deadline across renewals and cancels pulls before stale execution.
+    match authority
+        .while_live(context.runtime.prepare_image(grant.execution()))
+        .await
+    {
+        Ok(Ok(())) => {}
+        Ok(Err(_)) => {
+            prepare_unlaunched_runtime_failure(context.journal, identity).await?;
+            return deliver_unlaunched_failure(context, client, identity, path).await;
+        }
+        Err(StopReason::Rejected(Decision::StopRequested)) => {
+            return acknowledge_unlaunched(context, client, identity, Some(path)).await;
+        }
+        Err(_) => {
+            remove_workspace(path).await?;
+            return Err(AgentError::Task);
+        }
+    }
     let _pins = if grant.assignment().inputs.is_empty() {
         Vec::new()
     } else {
@@ -382,9 +401,18 @@ async fn complete_unlaunched_transfer_failure(
     workspace: std::path::PathBuf,
 ) -> Result<(), AgentError> {
     prepare_unlaunched_transfer_failure(context.journal, identity).await?;
+    deliver_unlaunched_failure(context, client, identity, workspace).await
+}
+
+async fn deliver_unlaunched_failure(
+    context: &ExecutionContext<'_>,
+    client: &mut ControlClient,
+    identity: &dispatch_protocol::v1::AttemptAuthority,
+    workspace: std::path::PathBuf,
+) -> Result<(), AgentError> {
     let reply = deliver_terminal(context.journal, client, &identity.attempt_id).await?;
     if reply.decision == Decision::StopRequested as i32 {
-        // Cancellation won after transfer failure was sealed; preserve the
+        // Cancellation won after preparation failure was sealed; preserve the
         // rejected result before recording the confirmed unlaunched stop.
         prepare_cancelled_completion(context.journal, identity, CleanupEvidence::NotCreated)
             .await?;

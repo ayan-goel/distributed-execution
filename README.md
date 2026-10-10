@@ -60,6 +60,8 @@ and an optional timeout; timeout cancellation requires an explicit flag.
 The HTTP API also serves bounded, resumable pages of durable job events.
 `dispatch workers list` shows authorized hosts, recorded health, and occupied/free
 capacity, including reservations awaiting cleanup.
+Workers now pull missing pinned image digests under the assignment's startup
+deadline before staging inputs; cached images are reused.
 `dispatch workers drain` lets authorized operators stop new assignments for
 maintenance while existing attempts finish.
 Declared metric outputs are collected into source-bound completion reports.

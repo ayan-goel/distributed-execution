@@ -28,8 +28,8 @@ import (
 type fixtureImageResolver string
 
 func (r fixtureImageResolver) Resolve(_ context.Context, reference string) (string, error) {
-	// Keep this end-to-end gate deterministic with a digest already cached in
-	// Docker. Registry resolution is verified separately from workload execution.
+	// Keep execution gates bound to their chosen immutable digest. Registry
+	// resolution is verified separately from workload execution and pulling.
 	if reference != string(r) {
 		return "", errors.New("unexpected test image")
 	}
@@ -37,14 +37,20 @@ func (r fixtureImageResolver) Resolve(_ context.Context, reference string) (stri
 }
 
 func TestWorkerDaemonAcquiresExecutesAndPublishes(t *testing.T) {
-	testWorkerDaemonExecution(t, false)
+	testWorkerDaemonExecution(t, false, "")
 }
 
 func TestWorkerDaemonFinishesExistingJobAfterOperatorDrain(t *testing.T) {
-	testWorkerDaemonExecution(t, true)
+	testWorkerDaemonExecution(t, true, "")
 }
 
-func testWorkerDaemonExecution(t *testing.T, drainDuringRun bool) {
+func TestWorkerDaemonPullsMissingPinnedImageAndPublishes(t *testing.T) {
+	// Official BusyBox 1.37.0 multi-platform manifest, read without downloading
+	// layers. This fixture must start absent; it never evicts an existing image.
+	testWorkerDaemonExecution(t, false, "index.docker.io/library/busybox@sha256:bdf57e528e45e4433820e045b29b4597825a1c9e38353532d90a01445013f82e")
+}
+
+func testWorkerDaemonExecution(t *testing.T, drainDuringRun bool, coldImage string) {
 	t.Helper()
 	configureServerTestDatabase(t)
 	publication := &publicationEvidence{}
@@ -63,7 +69,22 @@ func testWorkerDaemonExecution(t *testing.T, drainDuringRun bool) {
 	architecture := docker("version", "--format", "{{.Server.Arch}}")
 	socket := strings.TrimPrefix(docker("context", "inspect", "--format", "{{.Endpoints.docker.Host}}"), "unix://")
 	image := "rust@sha256:38bc5a86d998772d4aec2348656ed21438d20fcdce2795b56ca434cf21430d89"
-	if exec.CommandContext(ctx, "docker", "image", "inspect", image).Run() != nil {
+	if coldImage != "" {
+		image = coldImage
+		output, err := exec.CommandContext(ctx, "docker", "image", "inspect", image).CombinedOutput()
+		if err == nil || !strings.Contains(strings.ToLower(string(output)), "no such image") {
+			t.Fatalf("cold-image gate requires an absent digest without cache eviction: %v: %s", err, output)
+		}
+		t.Cleanup(func() {
+			// Only a digest absent before this fixture can be removed. Never force
+			// removal: concurrent containers using it must preserve the shared cache.
+			if exec.Command("docker", "image", "inspect", image).Run() == nil {
+				if output, err := exec.Command("docker", "image", "rm", image).CombinedOutput(); err != nil {
+					t.Errorf("remove fixture-created image: %v: %s", err, output)
+				}
+			}
+		})
+	} else if exec.CommandContext(ctx, "docker", "image", "inspect", image).Run() != nil {
 		docker("pull", image)
 	}
 	pool, err := openPool(ctx)
@@ -224,6 +245,11 @@ func testWorkerDaemonExecution(t *testing.T, drainDuringRun bool) {
 	var liveState string
 	var liveSegments int
 	liveDeadline := time.Now().Add(12 * time.Second)
+	if coldImage != "" {
+		// Cold image preparation belongs to the admitted startup budget; use
+		// that budget before checking the same live-log and publication evidence.
+		liveDeadline = time.Now().Add(time.Duration(job.Spec.Timeouts.StartupSeconds) * time.Second)
+	}
 	for time.Now().Before(liveDeadline) {
 		err := pool.QueryRow(ctx, `SELECT coalesce((SELECT a.state FROM attempts a
 			WHERE a.job_id=j.id ORDER BY a.attempt_number DESC LIMIT 1),''),
