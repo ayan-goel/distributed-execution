@@ -18,8 +18,9 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 The full specification and ledger remain authoritative. Prioritize these gaps;
 expand existing tests only to resolve a named requirement or observed defect:
 
-1. Run the required 27-job recovery/fencing demonstration across two independent
-   Linux VMs, including verified downloads and an actual evaluation workload.
+1. Complete an actual evaluation workload. The 27-job recovery demonstration and
+   delayed-result fencing gate passed across two independent Linux VMs with
+   verified downloads; those synthetic fixtures do not establish practical use.
 2. Reconcile every remaining contract/fault gate below against current evidence,
    then close the missing cases without repeating already-established coverage.
    Include the strict agent's live enforcement-loss transition.
@@ -40,17 +41,17 @@ expand existing tests only to resolve a named requirement or observed defect:
 | D06 worker identities | D03,D04 | Authenticated registration, session takeover/recovery; stale-session rejection | control-plane, Rust client, startup/health loop, operator drain, and project-scoped HTTP/CLI fleet listing gates passed; broader release audit pending |
 | D07 acquisition | D03,D06 | Atomic assignment/reservations; concurrent quota/capacity races; acquisition replay | store, RPC, Rust client, sequential agent loop, and local operator policy switch passed; broader scheduler pending |
 | D08 Docker adapter | D04 | Real bounded create/start/inspect/stop; ambiguous create reconciles one identity | pinned image pulls, staged inputs, RUNNING/FINALIZING coordination, actual daemon execution, rejected-start cleanup, and strict ext4 quota workspaces through a submitted Linux job passed |
-| D09 leases | D06,D07 | Fresh DB-time expiry checks; delayed grants; local monotonic deadline enforcement | deadline, store/RPC/client, watchdog, periodic renewal, daemon execution, production lease reaper, and actual-worker control-channel partition gate passed; independent-host/pause/runtime-failure matrix pending |
+| D09 leases | D06,D07 | Fresh DB-time expiry checks; delayed grants; local monotonic deadline enforcement | deadline, store/RPC/client, watchdog, periodic renewal, daemon execution, production lease reaper, and actual-worker control-channel partition gate passed; two-VM natural loss recovery passed; pause/runtime-failure matrix pending |
 | D10 worker recovery | D08,D09 | Durable journal; agent kill/restart stops old containers before new capacity | agent-owned job kill/restart, fencing, container/workspace cleanup, and reservation release passed; broader recovery matrix pending |
 | D11 artifacts | D03,D04 | Scoped grants; verified exact versions; stale publication rejection | grants, verification, completion, public metadata, and verified CLI download gates passed; Rust transfers and multipart support pending |
-| D12 first real job | D05–D11 | CLI submit → gRPC → Docker → verified output → CLI download | full component chain passed with cached and absent public digests, real registry pull, and fixed fixture resolver; independent Linux-host release gates pending |
-| D13 loss/retry | D09,D12 | Reaper/reconciliation; recorded retry; backoff/deadlines; nonretryable failure | reaper, natural lease expiry, real worker-loss retry, durable phase-timeout classification, and actual-worker startup/execution/finalization timeout gates on one Docker daemon passed; independent hosts and broader retry/fault matrix pending |
+| D12 first real job | D05–D11 | CLI submit → gRPC → Docker → verified output → CLI download | full component chain passed with cached and absent public digests, real registry pull, and fixed fixture resolver; two-VM recovery/fencing passed; remaining release gates pending |
+| D13 loss/retry | D09,D12 | Reaper/reconciliation; recorded retry; backoff/deadlines; nonretryable failure | reaper, natural lease expiry, real worker-loss retry, durable phase-timeout classification, and actual-worker startup/execution/finalization timeout gates on one Docker daemon passed; two-VM natural lease loss/retry passed; broader retry/fault matrix pending |
 | D14 cancellation | D12,D13 | Both completion/cancellation race orders, repeat requests, uncertain cleanup | pending |
 | D15 logs | D08,D11 | Bounded queues/spool, noisy-job truncation, stream cursors, reconnect | catalog, HTTP cursor/tail gaps, binary format, private spool, Rust registration client, journaled delivery, bounded Docker follower, assembler, completion summary, CLI follow, pre-start capture, and live publication passed; reconnect/fault matrix pending |
 | D16 datasets | D11 | Immutable registration/cache; corruption rejection; pin-aware eviction | ownership schema, upload/completion APIs, project-scoped resolution, real CLI registration, isolated worker cache, atomic store admission bindings, durable replay, archive assignment contract, worker validation, store assignment population, signed RPC grants, strict job-to-wire matching, real read-only Docker mount, startup cache reset, assignment-to-cache preparation, agent cache initialization, unlaunched transfer-failure completion, replay-binding validation, worker input acquisition path, HTTP submission, and one live dataset-to-output Docker job passed; dataset fault matrix still pending |
-| D17 sweeps/metrics | D05,D13,D16 | Atomic 27-child sweep; 1000 cap; concurrency; fail-fast; finite scalar export | deterministic expansion, schema constraints, HTTP/CLI submission/replay, scheduler cap/terminal release, fail-fast, bounded CLI/HTTP progress/accepted metrics, CSV/JSON export, real worker metric ingestion, local 27-child success/fail-fast/worker-loss sweeps, immutable project-scoped retry lineage, atomic failed/cancelled-only store/HTTP/client/CLI retry, and local dataset-backed retry execution passed; independent-host gates pending |
-| D18 placement | D07,D17 | Project fairness/aging, blockers, two real independent hosts without oversubscription | durable project round-robin, public 0–3 job priorities, eligible queue aging, bounded diagnostic storage, scheduler recording, and public historical blocker status gates passed; independent hosts pending |
-| D19 faults/benchmarks | D14–D18 | Spec §21/22 runtime matrix, 27-job worker kill, stale result, measured benchmarks | local 27-child worker kill/natural lease recovery, delayed completion rejection after replacement, and actual-worker OOM/exit-137, invalid-output, and rejected-start gates passed; independent-host evidence, broader fault matrix, and published measurements pending |
+| D17 sweeps/metrics | D05,D13,D16 | Atomic 27-child sweep; 1000 cap; concurrency; fail-fast; finite scalar export | deterministic expansion, schema constraints, HTTP/CLI submission/replay, scheduler cap/terminal release, fail-fast, bounded CLI/HTTP progress/accepted metrics, CSV/JSON export, real worker metric ingestion, local 27-child success/fail-fast/worker-loss sweeps, immutable project-scoped retry lineage, atomic failed/cancelled-only store/HTTP/client/CLI retry, and local dataset-backed retry execution and two-VM strict recovery/fencing passed; broader fault audit pending |
+| D18 placement | D07,D17 | Project fairness/aging, blockers, two real independent hosts without oversubscription | durable project round-robin, public 0–3 job priorities, eligible queue aging, bounded diagnostic storage, scheduler recording, and public historical blocker status and two-VM execution gates passed; broader placement audit pending |
+| D19 faults/benchmarks | D14–D18 | Spec §21/22 runtime matrix, 27-job worker kill, stale result, measured benchmarks | local 27-child worker kill/natural lease recovery, delayed completion rejection after replacement, and actual-worker OOM/exit-137, invalid-output, and rejected-start gates passed; two-VM strict 27-child recovery and delayed-completion fencing passed; broader fault matrix and published measurements pending |
 | D20 release | D19 | TLS/auth/permissions, retention, migrations/backups, packaging, tutorial, actual research run | pending |
 
 ## Release audit (all required)
@@ -3874,3 +3875,39 @@ This recorded gap is resolved by D17l/D17m below; the live sweep gate remains op
   Evidence: `.local/verification/sweep-vm-{1-identity,2-identity,2-docker,2-quota}.log`.
 - Documented named-VM setup. This closes the independent runtime prerequisite;
   the 27-job recovery/fencing sweep itself remains required next.
+
+### D19b: Verify independent-VM sweep recovery and delayed-result fencing
+
+- Reused the existing real sweep scenarios with an explicit two-VM fixture.
+  It checks different boot and Docker daemon IDs, provisions separate worker
+  certificates/identities, and runs the actual strict Rust agent on each VM.
+  Reverse SSH loopback tunnels preserve mTLS control and signed object origins;
+  each worker owns its own new ext4 quota filesystem. Added a reproducible wrapper
+  that stages the Linux binary/helper and uses disposable PostgreSQL/SeaweedFS.
+- The 27-child recovery gate requires accepted children from both VMs before
+  selecting a fresh RUNNING attempt. Review caught that a fixed child index was
+  an unreliable barrier; the final gate instead checks committed successful worker
+  IDs and a fresh phase report in one database snapshot. A bounded job delay leaves
+  time to kill the agent and independently inspect its still-running container.
+- The final recovery run passed in 267.46 seconds: 28 attempts, one naturally LOST,
+  27 accepted completions, both strict workers contributing successes, a peak of
+  two authoritative attempts, no fail-fast cancellations, and a replacement on
+  the surviving VM at the next generation. Loss recorded 1.144223 seconds after
+  the issued lease expired; the old reservation stayed quarantined. All exported
+  child parameters/metrics and the replacement artifact download were verified.
+- The separate delayed-result gate uses actual verified old outputs and original
+  mTLS identity/session/generation, then replays completion after natural loss and
+  replacement. It verifies `ALREADY_TERMINAL/LOST`, unchanged accepted manifest and
+  history, distinct replacement download bytes, and intact rejected diagnostic
+  versions. The final delayed-result gate passed in 33.55 seconds; the combined
+  reviewed wrapper run passed in 302.514 seconds, including successful cleanup.
+- The affected local recovery and fencing tests passed with race detection in
+  101.52/32.86 seconds. Integration-tagged Go vet, formatting, shell syntax,
+  whitespace checks, and read-only code/documentation review passed. Evidence:
+  `.local/verification/sweep-vm-{red,e2e,final,local-regression,vet-final}.log`.
+- Updated README, sweep/worker/quota guides, release order, and added
+  `independent-workers.md`. These tests use two 2-vCPU/1-GiB Debian ARM64 VMs on
+  one physical macOS host, with synthetic commands and deliberate delays. They
+  establish independent VM recovery/fencing, not benchmark targets or practical
+  research use. Old-worker restart/reconciliation, wider runtime/fault coverage,
+  AMD64, measured benchmarks, and remaining release requirements stay open.

@@ -39,16 +39,21 @@ type sweepDaemonFixture struct {
 	job          spec.Job
 	labels       map[string]string
 	env          func(string) string
+	vms          []sweepVM
 }
 
-func newSweepDaemonFixture(t *testing.T) *sweepDaemonFixture {
+func newSweepDaemonFixture(t *testing.T, vms ...sweepVM) *sweepDaemonFixture {
 	t.Helper()
 	if os.Getenv("DISPATCH_TEST_S3_ENDPOINT") == "" {
 		t.Skip("requires the combined PostgreSQL and object storage fixture")
 	}
 	configureServerTestDatabase(t)
 	objects := publicationStorage(t, "agent-sweep", &publicationEvidence{})
-	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
+	timeout := 180 * time.Second
+	if len(vms) != 0 {
+		timeout = 420 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	t.Cleanup(cancel)
 	docker := func(args ...string) string {
 		t.Helper()
@@ -58,11 +63,16 @@ func newSweepDaemonFixture(t *testing.T) *sweepDaemonFixture {
 		}
 		return strings.TrimSpace(string(output))
 	}
-	architecture := docker("version", "--format", "{{.Server.Arch}}")
-	socket := strings.TrimPrefix(docker("context", "inspect", "--format", "{{.Endpoints.docker.Host}}"), "unix://")
+	architecture, socket := "arm64", "/var/run/docker.sock"
 	image := "rust@sha256:38bc5a86d998772d4aec2348656ed21438d20fcdce2795b56ca434cf21430d89"
-	if exec.CommandContext(ctx, "docker", "image", "inspect", image).Run() != nil {
-		docker("pull", image)
+	if len(vms) != 0 {
+		image = "debian@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587"
+	} else {
+		architecture = docker("version", "--format", "{{.Server.Arch}}")
+		socket = strings.TrimPrefix(docker("context", "inspect", "--format", "{{.Endpoints.docker.Host}}"), "unix://")
+		if exec.CommandContext(ctx, "docker", "image", "inspect", image).Run() != nil {
+			docker("pull", image)
+		}
 	}
 	pool, err := openPool(ctx)
 	if err != nil {
@@ -91,7 +101,7 @@ func newSweepDaemonFixture(t *testing.T) *sweepDaemonFixture {
 	env := func(key string) string {
 		return map[string]string{"DISPATCH_URL": httpServer.URL, "DISPATCH_TOKEN": token, "DISPATCH_DEV_INSECURE": "1"}[key]
 	}
-	return &sweepDaemonFixture{ctx: ctx, pool: pool, objects: objects, root: t.TempDir(), job: job, socket: socket, labels: map[string]string{"os": "linux", "architecture": architecture}, env: env}
+	return &sweepDaemonFixture{ctx: ctx, pool: pool, objects: objects, root: t.TempDir(), job: job, socket: socket, labels: map[string]string{"os": "linux", "architecture": architecture}, env: env, vms: vms}
 }
 
 func (f *sweepDaemonFixture) runCLI(t *testing.T, args ...string) []byte {
@@ -125,11 +135,15 @@ type sweepTestDaemon struct {
 	stop     func()
 	endpoint string
 	tls      *tls.Config
+	inspect  func(string) string
 }
 
 func (f *sweepDaemonFixture) startWorkers(t *testing.T, service pb.WorkerServiceServer) []sweepTestDaemon {
 	t.Helper()
 	pkis := []workerPKI{testWorkerPKI(t), testWorkerPKI(t), testWorkerPKI(t)}
+	if len(f.vms) != 0 {
+		pkis = pkis[:len(f.vms)]
+	}
 	roots := x509.NewCertPool()
 	for _, pki := range pkis {
 		pem, err := os.ReadFile(pki.ca)
@@ -162,6 +176,12 @@ func (f *sweepDaemonFixture) startWorkers(t *testing.T, service pb.WorkerService
 		worker, err := store.ProvisionWorker(f.ctx, f.pool, store.WorkerProvision{Name: fmt.Sprintf("sweep-worker-%d", index), CertificateSHA256: sha256.Sum256(pki.client.Certificate[0]), Resources: f.job.Spec.Resources, Slots: 1, Labels: f.labels, Projects: []string{"research"}})
 		if err != nil {
 			t.Fatal(err)
+		}
+		if len(f.vms) != 0 {
+			daemon := f.vms[index].start(t, f, worker, pki, pkis[0].ca, listener.Addr().String())
+			daemon.tls.RootCAs = pkis[0].roots
+			daemons = append(daemons, daemon)
+			continue
 		}
 		t.Cleanup(func() {
 			// Only unpredictable identities enrolled by this test authorize cleanup.
@@ -214,7 +234,14 @@ func (f *sweepDaemonFixture) startWorkers(t *testing.T, service pb.WorkerService
 		stop := func() { stopped.Do(func() { _ = command.Process.Kill(); _ = command.Wait() }) }
 		t.Cleanup(stop)
 		daemons = append(daemons, sweepTestDaemon{workerID: worker.WorkerID, stop: stop,
-			endpoint: listener.Addr().String(), tls: &tls.Config{RootCAs: pkis[0].roots, Certificates: []tls.Certificate{pki.client}, MinVersion: tls.VersionTLS13}})
+			endpoint: listener.Addr().String(), tls: &tls.Config{RootCAs: pkis[0].roots, Certificates: []tls.Certificate{pki.client}, MinVersion: tls.VersionTLS13},
+			inspect: func(container string) string {
+				output, err := exec.CommandContext(f.ctx, "docker", "inspect", "--format", "{{.State.Running}}", container).CombinedOutput()
+				if err != nil {
+					t.Fatal("cannot inspect owned local container", err, string(output))
+				}
+				return strings.TrimSpace(string(output))
+			}})
 	}
 	t.Cleanup(func() {
 		if t.Failed() {

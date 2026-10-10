@@ -196,7 +196,7 @@ ordered children, quota rollback, sweep capacity/backfill and terminal release,
 both failure policies, retry preservation, reaping, session recovery, completion
 replay, sibling event rollback, stop acknowledgement, and observed job-lock ordering.
 Progress tests cover accepted-only numeric precision, byte/row pagination, and
-cancellation between snapshot reads. Real multi-host sweep execution remains open.
+cancellation between snapshot reads.
 
 The real-stack 27-child test runs three enrolled native worker processes sharing
 Docker Desktop, with a sweep cap of two. It checks same-key replay, successful
@@ -238,5 +238,11 @@ workers. CLI downloads contain the frozen uploaded input and each fresh job and
 attempt ID. Original sweep/jobs/attempts/events/completions and its export remain
 unchanged; the lost worker's reservation remains quarantined.
 
-These scenarios share one Docker daemon. Independent Linux hosts, reconciliation
-after these worker kills, and the broader fault matrix remain separate gates.
+Those local scenarios share one Docker daemon. The recovery and delayed-completion
+gates now also pass with two independent Debian ARM64 VMs using strict scratch,
+separate kernels, Docker daemons, quota filesystems, and enrolled identities.
+The recovery gate requires accepted children from both workers before killing an
+agent, then verifies all 27 results and the replacement's downloaded artifact.
+See [independent-workers.md](independent-workers.md) for reproduction and boundaries.
+Reconciliation after these worker kills and the broader fault matrix remain
+separate gates; fixture teardown does not establish recovery of old capacity.

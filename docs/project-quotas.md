@@ -125,7 +125,7 @@ file with port 22232. Names contain lowercase letters, digits, and internal
 hyphens, at most 32 characters. Configure Docker inside each VM independently.
 Two VMs were booted locally with distinct boot IDs and Docker daemon IDs; byte,
 inode, isolation, and accounting-only rejection gates passed on the second VM.
-This verifies the infrastructure, not yet the two-worker sweep.
+The [two-worker recovery and fencing gates](independent-workers.md) use these VMs.
 
 Build the Linux test binaries with the pinned worker toolchain:
 
@@ -189,7 +189,8 @@ attempts a 128 MiB write against a 64 MiB reservation. It verifies `EDQUOT` and 
 bounded file size, frees the test payload, and checks accepted completion, live
 logs, exact output download, strict capability claims, and container/workspace
 removal. This gate passed in 26.03 seconds using disposable host services through
-SSH loopback tunnels. It establishes one Linux worker, not the two-host release gate.
+SSH loopback tunnels. Separate [independent-worker gates](independent-workers.md)
+verify two-VM sweep recovery and stale-result rejection.
 
 Shut down the test VM with its disposable key:
 

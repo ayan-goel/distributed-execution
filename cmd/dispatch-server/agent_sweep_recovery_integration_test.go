@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -23,11 +22,19 @@ import (
 )
 
 func TestWorkerDaemonsRecover27ChildSweepAfterAgentLoss(t *testing.T) {
-	f := newSweepDaemonFixture(t)
+	testWorkerDaemonsRecover27ChildSweep(t, newSweepDaemonFixture(t))
+}
+
+func testWorkerDaemonsRecover27ChildSweep(t *testing.T, f *sweepDaemonFixture) {
 	job := f.job
 	// Give the designated victim a wider kill window without making every child
 	// slow. The replacement runs the same immutable command and delay.
 	job.Spec.Command = []string{"sh", "-c", `printf '{"seed":%s,"rate":%s,"score":9007199254740993}\n' "$SEED" "$RATE" > /outputs/evaluation.json; pause=2; if [ "$ALGORITHM" = a ] && [ "$RATE" = 0.1 ] && [ "$SEED" = 1 ]; then pause=10; fi; sleep "$pause"`}
+	if len(f.vms) != 0 {
+		// Leave a bounded kill window after observing a fresh RUNNING attempt.
+		// Both VMs must first complete real children; startup order is irrelevant.
+		job.Spec.Command[2] = strings.Replace(job.Spec.Command[2], "pause=2", "pause=5", 1)
+	}
 	job.Spec.Retry.MaxAttempts = 2
 	job.Spec.Retry.On = []string{"WORKER_LOST"}
 	job.Spec.Retry.InitialBackoffSeconds, job.Spec.Retry.MaxBackoffSeconds = 1, 1
@@ -52,13 +59,23 @@ func TestWorkerDaemonsRecover27ChildSweepAfterAgentLoss(t *testing.T) {
 			t.Log("lease reaper:", reaperLogs.String())
 		}
 	})
-	probe := &sweepAcquisitionProbe{WorkerServiceServer: workerapi.NewService(f.pool, store.AcquisitionPolicy{AllowSoftScratch: true}, f.objects), pool: f.pool, id: submitted.ID}
+	probe := &sweepAcquisitionProbe{WorkerServiceServer: workerapi.NewService(f.pool, store.AcquisitionPolicy{AllowSoftScratch: len(f.vms) == 0}, f.objects), pool: f.pool, id: submitted.ID}
 	daemons := f.startWorkers(t, probe)
 	var old store.AttemptAuthority
 	var container string
+	victimQuery := `SELECT a.job_id::text,a.id::text,a.generation,a.worker_id::text,a.session_id::text,a.container_id
+        FROM attempts a WHERE a.job_id=$1 AND a.state='RUNNING'`
+	victimID := submitted.ChildIDs[0]
+	if len(f.vms) != 0 {
+		victimID = submitted.ID
+		victimQuery = `SELECT a.job_id::text,a.id::text,a.generation,a.worker_id::text,a.session_id::text,a.container_id
+            FROM attempts a JOIN jobs j ON j.id=a.job_id JOIN attempt_phase_reports p ON p.attempt_id=a.id AND p.phase='RUNNING'
+            WHERE j.sweep_id=$1 AND a.state='RUNNING' AND p.created_at>clock_timestamp()-interval '1 second'
+            AND (SELECT count(DISTINCT n.worker_id) FROM attempts n JOIN jobs x ON x.id=n.job_id WHERE x.sweep_id=$1 AND n.state='SUCCEEDED')=2
+            ORDER BY p.created_at DESC LIMIT 1`
+	}
 	for {
-		err := f.pool.QueryRow(f.ctx, `SELECT a.job_id::text,a.id::text,a.generation,a.worker_id::text,a.session_id::text,a.container_id
-			FROM attempts a WHERE a.job_id=$1 AND a.state='RUNNING'`, submitted.ChildIDs[0]).Scan(&old.JobID, &old.AttemptID, &old.Generation, &old.WorkerID, &old.SessionID, &container)
+		err := f.pool.QueryRow(f.ctx, victimQuery, victimID).Scan(&old.JobID, &old.AttemptID, &old.Generation, &old.WorkerID, &old.SessionID, &container)
 		if err == nil {
 			break
 		}
@@ -72,9 +89,11 @@ func TestWorkerDaemonsRecover27ChildSweepAfterAgentLoss(t *testing.T) {
 		}
 	}
 	killed := false
+	var victim sweepTestDaemon
 	for _, daemon := range daemons {
 		if daemon.workerID == old.WorkerID {
 			daemon.stop()
+			victim = daemon
 			killed = true
 			break
 		}
@@ -82,9 +101,8 @@ func TestWorkerDaemonsRecover27ChildSweepAfterAgentLoss(t *testing.T) {
 	if !killed {
 		t.Fatal("running attempt was not owned by a fixture process")
 	}
-	output, err := exec.CommandContext(f.ctx, "docker", "inspect", "--format", "{{.State.Running}}", container).CombinedOutput()
-	if err != nil || strings.TrimSpace(string(output)) != "true" {
-		t.Fatal("worker kill did not leave an actually running orphan container", err, string(output))
+	if running := victim.inspect(container); running != "true" {
+		t.Fatal("worker kill did not leave an actually running orphan container", running)
 	}
 	var originalExpiry, dbNow time.Time
 	if err := f.pool.QueryRow(f.ctx, "SELECT lease_expires_at,clock_timestamp() FROM attempts WHERE id=$1", old.AttemptID).Scan(&originalExpiry, &dbNow); err != nil || originalExpiry.Sub(dbNow) < 20*time.Second {
@@ -115,11 +133,18 @@ func TestWorkerDaemonsRecover27ChildSweepAfterAgentLoss(t *testing.T) {
 		t.Fatal("recovery sweep did not exercise its cap", probe.peak.Load())
 	}
 	var lost, accepted, attempts, completions, failFastEvents int
-	err = f.pool.QueryRow(f.ctx, `SELECT count(*),count(*) FILTER(WHERE a.state='LOST'),count(*) FILTER(WHERE a.state='SUCCEEDED'),count(c.attempt_id),
+	err := f.pool.QueryRow(f.ctx, `SELECT count(*),count(*) FILTER(WHERE a.state='LOST'),count(*) FILTER(WHERE a.state='SUCCEEDED'),count(c.attempt_id),
 		(SELECT count(*) FROM job_events e JOIN jobs x ON x.id=e.job_id WHERE x.sweep_id=$1 AND e.type='SWEEP_FAIL_FAST')
 		FROM attempts a JOIN jobs j ON j.id=a.job_id LEFT JOIN attempt_completions c ON c.attempt_id=a.id WHERE j.sweep_id=$1`, submitted.ID).Scan(&attempts, &lost, &accepted, &completions, &failFastEvents)
 	if err != nil || attempts != 28 || lost != 1 || accepted != 27 || completions != 27 || failFastEvents != 0 {
 		t.Fatal("incorrect recovery history", attempts, lost, accepted, completions, failFastEvents, err)
+	}
+	if len(f.vms) != 0 {
+		var workers, strict int
+		err := f.pool.QueryRow(f.ctx, `SELECT count(DISTINCT a.worker_id),count(DISTINCT a.worker_id) FILTER(WHERE w.capabilities ? 'scratch.quota' AND NOT w.capabilities ? 'scratch.soft') FROM attempts a JOIN jobs j ON j.id=a.job_id JOIN workers w ON w.id=a.worker_id WHERE j.sweep_id=$1 AND a.state='SUCCEEDED'`, submitted.ID).Scan(&workers, &strict)
+		if err != nil || workers != 2 || strict != 2 {
+			t.Fatal("two strict independent workers must complete actual children", workers, strict, err)
+		}
 	}
 	var expiry, lostAt time.Time
 	var oldReservation, replacementWorker, replacementID, replacementReservation string
@@ -155,5 +180,5 @@ func TestWorkerDaemonsRecover27ChildSweepAfterAgentLoss(t *testing.T) {
 	if err != nil || string(data) != want {
 		t.Fatal("replacement artifact download changed metric source bytes", err, string(data))
 	}
-	t.Logf("27 children recovered across remaining local workers after agent kill; attempts=28 lost=1 succeeded=27; loss recorded %s after natural expiry; old reservation quarantined", lostAt.Sub(expiry))
+	t.Logf("27 children recovered after agent kill; independent VMs=%d attempts=28 lost=1 succeeded=27; loss recorded %s after natural expiry; old reservation quarantined", len(f.vms), lostAt.Sub(expiry))
 }

@@ -39,12 +39,12 @@ refresh signed download grants, and mount verified cache contents read-only.
 The real worker and Docker integration test reads an uploaded dataset and
 publishes its output. Sweeps now support CLI and HTTP submission, concurrency
 limits, cancellation after permanent failure, CLI/HTTP progress inspection, and
-CSV/JSON result export. A local 27-job sweep is verified across three worker
-processes sharing Docker, including metrics, exports, both fail-fast policies,
-and recovery after killing a running worker. Independent Linux-host execution and
-the broader failure matrix remain to be verified. A separate local test rejects
-a real delayed completion after replacement and downloads the replacement's
-distinct output bytes. `dispatch sweep retry` creates fresh linked jobs only for
+CSV/JSON result export. A [27-job recovery gate](docs/independent-workers.md) runs
+across two independent Linux VMs with strict scratch quotas. Killing one agent
+produces one lost attempt and a successful replacement after natural lease expiry.
+A separate two-VM gate rejects a real delayed completion and downloads the
+replacement's distinct output bytes. Local tests cover both fail-fast policies.
+`dispatch sweep retry` creates fresh linked jobs only for
 failed/cancelled children while keeping successful results and the original history.
 A local dataset-backed test verifies those retry jobs execute and publish outputs
 across the remaining workers after a worker loss.
@@ -73,7 +73,7 @@ Declared metric outputs are collected into source-bound completion reports.
 The default Linux worker now uses [ext4 project quotas](docs/project-quotas.md).
 A submitted job on a dedicated VM hit its 64 MiB limit, then completed with
 verified logs, output download, and cleanup. Filesystem ownership and durable IDs
-also pass restart checks. Independent-host recovery, broader fault coverage, and
+also pass restart checks. Broader fault coverage, a real evaluation workload, and
 other v0.1 release gates remain. See the
 [implementation ledger](docs/implementation.md) for verified progress and remaining work.
 

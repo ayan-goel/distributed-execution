@@ -242,5 +242,6 @@ See [runtime-failures.md](runtime-failures.md).
 the default strict profile: a dataset-backed job hit its 64 MiB quota, then
 published logs/output and cleaned up. See [project-quotas.md](project-quotas.md)
 for setup, allocator restart checks, and the remaining live enforcement-loss gate.
-Independent Linux hosts and the broader timeout/failure matrix remain required
-for the v0.1 release.
+The [independent-worker gates](independent-workers.md) also verify two-VM sweep
+recovery and stale-result rejection. The broader timeout/failure matrix remains
+required for the v0.1 release.

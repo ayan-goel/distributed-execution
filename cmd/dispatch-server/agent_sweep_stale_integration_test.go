@@ -10,9 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -64,7 +62,10 @@ func (s *delayedSweepCompletion) CompleteAttempt(ctx context.Context, request *p
 }
 
 func TestWorkerDaemonsRejectDelayedSweepResultAfterReplacement(t *testing.T) {
-	f := newSweepDaemonFixture(t)
+	testWorkerDaemonsRejectDelayedSweepResult(t, newSweepDaemonFixture(t))
+}
+
+func testWorkerDaemonsRejectDelayedSweepResult(t *testing.T, f *sweepDaemonFixture) {
 	job := f.job
 	// Distinct attempt IDs make stale and accepted output bytes distinguishable,
 	// even though the immutable job command is identical on both workers.
@@ -77,7 +78,7 @@ func TestWorkerDaemonsRejectDelayedSweepResultAfterReplacement(t *testing.T) {
 		JobTemplate: job, MaxConcurrent: 2, Matrix: map[string][]string{"SEED": {"1", "2", "3"}},
 	}}
 	submitted := f.submit(t, sweep)
-	gate := &delayedSweepCompletion{WorkerServiceServer: workerapi.NewService(f.pool, store.AcquisitionPolicy{AllowSoftScratch: true}, f.objects), jobID: submitted.ChildIDs[0], captured: make(chan *pb.CompleteAttemptRequest, 1)}
+	gate := &delayedSweepCompletion{WorkerServiceServer: workerapi.NewService(f.pool, store.AcquisitionPolicy{AllowSoftScratch: len(f.vms) == 0}, f.objects), jobID: submitted.ChildIDs[0], captured: make(chan *pb.CompleteAttemptRequest, 1)}
 	daemons := f.startWorkers(t, gate)
 	var delayed *pb.CompleteAttemptRequest
 	select {
@@ -106,9 +107,8 @@ func TestWorkerDaemonsRejectDelayedSweepResultAfterReplacement(t *testing.T) {
 	if err != nil || phase != "FINALIZING" || expiry.Sub(now) < 20*time.Second {
 		t.Fatal("old completion was not held before acceptance with its natural lease", phase, expiry, now, err)
 	}
-	output, err := exec.CommandContext(f.ctx, "docker", "inspect", "--format", "{{.State.Running}}", container).CombinedOutput()
-	if err != nil || strings.TrimSpace(string(output)) != "false" {
-		t.Fatal("delayed completion's container had not actually finished", err, string(output))
+	if running := daemon.inspect(container); running != "false" {
+		t.Fatal("delayed completion's container had not actually finished", running)
 	}
 	// Verified old output must exist before loss. Otherwise rejection could be
 	// explained by fabricated or missing artifacts instead of stale authority.
