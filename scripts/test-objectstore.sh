@@ -13,7 +13,18 @@ docker run --rm -d --name "$container" --memory 1g --cpus 1 --pids-limit 256 \
 # This disposable name is the only cleanup target; no shared bucket or user
 # container is inspected or deleted. All object versions live in its tmpfs.
 trap 'docker rm -f "$container" > /dev/null' EXIT INT TERM
-port=$(docker port "$container" 8333/tcp | sed 's/.*://')
+# Docker Desktop can return before the published port is visible. Do not let a
+# failed lookup become an empty endpoint and send tests to an unrelated port.
+tries=0
+until mapping=$(docker port "$container" 8333/tcp 2>/dev/null) && [ -n "$mapping" ]; do
+    tries=$((tries + 1))
+    if [ "$tries" -ge 40 ]; then
+        echo "Disposable object-store port was not published after 40 attempts" >&2
+        exit 1
+    fi
+    sleep 0.25
+done
+port=${mapping##*:}
 export DISPATCH_TEST_S3_ENDPOINT="http://127.0.0.1:$port"
 if [ "$#" -eq 0 ]; then
     make objectstore-test

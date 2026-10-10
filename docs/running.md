@@ -337,6 +337,12 @@ it does not prevent lid-close or manually requested sleep:
 caffeinate -i sh scripts/test-objectstore.sh sh scripts/test-store.sh
 ```
 
+The disposable object-store wrapper waits for Docker to publish its loopback port
+before passing the endpoint to tests. Docker Desktop can report the port late;
+after 40 unsuccessful lookups the wrapper fails and cleans up its own container.
+Delayed-publication and never-published fixture checks verify both paths. This
+startup wait does not change job leases or runtime timeout assertions.
+
 Suspending the host can stop every native worker while database wall time advances,
 causing additional legitimate lease losses. Tests that deliberately kill one worker
 and assert exactly one loss then fail for a different scenario. Check sleep/wake
