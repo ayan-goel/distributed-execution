@@ -26,6 +26,7 @@ const usage = `usage:
   dispatch jobs list [--project PROJECT] [--state STATE] [--label KEY=VALUE] [--limit 1..100] [--cursor CURSOR] [--json]
   dispatch jobs get JOB_ID [--json]
   dispatch attempts list JOB_ID [--json]
+  dispatch workers drain WORKER_ID [--json]
   dispatch wait JOB_ID [--timeout DURATION] [--poll-interval DURATION] [--cancel-on-timeout] [--json]
   dispatch cancel JOB_ID [--json]
   dispatch logs JOB_ID [--follow] [--stream stdout|stderr]
@@ -78,6 +79,9 @@ func run(ctx context.Context, args []string, getenv func(string) string, out, er
 	}
 	if args[0] == "attempts" {
 		return listAttempts(ctx, args, getenv, out)
+	}
+	if args[0] == "workers" {
+		return runWorkers(ctx, args, getenv, out)
 	}
 	if args[0] == "jobs" && args[1] == "list" {
 		return listJobs(ctx, args, getenv, out)

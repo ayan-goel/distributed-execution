@@ -14,6 +14,7 @@
 | `POST /v1/jobs/{id}/cancel` | submit | Idempotently record project-scoped cancellation intent |
 | `GET /v1/jobs/{id}/attempts` | read | Full ordered attempt history and failure/cleanup evidence |
 | `GET /v1/jobs/{id}/events` | read | Bounded sequence-ordered event pages with a resumable cursor |
+| `POST /v1/workers/{id}/drain` | operator | Persist host-wide drain intent for an authorized worker; existing attempts may finish |
 | `GET /v1/jobs/{id}/artifacts` | read | Accepted outputs with exact-version, 60-second download grants |
 | `GET /v1/attempts/{id}/logs` | read | Registered log ranges, frozen completion gaps, a stream cursor, and exact-version, 60-second download grants |
 | `POST /v1/datasets/uploads` | submit | Reserve a project-owned dataset key and return a 60-second upload grant |
@@ -187,7 +188,8 @@ parameters. Labels match exactly with AND semantics. The response is
 state, labels, submitted priority, and UTC creation time. The encoded query is
 limited to 12 KiB and the JSON response to 8 MiB. See [job listing](job-listing.md)
 for cursor, filter, and live-page semantics. See [job events](job-events.md) for
-the event pagination contract. Worker administration remains required.
+the event pagination contract and [worker maintenance](worker-administration.md)
+for drain semantics. Fleet listing remains required.
 
 ## Evidence
 

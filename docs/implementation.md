@@ -22,7 +22,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D03 database invariants | D01 | Real PostgreSQL migrations up/down/upgrade; uniqueness, references, checks | core schema and migration runner gates passed; later feature tables pending |
 | D04 worker protocol | D01 | Generated Go/Rust gRPC bindings; cross-language golden round-trip, drift check | wire and implemented mTLS service boundary gates passed; remaining handlers/client integration pending |
 | D05 durable submission | D02,D03 | HTTP/CLI submission; 100 identical requests yield one job; changed payload conflicts | job admission, auth, image resolution, dataset bindings, filtered HTTP/CLI listing, wait exit codes, CLI attempt history, and paginated HTTP events gates passed |
-| D06 worker identities | D03,D04 | Authenticated registration, session takeover/recovery; stale-session rejection | control-plane, Rust client, and worker startup/health loop gates passed; active-job supervision pending |
+| D06 worker identities | D03,D04 | Authenticated registration, session takeover/recovery; stale-session rejection | control-plane, Rust client, startup/health loop, and operator HTTP/CLI drain gates passed; fleet listing pending |
 | D07 acquisition | D03,D06 | Atomic assignment/reservations; concurrent quota/capacity races; acquisition replay | store, RPC, Rust client, sequential agent loop, and local operator policy switch passed; broader scheduler pending |
 | D08 Docker adapter | D04 | Real bounded create/start/inspect/stop; ambiguous create reconciles one identity | cached launch, RUNNING/FINALIZING coordination, phase store/RPC/client, and actual daemon execution passed; staging and strict workspaces pending |
 | D09 leases | D06,D07 | Fresh DB-time expiry checks; delayed grants; local monotonic deadline enforcement | deadline, store/RPC/client, watchdog, periodic renewal, daemon execution, and production lease reaper passed; control-channel partition gate pending |
@@ -3386,3 +3386,35 @@ This recorded gap is resolved by D17l/D17m below; the live sweep gate remains op
 - No event writers, lifecycle transitions, schema, or worker runtime changed.
   Optional SSE is not implemented; worker administration and the full v0.1 release
   audit remain open.
+
+### D06j: Expose audited operator drain through HTTP and CLI
+
+- Added operator-only `POST /v1/workers/{id}/drain` and `dispatch workers drain`
+  with JSON/human acknowledgements. The worker must be authorized for the token's
+  project; drain affects the entire shared host. Empty bodies and no queries are
+  required. Read/submit tokens receive 403, unauthorized workers 404, and malformed
+  options 400. Client acknowledgements validate identity, state, and explicit intent.
+- Drain serializes with acquisition, revalidates token/project authorization under
+  locks, and atomically writes both host and project/operator audits. Concurrent
+  repeats add one audit pair. READY becomes DRAINING; unhealthy states persist.
+  Existing attempts, reservations, and lease authority remain unchanged. Lost
+  replies are unconfirmed; repeating the fixed operation is safe.
+- Initial store/client tests failed for absent interfaces, then focused checks
+  passed. Store PostgreSQL/race checks cover concurrent idempotency, preservation
+  of assignment replay/renewal, heartbeat drain without stop, revoked tokens,
+  shared-host scope, and rollback if either audit fails (final: 1.794 seconds).
+  Real CLI/HTTP/PostgreSQL checks passed (1.481); focused client/CLI checks passed
+  (1.431/1.244), including malformed responses, write failures, and lost replies.
+- `make test lint smoke` passed. All affected PostgreSQL/race packages passed:
+  store 50.631 seconds, API 9.708, worker API 15.963. Initial execution baseline
+  and live-drain Docker gates passed with versioned object storage (26.84/30.71).
+  Review identified a timing assumption in the drain test; a bounded release
+  barrier now requires the agent's drain event and current RUNNING authority.
+  The final barrier gate passed (15.84), preserving verified output/download,
+  container/workspace cleanup, and continued heartbeat with a second job queued.
+- Review and diff checks found no remaining blockers. Evidence is local under
+  ignored `.local/verification/worker-drain-{store-final,http-focused,cli-focused,native,postgres,live,live-final}.log`;
+  initial absent-interface checks use `worker-drain-{red,http-red,client-red,cli-red}.log`.
+  Host-wide maintenance and evidence boundaries are documented in
+  worker-administration.md and running.md. No schema or Rust runtime code changed.
+  Fleet listing and the full v0.1 release audit remain open.

@@ -66,6 +66,12 @@ session; fencing occurs when that incarnation registers successfully. Without an
 approval, automatic recovery requires inactivity and expiry of all active leases.
 These commands require direct operator database access, not a project bearer token.
 
+For planned maintenance, `bin/dispatch workers drain WORKER_UUID --json` uses
+an operator-role project token through HTTP. It prevents new assignments across
+the whole host, including other authorized projects, while existing attempts may
+finish. Drain preserves unhealthy states and does not prove cleanup. See
+[worker maintenance](worker-administration.md) before shutting down a worker.
+
 ## Listener
 
 Explicit loopback-only development:

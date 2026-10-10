@@ -161,6 +161,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.attempts(w, r, p)
 	case strings.HasPrefix(r.URL.Path, "/v1/jobs/") && strings.HasSuffix(r.URL.Path, "/events") && r.Method == http.MethodGet:
 		s.events(w, r, p)
+	case strings.HasPrefix(r.URL.Path, "/v1/workers/") && strings.HasSuffix(r.URL.Path, "/drain") && r.Method == http.MethodPost:
+		s.drainWorker(w, r, p)
 	case strings.HasPrefix(r.URL.Path, "/v1/attempts/") && strings.HasSuffix(r.URL.Path, "/logs") && r.Method == http.MethodGet:
 		s.logs(w, r, p)
 	case strings.HasPrefix(r.URL.Path, "/v1/jobs/") && r.Method == http.MethodGet:

@@ -37,6 +37,15 @@ func (r fixtureImageResolver) Resolve(_ context.Context, reference string) (stri
 }
 
 func TestWorkerDaemonAcquiresExecutesAndPublishes(t *testing.T) {
+	testWorkerDaemonExecution(t, false)
+}
+
+func TestWorkerDaemonFinishesExistingJobAfterOperatorDrain(t *testing.T) {
+	testWorkerDaemonExecution(t, true)
+}
+
+func testWorkerDaemonExecution(t *testing.T, drainDuringRun bool) {
+	t.Helper()
 	configureServerTestDatabase(t)
 	publication := &publicationEvidence{}
 	objects := publicationStorage(t, "agent", publication)
@@ -90,6 +99,11 @@ func TestWorkerDaemonAcquiresExecutesAndPublishes(t *testing.T) {
 	job.Spec.Inputs = []spec.Input{{Dataset: "sample-v1", MountPath: "/inputs/data"}}
 	job.Spec.Image = image
 	job.Spec.Command = []string{"sh", "-c", "cat /inputs/data/input.txt > /outputs/result; printf 'run out'; head -c 3300000 /dev/zero; printf 'run err' >&2; sleep 15; exit 0"}
+	if drainDuringRun {
+		// Keep execution live until the agent observes drain. A bounded barrier
+		// removes the race between heartbeat/storage latency and a fixed sleep.
+		job.Spec.Command[2] = strings.Replace(job.Spec.Command[2], "sleep 15; exit 0", `i=0; until [ -f /outputs/release ]; do [ "$i" -lt 400 ] || exit 97; i=$((i+1)); sleep 0.1; done; exit 0`, 1)
+	}
 	job.Spec.Retry.MaxAttempts = 1
 	job.Spec.Priority = 3
 	job.Spec.Outputs = []spec.Output{{Name: "result", Path: "/outputs/result", Required: true, MaxBytes: 3}}
@@ -230,8 +244,29 @@ func TestWorkerDaemonAcquiresExecutesAndPublishes(t *testing.T) {
 	if liveLogs := string(cliRun("logs", submitted.ID)); !strings.Contains(liveLogs, "[stdout #1] run out") {
 		t.Fatal("CLI could not read the live verified log segment")
 	}
+	var queuedAfterDrain store.JobRecord
+	if drainDuringRun {
+		operator, _, err := store.IssueToken(ctx, pool, "research", store.RoleOperator)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out, errs bytes.Buffer
+		code := cli.Run(ctx, []string{"workers", "drain", worker.WorkerID, "--json"}, func(key string) string {
+			if key == "DISPATCH_TOKEN" {
+				return operator
+			}
+			return cliEnv(key)
+		}, &out, &errs)
+		if code != 0 {
+			t.Fatal("live worker drain failed", code, errs.String())
+		}
+		if err := json.Unmarshal(cliRun("submit", jobFile, "--idempotency-key", "after-drain", "--json"), &queuedAfterDrain); err != nil {
+			t.Fatal(err)
+		}
+	}
 	decoder := json.NewDecoder(stdout)
 	var attempt string
+	sawDraining := false
 	for attempt == "" {
 		var event struct {
 			Event     string `json:"event"`
@@ -243,6 +278,21 @@ func TestWorkerDaemonAcquiresExecutesAndPublishes(t *testing.T) {
 		if event.Event == "attempt_terminal" {
 			attempt = event.AttemptID
 		}
+		if drainDuringRun && event.Event == "draining" && !sawDraining {
+			var container string
+			if err := pool.QueryRow(ctx, `SELECT a.container_id FROM attempts a
+				JOIN jobs j ON j.current_attempt_id=a.id
+				WHERE j.id=$1 AND a.worker_id=$2 AND a.state='RUNNING'`, submitted.ID, worker.WorkerID).Scan(&container); err != nil {
+				t.Fatal("drain signal did not preserve RUNNING authority", err)
+			}
+			// Release only this fixture's worker-bound, live container. The workload
+			// then exits normally and exercises the unchanged publication path.
+			docker("exec", container, "sh", "-c", "touch /outputs/release")
+		}
+		sawDraining = sawDraining || event.Event == "draining"
+	}
+	if drainDuringRun && !sawDraining {
+		t.Fatal("worker did not observe the heartbeat drain signal before completion")
 	}
 	service.mu.Lock()
 	if !service.replayed || !service.running || !service.finalReplayed || publication.complete == nil || len(publication.complete.Outputs) != 1 {
@@ -285,5 +335,26 @@ func TestWorkerDaemonAcquiresExecutesAndPublishes(t *testing.T) {
 	}
 	if containers := docker("ps", "-aq", "--filter", "label=dev.dispatch.worker="+worker.WorkerID); containers != "" {
 		t.Fatal("terminal container survived cleanup", containers)
+	}
+	if drainDuringRun {
+		var before, after time.Time
+		if err := pool.QueryRow(ctx, "SELECT last_heartbeat_at FROM workers WHERE id=$1", worker.WorkerID).Scan(&before); err != nil {
+			t.Fatal(err)
+		}
+		deadline := time.Now().Add(8 * time.Second)
+		for time.Now().Before(deadline) {
+			if err := pool.QueryRow(ctx, "SELECT last_heartbeat_at FROM workers WHERE id=$1", worker.WorkerID).Scan(&after); err != nil {
+				t.Fatal(err)
+			}
+			if after.After(before) {
+				break
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		var state string
+		var counter int64
+		if err := pool.QueryRow(ctx, "SELECT state,attempt_counter FROM jobs WHERE id=$1", queuedAfterDrain.ID).Scan(&state, &counter); err != nil || state != "QUEUED" || counter != 0 || !after.After(before) {
+			t.Fatal("drained agent acquired queued work or stopped heartbeating", state, counter, err)
+		}
 	}
 }
