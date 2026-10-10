@@ -3941,3 +3941,30 @@ This recorded gap is resolved by D17l/D17m below; the live sweep gate remains op
   needed. This slice proves reusable dependencies, not production backup/restore
   or a second user's tutorial. Updated README, operator guide, development guide,
   and release checklist; R02 multipart remains the next implementation gap.
+
+
+### R02a: Multipart storage lifecycle
+
+- Added bounded create, part-capability, ordered completion, and scoped abort
+  operations. A part grant binds key, backend upload ID, part number, exact
+  length, and SHA-256. Completion returns only the exact non-null storage version;
+  full-object byte verification and fenced publication remain separate gates.
+- Missing uploads have an explicit stable error, and embedded HTTP-200 errors
+  remain failures. No operation guesses the latest version after an uncertain
+  completion. All calls use existing concurrency/deadline and error-redaction
+  controls. Abort verifies absence with a bounded part query and can clean up
+  uploads even after admission limits are lowered.
+- Started with failing tests for the absent lifecycle. Real SeaweedFS gates now
+  verify two independent multipart versions after overwrite, reject modified
+  part content and wrong full-object SHA-256, and prove replayed abort removes
+  only its upload while preserving completed versions. Tests own fresh buckets
+  inside the disposable backend. The reviewed real gate passed in 4.826 seconds;
+  the multipart case took 1.21 seconds.
+- Full Go race tests and vet passed before review; targeted object-store race,
+  vet, and real storage regressions passed after the cleanup-policy fix. Go
+  formatting, documentation links, and diff checks passed. Evidence:
+  `.local/verification/multipart-go-tests.log` and `multipart-reviewed.log`.
+- Updated README, release checklist, and [multipart contract](multipart-uploads.md).
+  R02 remains open: durable initialization/completion replay, bounded RPCs,
+  journaled Rust parts, larger size policy, and a submitted large-output job are
+  still required. Public uploads remain single-part with the existing 64 MiB cap.
