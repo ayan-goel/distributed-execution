@@ -52,8 +52,8 @@ The scheduler now rotates among eligible projects with a durable database cursor
 jobs accept priorities from 0–3 and gain one level per 10 eligible waiting minutes.
 The scheduler records bounded per-job blocker history, visible through job status
 and `dispatch jobs get` with worker context and timestamps.
-Filtered, paginated job listing now has a verified database foundation;
-HTTP and CLI access are the next slice.
+`dispatch jobs list` finds project-owned jobs by state and metadata labels, with
+bounded cursor pagination and JSON output.
 Declared metric outputs are collected into source-bound completion reports.
 Strict scratch limits, full retry policy coverage, and
 other v0.1 gates remain. See the

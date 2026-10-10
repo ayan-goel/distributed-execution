@@ -21,7 +21,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D02 job and sweep contracts | D01 | Strict schema, unsafe input rejection, stable canonical hash, deterministic expansion | parser/expansion gates passed; published schemas pending |
 | D03 database invariants | D01 | Real PostgreSQL migrations up/down/upgrade; uniqueness, references, checks | core schema and migration runner gates passed; later feature tables pending |
 | D04 worker protocol | D01 | Generated Go/Rust gRPC bindings; cross-language golden round-trip, drift check | wire and implemented mTLS service boundary gates passed; remaining handlers/client integration pending |
-| D05 durable submission | D02,D03 | HTTP/CLI submission; 100 identical requests yield one job; changed payload conflicts | input-free job admission, auth, image resolution, HTTP/CLI gates passed; datasets depend on D16 |
+| D05 durable submission | D02,D03 | HTTP/CLI submission; 100 identical requests yield one job; changed payload conflicts | job admission, auth, image resolution, dataset bindings, and filtered HTTP/CLI listing gates passed |
 | D06 worker identities | D03,D04 | Authenticated registration, session takeover/recovery; stale-session rejection | control-plane, Rust client, and worker startup/health loop gates passed; active-job supervision pending |
 | D07 acquisition | D03,D06 | Atomic assignment/reservations; concurrent quota/capacity races; acquisition replay | store, RPC, Rust client, sequential agent loop, and local operator policy switch passed; broader scheduler pending |
 | D08 Docker adapter | D04 | Real bounded create/start/inspect/stop; ambiguous create reconciles one identity | cached launch, RUNNING/FINALIZING coordination, phase store/RPC/client, and actual daemon execution passed; staging and strict workspaces pending |
@@ -3278,3 +3278,40 @@ This recorded gap is resolved by D17l/D17m below; the live sweep gate remains op
 - HTTP/client/CLI listing remains the next slice. The current generic client
   response allowance is 4 MiB and must gain an explicit listing-specific allowance.
   This foundation does not satisfy the public-list workflow or complete v0.1.
+
+### D05i: Expose filtered listing through HTTP and CLI
+
+- Added authenticated `GET /v1/jobs`, client listing, and `dispatch jobs list`
+  with project/state filters, repeated exact-match labels, page limits, opaque
+  cursors, and JSON/human output. Project defaults to the token's project; another
+  project is forbidden. Every SQL read independently uses authenticated ownership.
+- Canonical versioned cursors bind project UUID, state/label hash, and the last
+  creation-time/UUID tuple. Label order and page size can change without altering
+  filter identity. Unknown/duplicate/null/missing cursor fields are rejected by
+  canonical re-encoding. Positions remain unsigned and confer no authority.
+- Encoded raw queries are capped at 12 KiB before parsing, within the executable
+  listener's existing 16 KiB header allowance. The API checks the complete 8 MiB
+  response envelope before writing headers. Only listing increases the client
+  response allowance; other requests keep their existing 4 MiB cap.
+- Strict client validation checks complete objects, nested labels, IDs, project
+  scope, requested filters, submitted priority, UTC times, descending tuple order,
+  and unchanged continuation cursors. Human output quotes names and includes job IDs; both output
+  modes propagate write failures. Each page remains a live statement snapshot.
+- Initial integration checks failed for the absent HTTP route and CLI command;
+  client tests first failed to compile for the absent interface. Focused HTTP
+  checks passed (1.661 seconds), client checks passed (1.448), and full real
+  CLI/client/HTTP/PostgreSQL listing passed (5.436), including a response above
+  4 MiB. Additional client/CLI/cursor checks passed. All PostgreSQL HTTP integration
+  tests passed (7.270), including exact/over-budget queries through a net/http
+  listener configured with the executable's 16 KiB header limit.
+- `make test lint smoke` passed. A final adversarial timestamp test then reproduced
+  acceptance of a value that normalized outside the supported UTC year range;
+  validation now checks UTC before returning a summary. Final Go race tests,
+  lint, and smoke checks passed after the correction. Review found no blockers.
+  Local logs are under ignored `.local/verification/` as
+  `job-listing-public-{red,native,postgres}.log`, `job-listing-public.log`,
+  `job-listing-http.log`, and `job-listing-final-{go,lint-smoke}.log`.
+- No scheduler, migration, or worker runtime behavior changed. Existing schema and
+  runtime gates are not rerun or claimed as new evidence. Documentation describes
+  the URL budget, mutable-filter semantics, and one-page command contract. The
+  full v0.1 release audit remains open.

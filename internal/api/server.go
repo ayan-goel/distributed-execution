@@ -102,6 +102,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch {
+	case r.URL.Path == "/v1/jobs" && r.Method == http.MethodGet:
+		s.listJobs(w, r, p)
 	case strings.HasPrefix(r.URL.Path, "/v1/sweeps/") && r.Method == http.MethodGet:
 		s.sweepProgress(w, r, p)
 	case strings.HasPrefix(r.URL.Path, "/v1/sweeps/") && strings.HasSuffix(r.URL.Path, "/retry") && r.Method == http.MethodPost:

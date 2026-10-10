@@ -230,12 +230,17 @@ Save the recovery key printed to stderr and reuse the same source/key after an
 uncertain response. A new key creates another retry sweep. Inspect/export using
 the new ID in the response; its child mapping includes immediate parent job IDs.
 
-Options follow the file or job ID. Successful commands exit 0; validation, API,
+For commands with a file or ID, options follow it. Successful commands exit 0; validation, API,
 configuration, transport, and output errors exit 2. For job commands, `--json`
 writes one job object to stdout for submit/get/cancel, or `{valid,specHash}` for
 validation; diagnostics stay on stderr. Human submit/get/cancel output includes
-the job UUID and quoted state. Wait
-and list commands remain to be implemented. Use `bin/dispatch logs JOB_UUID`
+the job UUID and quoted state. Wait remains to be implemented.
+Use `bin/dispatch jobs list --project research --state QUEUED --label cohort=alpha`
+to find work. Repeat `--label KEY=VALUE` for AND matching; add `--json` for the full
+page envelope. `--limit` accepts 1–100 (default 50). When `hasMore` is true, pass
+the returned `nextCursor` with `--cursor` and the same filters. The project defaults
+to the token's project. See [job listing](job-listing.md) for bounds and live-page
+semantics. Use `bin/dispatch logs JOB_UUID`
 to inspect verified segments, or `bin/dispatch logs JOB_UUID --follow` to poll
 for new segments while the job runs.
 

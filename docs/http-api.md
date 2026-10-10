@@ -6,6 +6,7 @@
 | --- | --- | --- |
 | `GET /healthz` | none | Database readiness, no tenant data |
 | `POST /v1/jobs` | submit | Validate, resolve image, atomically queue a job |
+| `GET /v1/jobs` | read | Filtered project-owned summaries with bounded cursor pagination |
 | `POST /v1/sweeps` | submit | Resolve a template and atomically queue up to 1,000 ordered children |
 | `POST /v1/sweeps/{id}/retry` | submit | Create fresh linked jobs for a terminal sweep's failed/cancelled children |
 | `GET /v1/sweeps/{id}` | read | Sweep-wide progress and a bounded ordered page of children/accepted metrics |
@@ -177,9 +178,14 @@ archive and completes registration through these endpoints. Its recovery
 options reuse the request ID and exact uploaded version after an uncertain
 response. A live CLI-to-Docker integration test verifies dataset-backed job
 execution and output download; broader dataset fault coverage remains pending.
-Job listing, events, and worker administration remain required. The
-[job-listing database foundation](job-listing.md) is implemented; its public
-HTTP and CLI interfaces are still pending.
+`GET /v1/jobs` now lists project-owned summaries with optional `project`, `state`,
+repeated `label=key=value`, `limit` (default 50, maximum 100), and `cursor` query
+parameters. Labels match exactly with AND semantics. The response is
+`{project,projectId,jobs,hasMore,nextCursor}`; each summary contains IDs, name,
+state, labels, submitted priority, and UTC creation time. The encoded query is
+limited to 12 KiB and the JSON response to 8 MiB. See [job listing](job-listing.md)
+for cursor, filter, and live-page semantics. Events and worker administration
+remain required.
 
 ## Evidence
 

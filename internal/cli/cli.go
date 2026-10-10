@@ -23,6 +23,7 @@ const usage = `usage:
   dispatch sweep retry SWEEP_ID [--idempotency-key KEY] [--json]
   dispatch sweep get SWEEP_ID [--limit 1..100] [--cursor CURSOR] [--json]
   dispatch sweep export SWEEP_ID [--format json|csv]
+  dispatch jobs list [--project PROJECT] [--state STATE] [--label KEY=VALUE] [--limit 1..100] [--cursor CURSOR] [--json]
   dispatch jobs get JOB_ID [--json]
   dispatch cancel JOB_ID [--json]
   dispatch logs JOB_ID [--follow] [--stream stdout|stderr]
@@ -66,6 +67,9 @@ func run(ctx context.Context, args []string, getenv func(string) string, out, er
 	}
 	if args[0] == "logs" {
 		return showLogs(ctx, args, getenv, out)
+	}
+	if args[0] == "jobs" && args[1] == "list" {
+		return listJobs(ctx, args, getenv, out)
 	}
 	command, operand, flags := args[0], args[1], args[2:]
 	if command == "jobs" {

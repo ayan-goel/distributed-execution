@@ -131,6 +131,10 @@ func (c *Client) request(ctx context.Context, method, path string, body []byte, 
 }
 
 func (c *Client) requestBody(ctx context.Context, method, path string, body []byte, key string) ([]byte, error) {
+	return c.requestBodyLimit(ctx, method, path, body, key, MaxResponseBytes)
+}
+
+func (c *Client) requestBodyLimit(ctx context.Context, method, path string, body []byte, key string, maxBytes int) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, method, c.endpoint+path, bytes.NewReader(body))
 	if err != nil {
 		return nil, errors.New("could not construct request")
@@ -153,9 +157,9 @@ func (c *Client) requestBody(ctx context.Context, method, path string, body []by
 		return nil, errors.New("request failed; check connectivity and TLS configuration")
 	}
 	defer resp.Body.Close()
-	b, err := io.ReadAll(io.LimitReader(resp.Body, MaxResponseBytes+1))
-	if err != nil || len(b) > MaxResponseBytes {
-		return nil, errors.New("server response unreadable or exceeds 4 MiB")
+	b, err := io.ReadAll(io.LimitReader(resp.Body, int64(maxBytes)+1))
+	if err != nil || len(b) > maxBytes {
+		return nil, fmt.Errorf("server response unreadable or exceeds %d MiB", maxBytes>>20)
 	}
 	if resp.StatusCode != http.StatusOK && !(method == http.MethodPost && resp.StatusCode == http.StatusCreated) {
 		var envelope struct {
