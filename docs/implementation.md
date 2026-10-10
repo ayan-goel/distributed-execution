@@ -13,6 +13,22 @@ Do not start implementing the next slice until the current gate passes. Split th
 tasks below into smaller commits whenever they cross independently testable boundaries.
 Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 
+## Remaining release order
+
+The full specification and ledger remain authoritative. Prioritize these gaps;
+expand existing tests only to resolve a named requirement or observed defect:
+
+1. Finish the strict ext4 workspace profile: durable project IDs, runtime attribute
+   restrictions, agent integration, cleanup, and real quota-exhausting jobs.
+2. Run the required 27-job recovery/fencing demonstration across two independent
+   Linux VMs, including verified downloads and an actual evaluation workload.
+3. Reconcile every remaining contract/fault gate below against current evidence,
+   then close the missing cases without repeating already-established coverage.
+4. Run and publish the specification's measured benchmarks with hardware, offered
+   load, cache state, and limitations recorded.
+5. Finish release packaging/CI, backup and restore, operator documentation, and
+   tutorial verification, then audit specification sections 1–26 before release.
+
 ## Ordered slices
 
 | Task | Dependencies | Required acceptance evidence | Status |
@@ -3714,3 +3730,42 @@ This recorded gap is resolved by D17l/D17m below; the live sweep gate remains op
 - Updated README and runtime/worker guides. Evidence still uses one Docker Desktop
   engine and development scratch. Strict Linux quotas, independent hosts, the
   remaining fault matrix, benchmarks, and release requirements remain open.
+
+
+### D08q: Verify the ext4 project-quota primitive on a dedicated Linux VM
+
+- Added a Linux-only filesystem primitive that sets hard bytes/inodes on a new,
+  private, empty ext4 project directory before mount children exist. It rejects
+  aliases, prior project ownership, existing project limits/usage, invalid units,
+  unsupported filesystems, and inactive enforcement. Limits and inheritance are
+  read back. Setup errors retain installed limits and quarantine the caller's ID.
+- Docker Desktop kernel 6.10.14-linuxkit rejected the disposable ext4 quota mount
+  because CONFIG_QUOTA and CONFIG_QFMT_V2 are absent. Added a foreground QEMU
+  fixture using checksum-pinned Debian 13 ARM64, loopback-only SSH, a private
+  disposable key, 2 vCPUs, and 1 GiB RAM. Its independent kernel is
+  6.12.111+deb13-cloud-arm64 with the required quota support. Fixture state uses
+  about 413 MiB under ignored `.local/quota-vm/`; virtual disk ceiling is 4 GiB.
+- The new test first failed to compile because the primitive was missing. The
+  actual VM gate then verified EDQUOT at an 8 MiB hard limit as UID/GID 65532,
+  shared scratch/output charging, independent sibling writes, and EDQUOT at a
+  16-inode limit while byte usage stayed below 1 MiB. Reattachment, symlinks, and
+  project-ID collisions are rejected. The test owns, formats, and detaches only
+  its freshly allocated 128 MiB loop-backed filesystem.
+- Review found that accounting-only ext4 could retain readable limits without
+  enforcing them. A real remount without prjquota reproduced the defect before
+  the fix. Added Q_XGETQSTATV project ACCT/ENFD checks before mutation and during
+  verification. Final enforced and accounting-only gates passed (0.03 and 0.00
+  seconds); review found no remaining blockers in the bounded primitive.
+- Linux regular tests and all-target Clippy passed with pinned Rust 1.88.0.
+  `make test lint smoke` passed with local listeners permitted; the first sandboxed
+  run had blocked existing dataset HTTP fixtures. Formatting, shell syntax, and
+  whitespace checks passed. Evidence: `.local/verification/project-quota-red.log`,
+  `project-quota-accounting-red.log`, `project-quota-vm-verified.log`,
+  `project-quota-linux-verified.log`, and `project-quota-native-final.log`.
+- Documented the filesystem choice, reproduction, and enforcement prerequisites
+  in `project-quotas.md` and linked it from README. This primitive is not connected
+  to the agent and does not advertise scratch.quota. Durable project-ID allocation,
+  restart/cleanup integration, runtime protection against project-attribute
+  changes, and a real quota-exhausting container job remain the next slice.
+  AMD64, two-host execution, remaining runtime faults, benchmarks, and release
+  requirements remain open. Added an explicit remaining release order above.

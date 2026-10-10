@@ -39,6 +39,8 @@ pub mod log_spool;
 pub mod log_summary;
 #[cfg(unix)]
 pub mod outputs;
+#[cfg(target_os = "linux")]
+pub mod project_quota;
 pub mod runtime;
 pub mod supervisor;
 #[cfg(unix)]
