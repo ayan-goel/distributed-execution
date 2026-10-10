@@ -35,7 +35,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D16 datasets | D11 | Immutable registration/cache; corruption rejection; pin-aware eviction | ownership schema, upload/completion APIs, project-scoped resolution, real CLI registration, isolated worker cache, atomic store admission bindings, durable replay, archive assignment contract, worker validation, store assignment population, signed RPC grants, strict job-to-wire matching, real read-only Docker mount, startup cache reset, assignment-to-cache preparation, agent cache initialization, unlaunched transfer-failure completion, replay-binding validation, worker input acquisition path, HTTP submission, and one live dataset-to-output Docker job passed; dataset fault matrix still pending |
 | D17 sweeps/metrics | D05,D13,D16 | Atomic 27-child sweep; 1000 cap; concurrency; fail-fast; finite scalar export | deterministic expansion, schema constraints, HTTP/CLI submission/replay, scheduler cap/terminal release, fail-fast, bounded CLI/HTTP progress/accepted metrics, CSV/JSON export, real worker metric ingestion, local 27-child success/fail-fast/worker-loss sweeps, immutable project-scoped retry lineage, atomic failed/cancelled-only store/HTTP/client/CLI retry, and local dataset-backed retry execution passed; independent-host gates pending |
 | D18 placement | D07,D17 | Project fairness/aging, blockers, two real independent hosts without oversubscription | durable project round-robin, public 0–3 job priorities, eligible queue aging, bounded diagnostic storage, scheduler recording, and public historical blocker status gates passed; independent hosts pending |
-| D19 faults/benchmarks | D14–D18 | Spec §21/22 runtime matrix, 27-job worker kill, stale result, measured benchmarks | local 27-child worker kill/natural lease recovery and real delayed completion rejection after replacement passed; independent-host evidence, broader fault matrix, and published measurements pending |
+| D19 faults/benchmarks | D14–D18 | Spec §21/22 runtime matrix, 27-job worker kill, stale result, measured benchmarks | local 27-child worker kill/natural lease recovery, delayed completion rejection after replacement, and actual-worker OOM versus exit-137 classification passed; independent-host evidence, broader fault matrix, and published measurements pending |
 | D20 release | D19 | TLS/auth/permissions, retention, migrations/backups, packaging, tutorial, actual research run | pending |
 
 ## Release audit (all required)
@@ -3637,3 +3637,24 @@ This recorded gap is resolved by D17l/D17m below; the live sweep gate remains op
   local Docker Desktop engine with development scratch, not evidence for host
   suspension, runtime failure during termination, asymmetric packet loss, strict
   scratch, or independent Linux-host release gates.
+
+### D19c: Verify real memory exhaustion versus application exit 137
+
+- Added an actual-worker failure fixture using real mTLS, PostgreSQL, Docker, and
+  versioned local object storage. It keeps two attempts and infrastructure retries
+  enabled so a permanent failure misclassified as infrastructure loss cannot pass.
+- A finite AWK array exceeds its 128 MiB cgroup limit. A separate shell exits 137
+  without exhausting memory. Before completion cleanup, the fixture independently
+  inspects the stopped container's exit status, OOMKilled flag, hard memory limit,
+  and memory-plus-swap limit. Both exit 137; only the first reports OOMKilled.
+- Dispatch records OOM and APPLICATION_EXIT respectively. Each job has one FAILED
+  attempt, one accepted failure completion, no accepted result, released capacity,
+  and no surviving container or workspace. The failure jobs retain normal log
+  delivery through real object storage; no runtime exit or object is fabricated.
+- Both cases passed with race detection: memory exhaustion 3.63 seconds, intentional
+  exit 1.34; package total 6.787 seconds. Integration-tagged Go vet, formatting,
+  whitespace, and review checks passed. No production code changed. Evidence:
+  `.local/verification/agent-oom{,-vet}.log`; contract in `runtime-failures.md`.
+- This verifies one local Docker Desktop engine with development scratch. Dedicated
+  Linux hosts, unsafe/missing outputs, disk pressure, strict scratch, and the rest
+  of the runtime/release matrix remain required.
