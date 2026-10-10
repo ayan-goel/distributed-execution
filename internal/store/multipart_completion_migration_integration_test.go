@@ -12,6 +12,7 @@ import (
 
 func rollbackMultipartCompletions(t *testing.T, ctx context.Context, tx pgx.Tx) {
 	t.Helper()
+	rollbackMultipartParts(t, ctx, tx)
 	down, err := os.ReadFile("../../migrations/0022_multipart_completions.down.sql")
 	if err != nil {
 		t.Fatal(err)

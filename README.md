@@ -80,7 +80,8 @@ The [release checklist](docs/release-checklist.md) tracks the finite remaining
 implementation, fault, benchmark, and packaging deliverables.
 The [multipart implementation](docs/multipart-uploads.md) includes verified
 storage operations, recovery after lost completion replies, and durable part plans
-and completion versions. Multipart verification requires the stored exact version.
+and completion versions. Part retries bind immutable hashes; multipart verification
+requires the stored exact version.
 Public worker uploads remain single-part until RPCs and delivery are connected.
 
 ## Development

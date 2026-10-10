@@ -30,6 +30,7 @@ func TestMultipartCompletionIntentSurvivesStorageFailureAndReplays(t *testing.T)
 		t.Fatal("multipart skipped durable completion", err)
 	}
 	request := MultipartCompletionRequest{Authority: r.Authority, RequestID: uuid.NewString(), UploadID: bound.Upload.UploadID, Parts: []MultipartCompletionPart{{Number: 1, ETag: "first", SHA256: r.SHA256}, {Number: 2, ETag: "last", SHA256: r.SHA256}}}
+	declareMultipartCompletionParts(t, pool, id, request)
 	storageFailure := errors.New("injected storage unavailable")
 	_, err = CompleteMultipartUpload(ctx, pool, id, request, func(ctx context.Context, u UploadRecord, parts []MultipartCompletionPart) (string, error) {
 		var intents int
@@ -124,6 +125,7 @@ func TestMultipartStoredEventFailurePreservesPreparedIntent(t *testing.T) {
 		t.Fatal(err)
 	}
 	request := MultipartCompletionRequest{Authority: r.Authority, RequestID: uuid.NewString(), UploadID: bound.Upload.UploadID, Parts: []MultipartCompletionPart{{Number: 1, ETag: "one", SHA256: r.SHA256}, {Number: 2, ETag: "two", SHA256: r.SHA256}}}
+	declareMultipartCompletionParts(t, pool, id, request)
 	if _, err := pool.Exec(ctx, `CREATE FUNCTION fail_multipart_stored() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.type='MULTIPART_STORED' THEN RAISE EXCEPTION 'injected stored event failure'; END IF; RETURN NEW; END $$; CREATE TRIGGER fail_multipart_stored BEFORE INSERT ON job_events FOR EACH ROW EXECUTE FUNCTION fail_multipart_stored()`); err != nil {
 		t.Fatal(err)
 	}
@@ -157,6 +159,7 @@ func TestMultipartCompletionRechecksAuthorityAfterStorage(t *testing.T) {
 		t.Fatal(err)
 	}
 	request := MultipartCompletionRequest{Authority: r.Authority, RequestID: uuid.NewString(), UploadID: bound.Upload.UploadID, Parts: []MultipartCompletionPart{{Number: 1, ETag: "one", SHA256: r.SHA256}, {Number: 2, ETag: "two", SHA256: r.SHA256}}}
+	declareMultipartCompletionParts(t, pool, id, request)
 	result, err := CompleteMultipartUpload(ctx, pool, id, request, func(ctx context.Context, _ UploadRecord, _ []MultipartCompletionPart) (string, error) {
 		if _, err := pool.Exec(ctx, "UPDATE attempts SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE id=$1", r.Authority.AttemptID); err != nil {
 			t.Fatal(err)
@@ -183,6 +186,7 @@ func TestMultipartCompletionConcurrentReplayRecordsOneVersion(t *testing.T) {
 		t.Fatal(err)
 	}
 	request := MultipartCompletionRequest{Authority: r.Authority, RequestID: uuid.NewString(), UploadID: bound.Upload.UploadID, Parts: []MultipartCompletionPart{{Number: 1, ETag: "one", SHA256: r.SHA256}, {Number: 2, ETag: "two", SHA256: r.SHA256}}}
+	declareMultipartCompletionParts(t, pool, id, request)
 	var wg sync.WaitGroup
 	failures := make(chan error, 16)
 	for range 16 {

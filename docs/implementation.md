@@ -4041,3 +4041,23 @@ This recorded gap is resolved by D17l/D17m below; the live sweep gate remains op
   `.local/verification/multipart-completion-{red,final,migrations-final,schema-final,gate}.log`.
   R02 remains open for public coordination, part grants/protocols, Rust delivery,
   larger object policy, and a submitted large-output job.
+
+### R02e: Immutable multipart part content and completion binding
+
+- Migration `0023` saves one SHA-256 per upload/part number. Part preparation
+  checks current worker/session/attempt authority and finalization phase after
+  ownership/replay locks. Changed hashes conflict; stored uploads cannot mint
+  another part grant. Completion requires all part hashes to match saved evidence
+  in Go and SQL before any storage completion call.
+- The migration preserves legacy completion hashes by backfilling part evidence
+  and refuses to discard it on downgrade. Shared multipart loading preserves the
+  same scope and lock order for preparation and completion.
+- Full real PostgreSQL store race tests passed in 57.828 seconds, including
+  16-way part replay, checksum rebinding rejection, missing/changed completion
+  evidence, expired replay, SQL immutability, legacy-intent upgrade, and existing
+  migration/concurrency regressions. Fresh schema/down/reapply, integration-tagged
+  store vet, read-only review, and `make test lint smoke` passed.
+- Updated README and multipart guide. Evidence:
+  `.local/verification/multipart-parts-{red,store,schema,gate}.log`. Public part
+  capabilities, paired worker protocol/delivery, larger size policy, and the
+  submitted-job demonstration remain open in R02.

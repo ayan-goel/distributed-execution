@@ -111,28 +111,24 @@ func multipartCompletionTx(ctx context.Context, pool *pgxpool.Pool, id WorkerIde
 	if attempt.authority != r.Authority {
 		return MultipartCompletionResult{Decision: "FENCED"}, nil
 	}
-	var createRequest string
-	if err = tx.QueryRow(ctx, "SELECT request_id::text FROM artifact_uploads WHERE upload_id=$1 AND worker_id=$2 AND session_id=$3", r.UploadID, id.WorkerID, r.Authority.SessionID).Scan(&createRequest); errors.Is(err, pgx.ErrNoRows) {
-		return MultipartCompletionResult{}, ErrNotFound
-	} else if err != nil {
-		return MultipartCompletionResult{}, err
-	}
-	upload, _, err := readUpload(ctx, tx, id.WorkerID, r.Authority.SessionID, createRequest)
+	upload, err := loadMultipartUploadTx(ctx, tx, id, r.Authority, r.UploadID)
 	if err != nil {
 		return MultipartCompletionResult{}, err
 	}
-	if upload.Authority != r.Authority || upload.PartCount != len(r.Parts) || upload.PartCount < 2 {
+	if upload.PartCount != len(r.Parts) {
 		return MultipartCompletionResult{}, ErrInvalid
-	}
-	if err = tx.QueryRow(ctx, "SELECT initialization_id::text,COALESCE(backend_upload_id,'') FROM artifact_multipart_uploads WHERE upload_id=$1 FOR UPDATE", r.UploadID).Scan(&upload.InitializationID, &upload.BackendUploadID); err != nil {
-		return MultipartCompletionResult{}, err
-	}
-	if upload.BackendUploadID == "" {
-		return MultipartCompletionResult{}, ErrConflict
 	}
 	body, err := json.Marshal(r.Parts)
 	if err != nil {
 		return MultipartCompletionResult{}, err
+	}
+	var boundParts int
+	if err = tx.QueryRow(ctx, `SELECT count(*) FROM jsonb_array_elements($2::jsonb) AS p(part)
+	    JOIN artifact_upload_parts b ON b.upload_id=$1 AND b.part_number=(p.part->>'number')::integer AND b.sha256=p.part->>'sha256'`, r.UploadID, body).Scan(&boundParts); err != nil {
+		return MultipartCompletionResult{}, err
+	}
+	if boundParts != len(r.Parts) {
+		return MultipartCompletionResult{}, ErrConflict
 	}
 	// Ownership locks precede FK/replay locks. One row per upload bounds durable
 	// completion history and retains the same part set after a lost response.

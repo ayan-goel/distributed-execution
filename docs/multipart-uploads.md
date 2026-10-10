@@ -104,6 +104,18 @@ substitute for the completed version. These internal paths currently retain the
 64 MiB artifact limit; larger size policy and public worker integration remain
 pending.
 
+## Durable part grants
+
+Migration `0023` binds one SHA-256 to each upload/part number before a capability
+is signed. `PrepareMultipartPart` checks the active worker/session/attempt and
+finalization phase with fresh database time after locks. Repeated requests reuse
+the same content identity; a changed hash conflicts. Part numbers must fit the
+immutable declaration. A completed upload cannot acquire another part grant.
+Completion intent must match every previously declared part hash in both Go and
+SQL. The migration backfills part hashes from existing completion intents and
+refuses to discard any bound part evidence on downgrade. This is the metadata
+prerequisite for bounded part RPCs; it does not yet issue public capabilities.
+
 ## Remaining R02 implementation
 
 1. Connect the durable initialization/completion paths to identified storage calls
