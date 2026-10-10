@@ -152,6 +152,25 @@ impl ProjectQuota {
         self.verify_limits()
     }
 
+    pub fn byte_limit(&self) -> u64 {
+        self.bytes
+    }
+
+    pub fn verify_directory(&self, path: &Path) -> io::Result<()> {
+        let pinned = self.directory.metadata()?;
+        let actual = fs::symlink_metadata(path)?;
+        // Bind the quota proof to the inode Docker will mount. A renamed or
+        // replaced path must not inherit the old descriptor's enforcement claim.
+        if !path.is_absolute()
+            || fs::canonicalize(path)? != path
+            || !actual.is_dir()
+            || (pinned.dev(), pinned.ino()) != (actual.dev(), actual.ino())
+        {
+            return Err(invalid("quota directory identity changed"));
+        }
+        self.verify()
+    }
+
     pub fn usage(&self) -> io::Result<QuotaUsage> {
         let quota = self.read_quota()?;
         Ok(QuotaUsage {

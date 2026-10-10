@@ -250,7 +250,10 @@ fn recover(
         || authority.generation.to_string() != generation
         || !image_id.strip_prefix("sha256:").is_some_and(lower_hash)
         || !lower_hash(&spec_sha256)
-        || scratch_policy != "soft-development"
+        || !matches!(
+            scratch_policy.as_str(),
+            "soft-development" | "ext4-project-quota-v1"
+        )
         || actual.name.as_deref() != Some(&format!("/dispatch-{}", authority.attempt_id))
     {
         return Err(RuntimeError::Identity);

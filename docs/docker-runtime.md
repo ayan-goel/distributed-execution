@@ -63,11 +63,13 @@ and its trusted ancestors must remain controlled by the agent/operator. Jobs nev
 supply host paths. Image-declared volumes are rejected because they could introduce
 additional unaccounted writable storage.
 
-The only currently constructible workspace is explicitly `soft_development`.
-It does **not** enforce a filesystem quota or advertise `scratch.quota`. Disk-pressure
-monitoring, allocation, symlink-safe output collection, and strict quota-backed
-workspaces remain required. The control plane's default strict scratch policy is
-unchanged. Docker adapter fixtures therefore do not make a production worker READY.
+`soft_development` does **not** enforce a filesystem quota. Linux callers can also
+construct a [verified ext4 project-quota workspace](project-quotas.md), whose byte
+limit must exactly match the job reservation. This profile requires rootful Docker
+user namespace remapping and built-in seccomp, checked before create and start;
+inspection rejects a host user namespace override. The complete agent allocation
+and readiness integration remains pending, so the development worker still
+advertises only `scratch.soft`.
 
 Images must already be present under their admitted pinned references. Pulling,
 registry policy/credentials, and image staging deadlines remain the next runtime

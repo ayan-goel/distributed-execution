@@ -18,8 +18,9 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 The full specification and ledger remain authoritative. Prioritize these gaps;
 expand existing tests only to resolve a named requirement or observed defect:
 
-1. Finish the strict ext4 workspace profile: durable project IDs, runtime attribute
-   restrictions, agent integration, cleanup, and real quota-exhausting jobs.
+1. Finish the strict ext4 agent profile: exclusive filesystem ownership, allocator
+   and workspace integration, health checks, cleanup, and submitted quota-exhausting
+   jobs. Durable IDs and the quota-protected Docker adapter passed their gates.
 2. Run the required 27-job recovery/fencing demonstration across two independent
    Linux VMs, including verified downloads and an actual evaluation workload.
 3. Reconcile every remaining contract/fault gate below against current evidence,
@@ -3793,3 +3794,32 @@ This recorded gap is resolved by D17l/D17m below; the live sweep gate remains op
   This slice does not change advertised scratch capabilities or workspace cleanup;
   runtime attribute protection and the full real-container strict profile remain
   required next.
+
+### D08s: Protect quota workspaces in real Docker containers
+
+- Added a Linux `PreparedWorkspace::project_quota` profile retaining the quota
+  descriptor. It verifies the exact directory inode and enforcement before
+  creation, requires an exact match to the job's scratch byte reservation, and
+  labels containers `ext4-project-quota-v1`. Recovery recognizes that profile
+  for owned cleanup. The existing agent still selects only development scratch.
+- Strict create/start checks require rootful daemon user namespace remapping and
+  Docker's built-in seccomp profile. Inspection rejects `UsernsMode=host`.
+  Linux's noninitial-user-namespace attribute checks protect project IDs and
+  inheritance without replacing Docker's syscall baseline with a custom profile.
+- The acceptance test first failed on missing runtime APIs. On the dedicated
+  Debian VM, the actual Docker adapter launched a 64 MiB quota-backed job. Its
+  own nested directory rejected retagging and inheritance removal via both
+  attribute interfaces with `EINVAL`; scratch and outputs shared the limit and
+  returned `EDQUOT`. Root mismatch, reservation mismatch, recovery discovery, and
+  fixture cleanup passed. A separate real-daemon test rejected strict support
+  with remapping disabled, then restored the VM's remapping configuration.
+- Native `make test lint smoke`, 80 Linux library tests, the quota primitive
+  checks, and Linux all-target Clippy passed. Review found a fixture inventory
+  failure could be hidden by shell substitution; cleanup now retains evidence on
+  inventory failure. No production blockers remained. Updated README and runtime
+  and quota documentation. Evidence: `.local/verification/quota-runtime-{red,
+  native,linux,linux-clippy,daemon-negative,vm-final}.log`.
+- This proves the adapter profile on ARM64 Debian kernel
+  `6.12.111+deb13-cloud-arm64` and Docker `26.1.5+dfsg1`. Exclusive filesystem
+  ownership, agent configuration/allocation/readiness/cleanup, and a submitted
+  quota-exhausting job through the complete agent remain the next required slice.

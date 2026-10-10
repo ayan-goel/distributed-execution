@@ -1,7 +1,8 @@
-# Strict scratch: ext4 project-quota foundation
+# Strict scratch: ext4 project quotas and Docker
 
-The Linux quota primitive is implemented and verified on a separate Debian VM.
-It is not yet connected to worker admission or workspace creation. The agent still
+The Linux quota primitive and Docker enforcement profile are implemented and
+verified on a separate Debian VM. They are not yet connected to agent workspace
+allocation or worker admission. The agent still
 requires the explicit soft-scratch development profile and advertises `scratch.soft`.
 
 The selected release filesystem is ext4 with project quotas enabled. An attempt's
@@ -31,13 +32,43 @@ strict integration must still ensure one allocator owns the entire filesystem.
 Before the worker can advertise `scratch.quota`, the remaining integration must provide:
 
 - Exclusive filesystem ownership and integration of the durable project-ID allocator.
-- A runtime restriction against project retagging or clearing inheritance through
-  `FS_IOC_FSSETXATTR`/`FS_IOC_SETFLAGS`. Unprivileged ownership alone is insufficient.
-- Agent configuration, strict workspace preparation, verified cleanup, and runtime
-  mount/profile checks, followed by a real quota-exhausting container job.
+- Agent configuration, quota-backed workspace preparation, health checks, and
+  verified cleanup, followed by a submitted job through the complete agent path.
 
-These are enforcement requirements, not optional hardening. The primitive and allocator tests
-do not establish container isolation or completed strict-scratch integration.
+These are enforcement requirements. The component gates do not establish completed
+agent integration or authorize the existing development worker to claim strict scratch.
+
+## Runtime enforcement profile
+
+`PreparedWorkspace::project_quota` retains a verified Linux quota handle. Before
+Docker creation, the quota must still belong to the workspace's exact directory
+inode and its byte limit must match the job's scratch reservation. Container
+labels record `ext4-project-quota-v1`; recovery recognizes this profile for owned
+container cleanup. The development profile remains explicit and separately labelled.
+
+The strict runtime requires a rootful Docker daemon with `userns-remap` enabled
+and its built-in seccomp profile. Capability checks run before create and start,
+so a daemon restart cannot silently remove the remapping requirement. Inspection
+rejects `UsernsMode=host`; jobs cannot supply namespace or seccomp overrides.
+The worker must also check this capability before advertising strict readiness.
+
+This restriction protects quota attributes, not just process privileges. In the
+initial user namespace, an unprivileged inode owner can change project attributes.
+Linux rejects project-ID changes and clearing inheritance from a remapped user
+namespace through both `FS_IOC_FSSETXATTR` and `FS_IOC_SETFLAGS`. The runtime retains
+Docker's default syscall restrictions instead of substituting a permissive custom
+seccomp profile. Rootless Docker is outside this selected release profile.
+
+On a new dedicated worker daemon, the operator configuration is:
+
+```json
+{"userns-remap":"default"}
+```
+
+Use Docker's [user namespace setup instructions](https://docs.docker.com/engine/security/userns-remap/),
+including subordinate UID/GID allocation and bind-mount permissions. Enabling this
+on an existing daemon changes which stored Docker objects are visible. The gate
+uses its own VM daemon; it does not reconfigure Docker Desktop.
 
 ## Reproduce the filesystem gate
 
@@ -54,12 +85,19 @@ image is about 322 MiB and the writable disk is sparse with a 4 GiB virtual ceil
 Keep the foreground process running while testing. The default port can be changed
 with `DISPATCH_QUOTA_VM_PORT`.
 
-Build the Linux `project_quota` test binary with the pinned worker toolchain
-(`cargo test --locked -p dispatch-worker --test project_quota --no-run`). Copy it
-and `scripts/test-project-quota.sh` into the VM, then run:
+Build the Linux test binaries with the pinned worker toolchain:
 
 ```sh
-sudo sh /tmp/test-project-quota.sh /tmp/project_quota-<build-hash>
+cargo test --locked -p dispatch-worker --test project_quota --test quota_runtime --no-run
+```
+
+Copy the binaries and `scripts/test-project-quota.sh` into the VM. The primitive
+gate needs only the first binary. To include the real container gate, configure
+the dedicated daemon as above, pull the pinned image, and provide both binaries:
+
+```sh
+sudo docker pull debian@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587
+sudo sh /tmp/test-project-quota.sh /tmp/project_quota-<hash> /tmp/quota_runtime-<hash>
 ```
 
 The fixture creates a new 128 MiB loop-backed ext4 filesystem, formats only its
@@ -73,10 +111,20 @@ and a 16-inode project returns `EDQUOT` before consuming its byte allowance.
 It also rejects symlink paths, repeated attachment, and project-ID collision.
 A second mount without `prjquota` retains accounting but must reject quota setup.
 
+The container gate uses the actual Docker adapter with a 64 MiB project. A job-owned
+nested directory cannot be retagged or lose inheritance through either ioctl
+interface (`EINVAL`); scratch and output writes share the limit and return `EDQUOT`.
+The gate also checks root identity, exact reservation matching, and recovery
+inventory. Cleanup removes only this run's randomly labelled job before unmounting;
+inventory or removal failure retains the fixture. A separate ignored test,
+`daemon_without_remapping_rejects_strict_runtime`, passed with remapping disabled
+on the idle test VM, then the VM configuration was restored.
+
 Verified locally on Debian kernel `6.12.111+deb13-cloud-arm64`, with ext4 mounted
 `rw,nosuid,nodev,relatime,prjquota`. Docker Desktop kernel `6.10.14-linuxkit` rejected
 the initial mount because it lacks `CONFIG_QUOTA` and `CONFIG_QFMT_V2`; it cannot
-substitute for this gate. AMD64 and the full worker/runtime profile remain unverified.
+substitute for this gate. The container gate passed with Docker `26.1.5+dfsg1` and
+its built-in seccomp profile. AMD64 and the complete agent path remain unverified.
 
 Shut down the test VM with its disposable key:
 
@@ -89,4 +137,5 @@ ssh -i .local/quota-vm/id_ed25519 -o IdentitiesOnly=yes \
 The implementation follows Linux's [quota syscall contract](https://www.man7.org/linux/man-pages/man2/quotactl_fd.2.html),
 [filesystem attribute UAPI](https://github.com/torvalds/linux/blob/v6.12/include/uapi/linux/fs.h),
 and [quota UAPI](https://github.com/torvalds/linux/blob/v6.12/include/uapi/linux/quota.h).
+Attribute protection follows Linux's [user namespace checks](https://github.com/torvalds/linux/blob/v6.12/fs/ioctl.c#L569-L579).
 VM initialization uses cloud-init's [NoCloud datasource](https://docs.cloud-init.io/en/latest/reference/datasources/nocloud.html).

@@ -39,7 +39,7 @@ pub(super) fn build(
         ("dev.dispatch.spec-sha256".into(), execution.sha256().into()),
         (
             "dev.dispatch.scratch-policy".into(),
-            "soft-development".into(),
+            workspace.scratch_policy().into(),
         ),
     ]);
     let mut env: Vec<_> = s.env.iter().map(|(k, v)| format!("{k}={v}")).collect();
@@ -194,6 +194,9 @@ pub(super) fn verify(
         || h.devices.as_ref().is_some_and(|v| !v.is_empty())
         || h.device_requests.as_ref().is_some_and(|v| !v.is_empty())
         || h.pid_mode.as_deref().is_some_and(|v| !v.is_empty())
+        // A host override disables the daemon remapping required by strict
+        // quotas; only Docker's default namespace policy is allowed.
+        || h.userns_mode.as_deref().is_some_and(|v| !v.is_empty())
         || h.ipc_mode
             .as_deref()
             .is_some_and(|v| !matches!(v, "private" | ""))
@@ -324,6 +327,19 @@ mod input_tests {
         assert!(workspace.bind_input("/inputs/data", &source).is_ok());
         assert!(work.join("inputs/data").is_dir());
         let config = build(&identity, &execution, &workspace).unwrap();
+        let image_id = format!("sha256:{}", "b".repeat(64));
+        let mut actual = ContainerInspectResponse {
+            image: Some(image_id.clone()),
+            config: Some(serde_json::from_value(serde_json::to_value(&config).unwrap()).unwrap()),
+            host_config: config.host_config.clone(),
+            ..Default::default()
+        };
+        assert!(verify(&actual, &config, &image_id).is_ok());
+        actual.host_config.as_mut().unwrap().userns_mode = Some("host".into());
+        assert_eq!(
+            verify(&actual, &config, &image_id),
+            Err(RuntimeError::Identity)
+        );
         let mounts = config.host_config.unwrap().mounts.unwrap();
         assert!(mounts
             .iter()

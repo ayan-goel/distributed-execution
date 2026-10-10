@@ -61,6 +61,8 @@ impl From<DockerError> for RuntimeError {
 pub struct PreparedWorkspace {
     root: PathBuf,
     inputs: Vec<InputMount>,
+    #[cfg(target_os = "linux")]
+    quota: Option<crate::project_quota::ProjectQuota>,
 }
 
 #[derive(Debug)]
@@ -74,9 +76,31 @@ impl PreparedWorkspace {
         let workspace = Self {
             root: root.as_ref().to_owned(),
             inputs: Vec::new(),
+            #[cfg(target_os = "linux")]
+            quota: None,
         };
         workspace.validate()?;
         Ok(workspace)
+    }
+    #[cfg(target_os = "linux")]
+    pub fn project_quota(
+        root: impl AsRef<Path>,
+        quota: crate::project_quota::ProjectQuota,
+    ) -> Result<Self, RuntimeError> {
+        let workspace = Self {
+            root: root.as_ref().to_owned(),
+            inputs: Vec::new(),
+            quota: Some(quota),
+        };
+        workspace.validate()?;
+        Ok(workspace)
+    }
+    fn scratch_policy(&self) -> &'static str {
+        #[cfg(target_os = "linux")]
+        if self.quota.is_some() {
+            return "ext4-project-quota-v1";
+        }
+        "soft-development"
     }
     pub fn root(&self) -> &Path {
         &self.root
@@ -144,6 +168,12 @@ impl PreparedWorkspace {
         Ok(())
     }
     fn validate(&self) -> Result<(), RuntimeError> {
+        #[cfg(target_os = "linux")]
+        if let Some(quota) = &self.quota {
+            quota
+                .verify_directory(&self.root)
+                .map_err(|_| RuntimeError::Configuration)?;
+        }
         // The agent, not the job document, supplies an already prepared private
         // parent. Workloads mount its children and cannot rename their host parent.
         if !self.root.is_absolute()
@@ -292,6 +322,20 @@ pub struct DockerRuntime {
     capture_logs: bool,
 }
 impl DockerRuntime {
+    pub async fn check_quota_support(&self) -> Result<(), RuntimeError> {
+        let info = bounded(RPC_TIMEOUT, self.docker.info()).await?;
+        // Linux forbids project retagging and clearing inheritance outside the
+        // initial user namespace. Preserve Docker's built-in seccomp baseline.
+        // Source: https://github.com/torvalds/linux/blob/v6.12/fs/ioctl.c
+        let options = info.security_options.as_deref().unwrap_or_default();
+        if !options.iter().any(|s| s == "name=userns")
+            || !options.iter().any(|s| s == "name=seccomp,profile=builtin")
+            || options.iter().any(|s| s == "name=rootless")
+        {
+            return Err(RuntimeError::Unsupported);
+        }
+        Ok(())
+    }
     pub async fn connect_with_logs(socket: &str) -> Result<Self, RuntimeError> {
         let mut runtime = Self::connect(socket).await?;
         runtime.capture_logs = true;
@@ -364,6 +408,17 @@ impl DockerRuntime {
     ) -> Result<ContainerInspectResponse, RuntimeError> {
         let actual = bounded(RPC_TIMEOUT, self.docker.inspect_container(&handle.id, None)).await?;
         if launching {
+            if handle
+                .expected
+                .labels
+                .as_ref()
+                .and_then(|labels| labels.get("dev.dispatch.scratch-policy"))
+                .is_some_and(|policy| policy == "ext4-project-quota-v1")
+            {
+                // Recheck after daemon restarts; a successful earlier connection
+                // does not prove a recovered CREATED container remains remapped.
+                self.check_quota_support().await?;
+            }
             config::verify(&actual, &handle.expected, &handle.image_id)?;
         } else {
             config::verify_identity(&actual, &handle.expected, &handle.image_id)?;
@@ -451,6 +506,13 @@ impl Runtime for DockerRuntime {
     ) -> Result<ContainerHandle, RuntimeError> {
         let _ = remaining(authority)?;
         workspace.validate()?;
+        #[cfg(target_os = "linux")]
+        if let Some(quota) = &workspace.quota {
+            if quota.byte_limit() != spec.job().spec.resources.scratch_mib << 20 {
+                return Err(RuntimeError::Configuration);
+            }
+            self.check_quota_support().await?;
+        }
         let expected = config::build(identity, spec, workspace)?;
         let name = format!("dispatch-{}", identity.attempt_id);
         let image = bounded(
