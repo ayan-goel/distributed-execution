@@ -44,7 +44,7 @@ func TestUploadMigrationPreservesAnExistingActiveAttempt(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer rollback(tx)
-	for _, name := range []string{"0018_queue_blockers", "0017_scheduler_cursor", "0016_retry_lineage", "0015_sweeps", "0014_job_inputs", "0013_datasets", "0012_log_segments", "0011_attempt_completions", "0010_verified_artifacts", "0009_artifact_uploads"} {
+	for _, name := range []string{"0019_job_listing", "0018_queue_blockers", "0017_scheduler_cursor", "0016_retry_lineage", "0015_sweeps", "0014_job_inputs", "0013_datasets", "0012_log_segments", "0011_attempt_completions", "0010_verified_artifacts", "0009_artifact_uploads"} {
 		down, err := os.ReadFile("../../migrations/" + name + ".down.sql")
 		if err != nil {
 			t.Fatal(err)

@@ -177,8 +177,9 @@ archive and completes registration through these endpoints. Its recovery
 options reuse the request ID and exact uploaded version after an uncertain
 response. A live CLI-to-Docker integration test verifies dataset-backed job
 execution and output download; broader dataset fault coverage remains pending.
-Job listing, events, and worker administration
-remain required.
+Job listing, events, and worker administration remain required. The
+[job-listing database foundation](job-listing.md) is implemented; its public
+HTTP and CLI interfaces are still pending.
 
 ## Evidence
 

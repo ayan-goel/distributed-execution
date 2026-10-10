@@ -1,0 +1,1 @@
+DROP INDEX jobs_project_created_id_idx;

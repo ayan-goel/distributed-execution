@@ -3251,3 +3251,30 @@ This recorded gap is resolved by D17l/D17m below; the live sweep gate remains op
   scheduler, migration, or worker protocol/runtime logic changed in this slice.
   Independent Linux-host execution and broader v0.1 release gates remain; the next
   missing public workflow is filtered, paginated job listing (spec §4/15).
+
+### D05h: Add filtered job-listing storage
+
+- Added read-only project-scoped summary listing with an optional job state and
+  exact AND matching of metadata labels. Creation-time/UUID keyset ordering handles
+  timestamp ties, new submissions, and deleted anchors. Each page reads a live
+  statement snapshot; mutable state filters do not provide a frozen scan.
+- Requests specify 1–100 rows; pages stop before an 8 MiB encoded response
+  budget, with 1024 bytes reserved for the future public envelope/cursor. Empty
+  results return an empty array. Standard JSON byte counting includes escaping;
+  the admitted metadata bounds ensure one summary fits. Review caught and
+  corrected the initial 3 MiB design, which could strand valid escaped labels.
+- Migration 0019 adds the ordered project index without changing job identity,
+  authority, reservations, scheduler state, or queue diagnostics. Rollback chains
+  and the migration-count assertion include it. Its transactional index build can
+  block writes; filtered scan latency has not been benchmarked.
+- Initial focused compilation failed because the listing interface was absent.
+  Focused PostgreSQL/race listing and populated migration checks passed (5.067
+  seconds). Fresh migrations, full rollback, and reapply passed. Separate-model
+  review found no remaining blockers. Details and bounds are in job-listing.md.
+- `make test lint smoke` and all affected PostgreSQL/race packages passed: store
+  52.828 seconds, admission 1.956, API 4.282, worker API 13.322. Verification logs
+  are local under ignored `.local/verification/job-listing-{focused,native,schema,postgres}.log`.
+  No scheduler or worker runtime behavior changed; no new live-worker run is claimed.
+- HTTP/client/CLI listing remains the next slice. The current generic client
+  response allowance is 4 MiB and must gain an explicit listing-specific allowance.
+  This foundation does not satisfy the public-list workflow or complete v0.1.
