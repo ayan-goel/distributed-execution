@@ -26,14 +26,18 @@ import (
 )
 
 func TestWorkerRestartFencesAndRemovesItsOwnRunningJob(t *testing.T) {
-	testWorkerRestartAndCleanup(t, false)
+	testWorkerRestartAndCleanup(t, "")
 }
 
 func TestWorkerExecutionTimeoutStopsAndReconcilesItsOwnJob(t *testing.T) {
-	testWorkerRestartAndCleanup(t, true)
+	testWorkerRestartAndCleanup(t, "EXECUTION_TIMEOUT")
 }
 
-func testWorkerRestartAndCleanup(t *testing.T, executionTimeout bool) {
+func TestWorkerStartupTimeoutCannotLaunchAfterStalledImagePreparation(t *testing.T) {
+	testWorkerRestartAndCleanup(t, "STARTUP_TIMEOUT")
+}
+
+func testWorkerRestartAndCleanup(t *testing.T, timeoutReason string) {
 	t.Helper()
 	configureServerTestDatabase(t)
 	pki := testWorkerPKI(t)
@@ -52,6 +56,11 @@ func testWorkerRestartAndCleanup(t *testing.T, executionTimeout bool) {
 	image := "rust@sha256:38bc5a86d998772d4aec2348656ed21438d20fcdce2795b56ca434cf21430d89"
 	if exec.CommandContext(ctx, "docker", "image", "inspect", image).Run() != nil {
 		docker("pull", image)
+	}
+	var stalledImage *stalledImageProxy
+	if timeoutReason == "STARTUP_TIMEOUT" {
+		stalledImage = newStalledImageProxy(t, socket)
+		socket = stalledImage.socket
 	}
 	pool, err := openPool(ctx)
 	if err != nil {
@@ -89,12 +98,15 @@ func testWorkerRestartAndCleanup(t *testing.T, executionTimeout bool) {
 	job.Spec.Outputs = nil
 	job.Spec.Resources = resources
 	job.Spec.Retry.MaxAttempts = 1
-	if executionTimeout {
+	if timeoutReason != "" {
 		// Keep worker-loss retries enabled so misclassifying the timeout would
 		// schedule another attempt instead of preserving a permanent failure.
 		job.Spec.Retry.MaxAttempts = 2
 		job.Spec.Timeouts.ExecutionSeconds = 5
 		job.Spec.TerminationGraceSeconds = 1
+		if timeoutReason == "STARTUP_TIMEOUT" {
+			job.Spec.Timeouts.StartupSeconds = 5
+		}
 	}
 	job.Spec.Placement.Labels["architecture"] = architecture
 	_, hash, err := job.Canonical()
@@ -119,7 +131,7 @@ func testWorkerRestartAndCleanup(t *testing.T, executionTimeout bool) {
 	served := make(chan error, 1)
 	go func() { served <- server.Serve(listener) }()
 	t.Cleanup(func() { server.Stop(); <-served })
-	if executionTimeout {
+	if timeoutReason != "" {
 		reaping, stopReaping := context.WithCancel(ctx)
 		reaped := make(chan struct{})
 		go func() {
@@ -156,7 +168,7 @@ func testWorkerRestartAndCleanup(t *testing.T, executionTimeout bool) {
 		Event     string `json:"event"`
 		SessionID string `json:"session_id"`
 	}
-	start := func() (*json.Decoder, func()) {
+	start := func() (*json.Decoder, func(), <-chan struct{}) {
 		t.Helper()
 		command := exec.CommandContext(ctx, binary, "run", "--config", path, "--dev-soft-scratch")
 		stdout, err := command.StdoutPipe()
@@ -168,12 +180,14 @@ func testWorkerRestartAndCleanup(t *testing.T, executionTimeout bool) {
 		if err := command.Start(); err != nil {
 			t.Fatal(err)
 		}
+		exited := make(chan struct{})
+		go func() { _ = command.Wait(); close(exited) }()
 		var once sync.Once
 		stop := func() {
-			once.Do(func() { _ = command.Process.Kill(); _ = command.Wait() })
+			once.Do(func() { _ = command.Process.Kill(); <-exited })
 		}
 		t.Cleanup(stop)
-		return json.NewDecoder(stdout), stop
+		return json.NewDecoder(stdout), stop, exited
 	}
 	read := func(decoder *json.Decoder, expected string) workerEvent {
 		t.Helper()
@@ -187,12 +201,19 @@ func testWorkerRestartAndCleanup(t *testing.T, executionTimeout bool) {
 			}
 		}
 	}
-	first, stopFirst := start()
+	first, stopFirst, firstExited := start()
 	oldSession := read(first, "session_pending").SessionID
 	read(first, "ready")
 	container := ""
 	until := time.Now().Add(20 * time.Second)
-	for time.Now().Before(until) {
+	if stalledImage != nil {
+		select {
+		case <-stalledImage.entered:
+		case <-ctx.Done():
+			t.Fatal("worker did not reach the stalled image inspection")
+		}
+	}
+	for stalledImage == nil && time.Now().Before(until) {
 		output := docker("ps", "-q", "--filter", "label=dev.dispatch.worker="+worker.WorkerID)
 		if fields := strings.Fields(output); len(fields) == 1 {
 			container = fields[0]
@@ -200,7 +221,7 @@ func testWorkerRestartAndCleanup(t *testing.T, executionTimeout bool) {
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
-	if container == "" {
+	if stalledImage == nil && container == "" {
 		t.Fatal("first agent never started its own Docker job")
 	}
 	var attempt string
@@ -210,10 +231,10 @@ func testWorkerRestartAndCleanup(t *testing.T, executionTimeout bool) {
 	if _, err := os.Stat(filepath.Join(root, "work", attempt)); err != nil {
 		t.Fatal("first agent did not create its attempt workspace", err)
 	}
-	if executionTimeout {
+	if timeoutReason != "" {
 		until := time.Now().Add(15 * time.Second)
-		stopped := false
-		for time.Now().Before(until) {
+		stopped := stalledImage != nil
+		for !stopped && time.Now().Before(until) {
 			if docker("inspect", "--format", "{{.State.Running}}", container) == "false" {
 				stopped = true
 				break
@@ -231,7 +252,7 @@ func testWorkerRestartAndCleanup(t *testing.T, executionTimeout bool) {
 				Scan(&state, &reason, &reservation, &cleanup); err != nil {
 				t.Fatal(err)
 			}
-			if state == "FAILED" && reason == "EXECUTION_TIMEOUT" && reservation == "quarantined" && cleanup {
+			if state == "FAILED" && reason == timeoutReason && reservation == "quarantined" && cleanup {
 				break
 			}
 			if time.Now().After(until) {
@@ -240,11 +261,24 @@ func testWorkerRestartAndCleanup(t *testing.T, executionTimeout bool) {
 			time.Sleep(100 * time.Millisecond)
 		}
 	}
-	stopFirst()
-	if state := docker("inspect", "--format", "{{.State.Running}}", container); !executionTimeout && state != "true" {
-		t.Fatal("job stopped before the replacement agent fenced it", state)
+	if stalledImage != nil {
+		stalledImage.release()
+		select {
+		case <-firstExited:
+		case <-time.After(10 * time.Second):
+			t.Fatal("worker continued after startup authority expired")
+		}
+		if stalledImage.creates.Load() != 0 || docker("ps", "-aq", "--filter", "label=dev.dispatch.worker="+worker.WorkerID) != "" {
+			t.Fatal("stalled preparation created a container after startup expired")
+		}
 	}
-	second, stopSecond := start()
+	stopFirst()
+	if container != "" {
+		if state := docker("inspect", "--format", "{{.State.Running}}", container); timeoutReason == "" && state != "true" {
+			t.Fatal("job stopped before the replacement agent fenced it", state)
+		}
+	}
+	second, stopSecond, _ := start()
 	defer stopSecond()
 	newSession := read(second, "session_pending").SessionID
 	if newSession == "" || newSession == oldSession {
@@ -256,7 +290,7 @@ func testWorkerRestartAndCleanup(t *testing.T, executionTimeout bool) {
 		t.Fatal(err)
 	}
 	read(second, "ready")
-	if exec.CommandContext(ctx, "docker", "inspect", container).Run() == nil {
+	if container != "" && exec.CommandContext(ctx, "docker", "inspect", container).Run() == nil {
 		t.Fatal("fenced container survived replacement readiness")
 	}
 	if _, err := os.Stat(filepath.Join(root, "work", attempt)); !os.IsNotExist(err) {
@@ -270,8 +304,8 @@ func testWorkerRestartAndCleanup(t *testing.T, executionTimeout bool) {
 		t.Fatal(err)
 	}
 	wantState, wantReason := "LOST", "WORKER_LOST"
-	if executionTimeout {
-		wantState, wantReason = "FAILED", "EXECUTION_TIMEOUT"
+	if timeoutReason != "" {
+		wantState, wantReason = "FAILED", timeoutReason
 	}
 	if jobState != "FAILED" || attemptState != wantState || reason != wantReason || reservation != "released" || workerState != "READY" || cleanup {
 		t.Fatal("replacement did not fence, release, and reconcile the old job", jobState, attemptState, reason, reservation, workerState, cleanup)

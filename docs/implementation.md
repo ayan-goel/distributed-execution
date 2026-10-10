@@ -3568,3 +3568,25 @@ This recorded gap is resolved by D17l/D17m below; the live sweep gate remains op
 - This covers one local Docker engine and soft scratch. Startup/finalization
   stalls, interrupted termination, independent Linux hosts, strict scratch, and
   the broader v0.1 fault matrix remain open.
+
+### D13g: Verify startup expiry during stalled image preparation
+
+- Added a private Unix-socket proxy that holds image inspection while forwarding
+  other requests to real Docker. Its short test-owned path avoids the macOS Unix
+  socket path limit; cleanup closes only this fixture and does not alter images.
+- The actual worker receives a five-second startup budget with worker-loss retries
+  enabled. The gate observes its pending image read, then the nonretryable
+  `STARTUP_TIMEOUT` and quarantined capacity. Releasing that read after expiry must
+  not create a container; the agent exits autonomously before test-driven stop.
+  An approved replacement clears the workspace and reservation before readiness.
+- The shared restart fixture retains the running-container observation after
+  agent kill, execution-timeout stop checks, one-attempt/no-completion assertions,
+  and replacement reconciliation. Evidence is ignored in
+  `.local/verification/agent-startup-timeout{,-final}.log`.
+- Final startup (6.47 seconds), execution (6.44), and crash/restart (0.75) gates
+  passed with race detection, real PostgreSQL, mTLS, and Docker. Integration-tagged
+  Go vet, formatting, and whitespace checks passed. Review found no blockers.
+- This proves a real-daemon image-inspection stall on local Docker Desktop with
+  soft scratch. Registry download, dataset transfer, and filesystem startup stalls,
+  finalization faults, strict Linux scratch, and independent hosts remain separate
+  release gates.

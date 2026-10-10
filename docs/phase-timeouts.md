@@ -44,6 +44,16 @@ and workspace before readiness, clears cleanup pending, and releases capacity.
 It verifies one attempt and no accepted completion. The timeout gate passed in
 6.53 seconds; the existing active-job crash/restart gate also passed.
 
-This is one local Docker Desktop engine with development scratch. Real startup
-and finalization stalls, interrupted cleanup, independent Linux hosts, and strict
-scratch still require their own release evidence.
+`TestWorkerStartupTimeoutCannotLaunchAfterStalledImagePreparation` places a private
+Unix-socket proxy before the real daemon and holds image inspection beyond a
+five-second startup budget. Other daemon operations pass through. The test releases
+the held read after expiry, observes autonomous worker exit, and verifies zero
+container-create requests and no worker-owned containers. The server records one
+nonretryable `STARTUP_TIMEOUT`, keeps capacity quarantined, and accepts no result.
+Replacement reconciliation clears the private workspace and reservation before
+readiness. This covers a stalled image-inspection operation; it does not claim
+registry download, input transfer, or filesystem stalls all behave identically.
+
+This is one local Docker Desktop engine with development scratch. Real finalization
+stalls, interrupted cleanup, independent Linux hosts, and strict scratch still
+require their own release evidence.

@@ -211,5 +211,8 @@ readiness. `TestWorkerExecutionTimeoutStopsAndReconcilesItsOwnJob` uses the same
 actual-worker fixture to verify a five-second execution limit stops a running
 120-second job without retry; capacity stays quarantined until replacement cleanup.
 See [phase-timeouts.md](phase-timeouts.md) for the remaining timeout gates.
+The startup-timeout gate holds image inspection at a private proxy to the real
+daemon, then proves autonomous agent exit, zero container creation after expiry,
+and replacement cleanup of the failed attempt.
 Strict scratch, independent Linux hosts, and the broader timeout/failure matrix
 remain required for the v0.1 release.
