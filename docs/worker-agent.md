@@ -216,5 +216,9 @@ daemon, then proves autonomous agent exit, zero container creation after expiry,
 and replacement cleanup of the failed attempt.
 The finalization-timeout gate verifies a required output from a real exited job
 cannot publish when its upload-grant request stalls past the phase budget.
+`TestWorkerControlPartitionStopsBeforeLeaseExpiryAndReconciles` cuts only the live
+mTLS transport, leaving Docker reachable. The agent stops its job before the server
+lease expires; natural fencing quarantines capacity until replacement cleanup.
+See [worker-leases.md](worker-leases.md#control-channel-partition-gate).
 Strict scratch, independent Linux hosts, and the broader timeout/failure matrix
 remain required for the v0.1 release.

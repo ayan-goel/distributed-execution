@@ -25,7 +25,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D06 worker identities | D03,D04 | Authenticated registration, session takeover/recovery; stale-session rejection | control-plane, Rust client, startup/health loop, operator drain, and project-scoped HTTP/CLI fleet listing gates passed; broader release audit pending |
 | D07 acquisition | D03,D06 | Atomic assignment/reservations; concurrent quota/capacity races; acquisition replay | store, RPC, Rust client, sequential agent loop, and local operator policy switch passed; broader scheduler pending |
 | D08 Docker adapter | D04 | Real bounded create/start/inspect/stop; ambiguous create reconciles one identity | pinned image pulls, staged inputs, RUNNING/FINALIZING coordination, and actual daemon execution passed; strict workspaces pending |
-| D09 leases | D06,D07 | Fresh DB-time expiry checks; delayed grants; local monotonic deadline enforcement | deadline, store/RPC/client, watchdog, periodic renewal, daemon execution, and production lease reaper passed; control-channel partition gate pending |
+| D09 leases | D06,D07 | Fresh DB-time expiry checks; delayed grants; local monotonic deadline enforcement | deadline, store/RPC/client, watchdog, periodic renewal, daemon execution, production lease reaper, and actual-worker control-channel partition gate passed; independent-host/pause/runtime-failure matrix pending |
 | D10 worker recovery | D08,D09 | Durable journal; agent kill/restart stops old containers before new capacity | agent-owned job kill/restart, fencing, container/workspace cleanup, and reservation release passed; broader recovery matrix pending |
 | D11 artifacts | D03,D04 | Scoped grants; verified exact versions; stale publication rejection | grants, verification, completion, public metadata, and verified CLI download gates passed; Rust transfers and multipart support pending |
 | D12 first real job | D05–D11 | CLI submit → gRPC → Docker → verified output → CLI download | full component chain passed with cached and absent public digests, real registry pull, and fixed fixture resolver; independent Linux-host release gates pending |
@@ -3612,3 +3612,28 @@ This recorded gap is resolved by D17l/D17m below; the live sweep gate remains op
 - This is an upload-grant stall before storage access, using real PostgreSQL,
   mTLS, worker, and local Docker. Stalled S3 PUTs, uncertain verification replies,
   interrupted termination, strict scratch, and independent-host gates remain open.
+
+### D09h: Verify actual-worker control-channel partition and cleanup
+
+- Added a loopback TCP proxy forwarding opaque TLS between the actual worker and
+  real control service. After durable RUNNING, it closes existing connections and
+  rejects reconnects, including connections accepted just before the cut. Docker
+  stays reachable; neither the agent nor the server reaper is killed, and the
+  fixture never edits lease deadlines. An already-forwarded renewal may commit.
+- The 120-second workload stops while its server lease is still valid. The real
+  periodic reaper subsequently records LOST / WORKER_LOST and quarantines capacity.
+  The agent exits autonomously before test-driven stop. Restoring connectivity and
+  approving the exact replacement session removes the old container/workspace,
+  clears cleanup pending, and releases the reservation before READY. Exactly one
+  attempt exists and no completion is accepted.
+- The initial targeted gate passed in 32.56 seconds. Final race-enabled verification
+  passed all five shared-fixture cases: crash/restart 0.83 seconds, execution timeout
+  6.55, startup timeout 6.55, finalization timeout 6.54, and partition 32.55; package
+  total 54.481 seconds. The partitioned container stopped 25.056 seconds after the
+  cut with 4.864 seconds remaining on the database lease. Integration-tagged Go vet,
+  formatting, whitespace, and review checks passed. No production code changed.
+- Evidence is ignored under `.local/verification/agent-control-partition*.log`.
+  Contract and test boundaries are documented in `worker-leases.md`. This is one
+  local Docker Desktop engine with development scratch, not evidence for host
+  suspension, runtime failure during termination, asymmetric packet loss, strict
+  scratch, or independent Linux-host release gates.

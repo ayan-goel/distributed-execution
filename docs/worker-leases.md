@@ -325,6 +325,26 @@ They verify stop acknowledgement before a container exists, before completion
 is sealed, and after a sealed result is rejected. Wider expiry/fencing
 interleavings still need release gates.
 
+## Control-channel partition gate
+
+`TestWorkerControlPartitionStopsBeforeLeaseExpiryAndReconciles` runs the actual
+worker against real PostgreSQL, mTLS, and Docker. After its 120-second job enters
+RUNNING, a loopback TCP proxy closes the live control connection and rejects
+reconnects. TLS remains end-to-end; Docker and the periodic server reaper stay
+reachable. The fixture never edits lease deadlines or kills the worker to induce
+the failure.
+
+The test observes physical container stop while the database lease is still live,
+then natural `LOST` / `WORKER_LOST`, quarantined capacity, and autonomous worker
+exit. After control connectivity returns, an explicitly approved replacement
+removes the old container and workspace before READY and reservation release.
+Exactly one attempt exists and no completion is accepted. Verbose test output
+records the observed stop delay and remaining server lease.
+
+This proves the local control-disconnection case on one Docker Desktop engine
+with development scratch. It does not establish host suspension behavior, runtime
+failure during termination, asymmetric packet loss, or independent Linux hosts.
+
 ## Source references
 
 - [Linux clock_gettime and CLOCK_BOOTTIME](https://man7.org/linux/man-pages/man2/clock_gettime.2.html)

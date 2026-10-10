@@ -42,8 +42,17 @@ func TestWorkerFinalizationTimeoutCannotPublishAfterStalledOutputGrant(t *testin
 	testWorkerRestartAndCleanup(t, "FINALIZATION_TIMEOUT")
 }
 
-func testWorkerRestartAndCleanup(t *testing.T, timeoutReason string) {
+func TestWorkerControlPartitionStopsBeforeLeaseExpiryAndReconciles(t *testing.T) {
+	testWorkerRestartAndCleanup(t, "CONTROL_PARTITION")
+}
+
+func testWorkerRestartAndCleanup(t *testing.T, scenario string) {
 	t.Helper()
+	partition := scenario == "CONTROL_PARTITION"
+	timeoutReason := scenario
+	if partition {
+		timeoutReason = ""
+	}
 	configureServerTestDatabase(t)
 	pki := testWorkerPKI(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
@@ -147,7 +156,13 @@ func testWorkerRestartAndCleanup(t *testing.T, timeoutReason string) {
 	served := make(chan error, 1)
 	go func() { served <- server.Serve(listener) }()
 	t.Cleanup(func() { server.Stop(); <-served })
-	if timeoutReason != "" {
+	endpoint := listener.Addr().String()
+	var controlProxy *controlPartitionProxy
+	if partition {
+		controlProxy = newControlPartitionProxy(t, endpoint)
+		endpoint = controlProxy.address
+	}
+	if timeoutReason != "" || partition {
 		reaping, stopReaping := context.WithCancel(ctx)
 		reaped := make(chan struct{})
 		go func() {
@@ -163,7 +178,7 @@ func testWorkerRestartAndCleanup(t *testing.T, timeoutReason string) {
 		}
 	}
 	config, err := json.Marshal(map[string]any{
-		"worker_id": worker.WorkerID, "server_url": "https://" + listener.Addr().String(),
+		"worker_id": worker.WorkerID, "server_url": "https://" + endpoint,
 		"ca_cert": pki.ca, "client_cert": pki.clientCert, "client_key": pki.clientKey,
 		"journal_dir": filepath.Join(root, "state"), "workspace_root": filepath.Join(root, "work"),
 		"docker_socket": socket, "cpu_millis": 500, "memory_mib": 128, "scratch_mib": 64,
@@ -258,6 +273,58 @@ func testWorkerRestartAndCleanup(t *testing.T, timeoutReason string) {
 	if _, err := os.Stat(filepath.Join(root, "work", attempt)); err != nil {
 		t.Fatal("first agent did not create its attempt workspace", err)
 	}
+	if partition {
+		// Cut only the real control transport after RUNNING commits. Docker stays
+		// reachable, and the production reaper keeps its original database lease.
+		for {
+			var phase string
+			if err := pool.QueryRow(ctx, "SELECT state FROM attempts WHERE id=$1", attempt).Scan(&phase); err != nil {
+				t.Fatal(err)
+			}
+			if phase == "RUNNING" {
+				break
+			}
+			if time.Now().After(until) {
+				t.Fatal("worker never durably entered RUNNING before partition", phase)
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		cutAt := time.Now()
+		if closed := controlProxy.cut(); closed == 0 {
+			t.Fatal("partition did not close any live control connection")
+		}
+		until = time.Now().Add(35 * time.Second)
+		for docker("inspect", "--format", "{{.State.Running}}", container) == "true" {
+			if time.Now().After(until) {
+				t.Fatal("partitioned worker did not stop its reachable Docker workload")
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		var leaseRemaining float64
+		var state string
+		if err := pool.QueryRow(ctx, "SELECT extract(epoch FROM lease_expires_at-clock_timestamp())::float8,state FROM attempts WHERE id=$1", attempt).Scan(&leaseRemaining, &state); err != nil || leaseRemaining <= 0 || state != "RUNNING" {
+			t.Fatal("workload did not stop before server authority expired", time.Since(cutAt), leaseRemaining, state, err)
+		}
+		t.Logf("container stopped %s after control cut with %.3fs of server lease remaining", time.Since(cutAt).Round(time.Millisecond), leaseRemaining)
+		if controlProxy.rejected.Load() == 0 {
+			t.Fatal("worker did not attempt control reconnection during the partition")
+		}
+		for {
+			var reason, reservation string
+			var cleanup bool
+			if err := pool.QueryRow(ctx, `SELECT a.state,coalesce(a.reason,''),r.state,a.cleanup_pending
+				FROM attempts a JOIN reservations r ON r.attempt_id=a.id WHERE a.id=$1`, attempt).Scan(&state, &reason, &reservation, &cleanup); err != nil {
+				t.Fatal(err)
+			}
+			if state == "LOST" && reason == "WORKER_LOST" && reservation == "quarantined" && cleanup {
+				break
+			}
+			if time.Now().After(until) {
+				t.Fatal("server failed to fence and quarantine the partitioned attempt", state, reason, reservation, cleanup)
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+	}
 	if stalledGrant != nil {
 		body, err := os.ReadFile(filepath.Join(root, "work", attempt, "outputs", "result.txt"))
 		if err != nil || string(body) != "verified" {
@@ -302,11 +369,11 @@ func testWorkerRestartAndCleanup(t *testing.T, timeoutReason string) {
 	if stalledImage != nil {
 		stalledImage.release()
 	}
-	if stalledImage != nil || stalledGrant != nil {
+	if stalledImage != nil || stalledGrant != nil || partition {
 		select {
 		case <-firstExited:
 		case <-time.After(10 * time.Second):
-			t.Fatal("worker continued after phase authority expired", timeoutReason)
+			t.Fatal("worker continued after authority expired", scenario)
 		}
 	}
 	if stalledImage != nil {
@@ -315,8 +382,11 @@ func testWorkerRestartAndCleanup(t *testing.T, timeoutReason string) {
 		}
 	}
 	stopFirst()
+	if controlProxy != nil {
+		controlProxy.restore()
+	}
 	if container != "" {
-		if state := docker("inspect", "--format", "{{.State.Running}}", container); timeoutReason == "" && state != "true" {
+		if state := docker("inspect", "--format", "{{.State.Running}}", container); timeoutReason == "" && !partition && state != "true" {
 			t.Fatal("job stopped before the replacement agent fenced it", state)
 		}
 	}
