@@ -29,7 +29,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D10 worker recovery | D08,D09 | Durable journal; agent kill/restart stops old containers before new capacity | agent-owned job kill/restart, fencing, container/workspace cleanup, and reservation release passed; broader recovery matrix pending |
 | D11 artifacts | D03,D04 | Scoped grants; verified exact versions; stale publication rejection | grants, verification, completion, public metadata, and verified CLI download gates passed; Rust transfers and multipart support pending |
 | D12 first real job | D05–D11 | CLI submit → gRPC → Docker → verified output → CLI download | full component chain passed with cached and absent public digests, real registry pull, and fixed fixture resolver; independent Linux-host release gates pending |
-| D13 loss/retry | D09,D12 | Reaper/reconciliation; recorded retry; backoff/deadlines; nonretryable failure | reaper, server loop, natural lease expiry, and real worker-loss retry on one Docker daemon passed; independent hosts and broader retry matrix pending |
+| D13 loss/retry | D09,D12 | Reaper/reconciliation; recorded retry; backoff/deadlines; nonretryable failure | reaper, natural lease expiry, real worker-loss retry, durable phase-timeout classification, and actual-worker startup/execution/finalization timeout gates on one Docker daemon passed; independent hosts and broader retry/fault matrix pending |
 | D14 cancellation | D12,D13 | Both completion/cancellation race orders, repeat requests, uncertain cleanup | pending |
 | D15 logs | D08,D11 | Bounded queues/spool, noisy-job truncation, stream cursors, reconnect | catalog, HTTP cursor/tail gaps, binary format, private spool, Rust registration client, journaled delivery, bounded Docker follower, assembler, completion summary, CLI follow, pre-start capture, and live publication passed; reconnect/fault matrix pending |
 | D16 datasets | D11 | Immutable registration/cache; corruption rejection; pin-aware eviction | ownership schema, upload/completion APIs, project-scoped resolution, real CLI registration, isolated worker cache, atomic store admission bindings, durable replay, archive assignment contract, worker validation, store assignment population, signed RPC grants, strict job-to-wire matching, real read-only Docker mount, startup cache reset, assignment-to-cache preparation, agent cache initialization, unlaunched transfer-failure completion, replay-binding validation, worker input acquisition path, HTTP submission, and one live dataset-to-output Docker job passed; dataset fault matrix still pending |
@@ -3590,3 +3590,25 @@ This recorded gap is resolved by D17l/D17m below; the live sweep gate remains op
   soft scratch. Registry download, dataset transfer, and filesystem startup stalls,
   finalization faults, strict Linux scratch, and independent hosts remain separate
   release gates.
+
+### D13h: Verify finalization timeout during a stalled output-grant RPC
+
+- Extended the actual-worker restart fixture with a job that writes a required
+  output and exits zero. The test observes those bytes, durable FINALIZING and
+  exit status, and a stopped real Docker container before timeout recovery.
+- A scoped service wrapper withholds the required output's CreateUpload reply
+  until RPC cancellation. The five-second finalization budget records permanent
+  `FINALIZATION_TIMEOUT` with quarantine despite enabled worker-loss retries.
+  The agent exits autonomously; approved replacement reconciliation removes the
+  exited container and workspace and releases capacity before readiness.
+- The assertions retain one attempt, no accepted completion, no verified artifact,
+  and no canonical result. The initial run exposed an assertion SQL mistake:
+  artifact ownership joins through artifact_uploads. That query is corrected.
+  Evidence is ignored in `.local/verification/agent-finalization-timeout*.log`.
+- All four gates passed together with race detection: crash/restart 1.84 seconds,
+  execution timeout 6.80, startup timeout 6.80, and finalization timeout 6.80;
+  package total 26.672 seconds. Integration-tagged Go vet, formatting, whitespace,
+  and review checks passed. No worker production code changed.
+- This is an upload-grant stall before storage access, using real PostgreSQL,
+  mTLS, worker, and local Docker. Stalled S3 PUTs, uncertain verification replies,
+  interrupted termination, strict scratch, and independent-host gates remain open.

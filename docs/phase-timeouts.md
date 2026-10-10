@@ -54,6 +54,15 @@ Replacement reconciliation clears the private workspace and reservation before
 readiness. This covers a stalled image-inspection operation; it does not claim
 registry download, input transfer, or filesystem stalls all behave identically.
 
-This is one local Docker Desktop engine with development scratch. Real finalization
-stalls, interrupted cleanup, independent Linux hosts, and strict scratch still
-require their own release evidence.
+`TestWorkerFinalizationTimeoutCannotPublishAfterStalledOutputGrant` runs a real
+container that writes its required output and exits zero. After durable FINALIZING,
+the fixture withholds that output's `CreateUpload` reply until RPC cancellation.
+The five-second finalization budget produces a nonretryable
+`FINALIZATION_TIMEOUT`; the agent exits, and capacity stays quarantined until
+replacement reconciliation removes the exited container and workspace. No artifact,
+completion, or canonical result is accepted. This holds the upload-grant RPC before
+storage access; it does not model a stalled S3 PUT or uncertain object verification.
+
+These gates use one local Docker Desktop engine with development scratch. Broader
+startup/finalization faults, interrupted cleanup, independent Linux hosts, and strict
+scratch still require their own release evidence.

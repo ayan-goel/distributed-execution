@@ -214,5 +214,7 @@ See [phase-timeouts.md](phase-timeouts.md) for the remaining timeout gates.
 The startup-timeout gate holds image inspection at a private proxy to the real
 daemon, then proves autonomous agent exit, zero container creation after expiry,
 and replacement cleanup of the failed attempt.
+The finalization-timeout gate verifies a required output from a real exited job
+cannot publish when its upload-grant request stalls past the phase budget.
 Strict scratch, independent Linux hosts, and the broader timeout/failure matrix
 remain required for the v0.1 release.

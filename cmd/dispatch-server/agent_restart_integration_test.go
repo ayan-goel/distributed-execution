@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	pb "dispatch.local/dispatch/gen/dispatch/worker/v1"
 	"dispatch.local/dispatch/internal/spec"
 	"dispatch.local/dispatch/internal/store"
 	"dispatch.local/dispatch/internal/workerapi"
@@ -35,6 +36,10 @@ func TestWorkerExecutionTimeoutStopsAndReconcilesItsOwnJob(t *testing.T) {
 
 func TestWorkerStartupTimeoutCannotLaunchAfterStalledImagePreparation(t *testing.T) {
 	testWorkerRestartAndCleanup(t, "STARTUP_TIMEOUT")
+}
+
+func TestWorkerFinalizationTimeoutCannotPublishAfterStalledOutputGrant(t *testing.T) {
+	testWorkerRestartAndCleanup(t, "FINALIZATION_TIMEOUT")
 }
 
 func testWorkerRestartAndCleanup(t *testing.T, timeoutReason string) {
@@ -107,6 +112,11 @@ func testWorkerRestartAndCleanup(t *testing.T, timeoutReason string) {
 		if timeoutReason == "STARTUP_TIMEOUT" {
 			job.Spec.Timeouts.StartupSeconds = 5
 		}
+		if timeoutReason == "FINALIZATION_TIMEOUT" {
+			job.Spec.Timeouts.FinalizationSeconds = 5
+			job.Spec.Command = []string{"sh", "-c", "printf verified > /outputs/result.txt"}
+			job.Spec.Outputs = []spec.Output{{Name: "result", Path: "/outputs/result.txt", Required: true, MaxBytes: 4096}}
+		}
 	}
 	job.Spec.Placement.Labels["architecture"] = architecture
 	_, hash, err := job.Canonical()
@@ -120,7 +130,13 @@ func testWorkerRestartAndCleanup(t *testing.T, timeoutReason string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	server, err := workerapi.NewServer(pool, certificate, pki.roots, workerapi.NewService(pool, store.AcquisitionPolicy{AllowSoftScratch: true}, nil))
+	var service pb.WorkerServiceServer = workerapi.NewService(pool, store.AcquisitionPolicy{AllowSoftScratch: true}, nil)
+	var stalledGrant *stalledOutputGrantService
+	if timeoutReason == "FINALIZATION_TIMEOUT" {
+		stalledGrant = &stalledOutputGrantService{WorkerServiceServer: service, entered: make(chan struct{})}
+		service = stalledGrant
+	}
+	server, err := workerapi.NewServer(pool, certificate, pki.roots, service)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -213,8 +229,19 @@ func testWorkerRestartAndCleanup(t *testing.T, timeoutReason string) {
 			t.Fatal("worker did not reach the stalled image inspection")
 		}
 	}
+	if stalledGrant != nil {
+		select {
+		case <-stalledGrant.entered:
+		case <-ctx.Done():
+			t.Fatal("worker did not reach the stalled required-output grant")
+		}
+	}
 	for stalledImage == nil && time.Now().Before(until) {
-		output := docker("ps", "-q", "--filter", "label=dev.dispatch.worker="+worker.WorkerID)
+		filter := "-q"
+		if stalledGrant != nil {
+			filter = "-aq"
+		}
+		output := docker("ps", filter, "--filter", "label=dev.dispatch.worker="+worker.WorkerID)
 		if fields := strings.Fields(output); len(fields) == 1 {
 			container = fields[0]
 			break
@@ -230,6 +257,17 @@ func testWorkerRestartAndCleanup(t *testing.T, timeoutReason string) {
 	}
 	if _, err := os.Stat(filepath.Join(root, "work", attempt)); err != nil {
 		t.Fatal("first agent did not create its attempt workspace", err)
+	}
+	if stalledGrant != nil {
+		body, err := os.ReadFile(filepath.Join(root, "work", attempt, "outputs", "result.txt"))
+		if err != nil || string(body) != "verified" {
+			t.Fatal("workload did not produce its required output before the stalled grant", string(body), err)
+		}
+		var phase string
+		var exit *int32
+		if err := pool.QueryRow(ctx, "SELECT state,exit_code FROM attempts WHERE id=$1", attempt).Scan(&phase, &exit); err != nil || phase != "FINALIZING" || exit == nil || *exit != 0 {
+			t.Fatal("output grant was not stalled after durable successful process exit", phase, exit, err)
+		}
 	}
 	if timeoutReason != "" {
 		until := time.Now().Add(15 * time.Second)
@@ -263,11 +301,15 @@ func testWorkerRestartAndCleanup(t *testing.T, timeoutReason string) {
 	}
 	if stalledImage != nil {
 		stalledImage.release()
+	}
+	if stalledImage != nil || stalledGrant != nil {
 		select {
 		case <-firstExited:
 		case <-time.After(10 * time.Second):
-			t.Fatal("worker continued after startup authority expired")
+			t.Fatal("worker continued after phase authority expired", timeoutReason)
 		}
+	}
+	if stalledImage != nil {
 		if stalledImage.creates.Load() != 0 || docker("ps", "-aq", "--filter", "label=dev.dispatch.worker="+worker.WorkerID) != "" {
 			t.Fatal("stalled preparation created a container after startup expired")
 		}
@@ -314,5 +356,14 @@ func testWorkerRestartAndCleanup(t *testing.T, timeoutReason string) {
 	if err := pool.QueryRow(ctx, `SELECT (SELECT count(*) FROM attempts WHERE worker_id=$1),
 	(SELECT count(*) FROM attempt_completions WHERE attempt_id=$2)`, worker.WorkerID, attempt).Scan(&attempts, &completions); err != nil || attempts != 1 || completions != 0 {
 		t.Fatal("fenced execution created duplicate attempts or accepted stale completion", attempts, completions, err)
+	}
+	if stalledGrant != nil {
+		var artifacts int
+		var accepted bool
+		if err := pool.QueryRow(ctx, `SELECT (SELECT count(*) FROM artifacts f JOIN artifact_uploads u ON u.upload_id=f.upload_id WHERE u.attempt_id=a.id),
+			j.accepted_attempt_id IS NOT NULL OR j.accepted_manifest IS NOT NULL
+			FROM attempts a JOIN jobs j ON j.id=a.job_id WHERE a.id=$1`, attempt).Scan(&artifacts, &accepted); err != nil || artifacts != 0 || accepted {
+			t.Fatal("expired finalization published its required output", artifacts, accepted, err)
+		}
 	}
 }
