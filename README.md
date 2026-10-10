@@ -76,6 +76,8 @@ verified logs, output download, and cleanup. Filesystem ownership and durable ID
 also pass restart checks. Broader fault coverage, a real evaluation workload, and
 other v0.1 release gates remain. See the
 [implementation ledger](docs/implementation.md) for verified progress and remaining work.
+The [release checklist](docs/release-checklist.md) tracks the finite remaining
+implementation, fault, benchmark, and packaging deliverables.
 
 ## Development
 

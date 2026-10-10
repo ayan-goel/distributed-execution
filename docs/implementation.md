@@ -15,6 +15,10 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 
 ## Remaining release order
 
+The [release checklist](release-checklist.md) consolidates the remaining named
+deliverables and fault evidence. It separates missing implementation from tests
+already recorded here; historical slice statuses below are not a completion audit.
+
 The full specification and ledger remain authoritative. Prioritize these gaps;
 expand existing tests only to resolve a named requirement or observed defect:
 
@@ -43,10 +47,10 @@ expand existing tests only to resolve a named requirement or observed defect:
 | D08 Docker adapter | D04 | Real bounded create/start/inspect/stop; ambiguous create reconciles one identity | pinned image pulls, staged inputs, RUNNING/FINALIZING coordination, actual daemon execution, rejected-start cleanup, and strict ext4 quota workspaces through a submitted Linux job passed |
 | D09 leases | D06,D07 | Fresh DB-time expiry checks; delayed grants; local monotonic deadline enforcement | deadline, store/RPC/client, watchdog, periodic renewal, daemon execution, production lease reaper, and actual-worker control-channel partition gate passed; two-VM natural loss recovery passed; pause/runtime-failure matrix pending |
 | D10 worker recovery | D08,D09 | Durable journal; agent kill/restart stops old containers before new capacity | agent-owned job kill/restart, fencing, container/workspace cleanup, and reservation release passed; broader recovery matrix pending |
-| D11 artifacts | D03,D04 | Scoped grants; verified exact versions; stale publication rejection | grants, verification, completion, public metadata, and verified CLI download gates passed; Rust transfers and multipart support pending |
+| D11 artifacts | D03,D04 | Scoped grants; verified exact versions; stale publication rejection | grants, Rust single-part transfers, journaled publication, completion, public metadata, and verified CLI download gates passed; multipart and retention pending |
 | D12 first real job | D05–D11 | CLI submit → gRPC → Docker → verified output → CLI download | full component chain passed with cached and absent public digests, real registry pull, and fixed fixture resolver; two-VM recovery/fencing passed; remaining release gates pending |
 | D13 loss/retry | D09,D12 | Reaper/reconciliation; recorded retry; backoff/deadlines; nonretryable failure | reaper, natural lease expiry, real worker-loss retry, durable phase-timeout classification, and actual-worker startup/execution/finalization timeout gates on one Docker daemon passed; two-VM natural lease loss/retry passed; broader retry/fault matrix pending |
-| D14 cancellation | D12,D13 | Both completion/cancellation race orders, repeat requests, uncertain cleanup | pending |
+| D14 cancellation | D12,D13 | Both completion/cancellation race orders, repeat requests, uncertain cleanup | database race/replay and actual-worker running, pre-launch, and finalizing cancellation gates passed; dedicated-VM runtime audit pending |
 | D15 logs | D08,D11 | Bounded queues/spool, noisy-job truncation, stream cursors, reconnect | catalog, HTTP cursor/tail gaps, binary format, private spool, Rust registration client, journaled delivery, bounded Docker follower, assembler, completion summary, CLI follow, pre-start capture, and live publication passed; reconnect/fault matrix pending |
 | D16 datasets | D11 | Immutable registration/cache; corruption rejection; pin-aware eviction | ownership schema, upload/completion APIs, project-scoped resolution, real CLI registration, isolated worker cache, atomic store admission bindings, durable replay, archive assignment contract, worker validation, store assignment population, signed RPC grants, strict job-to-wire matching, real read-only Docker mount, startup cache reset, assignment-to-cache preparation, agent cache initialization, unlaunched transfer-failure completion, replay-binding validation, worker input acquisition path, HTTP submission, and one live dataset-to-output Docker job passed; dataset fault matrix still pending |
 | D17 sweeps/metrics | D05,D13,D16 | Atomic 27-child sweep; 1000 cap; concurrency; fail-fast; finite scalar export | deterministic expansion, schema constraints, HTTP/CLI submission/replay, scheduler cap/terminal release, fail-fast, bounded CLI/HTTP progress/accepted metrics, CSV/JSON export, real worker metric ingestion, local 27-child success/fail-fast/worker-loss sweeps, immutable project-scoped retry lineage, atomic failed/cancelled-only store/HTTP/client/CLI retry, and local dataset-backed retry execution and two-VM strict recovery/fencing passed; broader fault audit pending |
