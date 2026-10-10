@@ -23,6 +23,7 @@ use std::{
 
 const RPC_TIMEOUT: Duration = Duration::from_secs(5);
 mod config;
+mod image;
 mod recovery;
 pub use recovery::{RecoveredContainer, RecoveryRuntime};
 

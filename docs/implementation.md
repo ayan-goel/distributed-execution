@@ -3471,3 +3471,24 @@ This recorded gap is resolved by D17l/D17m below; the live sweep gate remains op
 - No schema, scheduling, or Rust runtime changes. The full v0.1 release audit,
   independent Linux-host evidence, strict scratch quotas, and broader runtime
   fault/security gates remain open.
+
+### D08p: Add bounded pinned-image preparation to the Docker adapter
+
+- Added `DockerRuntime::prepare_image` against Bollard 0.21.1. Only an exact cache
+  miss starts a digest pull; successful stream completion requires reinspection.
+  Preparation creates no container, has a startup-sized bound, caps progress
+  records, and omits daemon/registry diagnostic contents. No job credentials or
+  image import URLs are accepted. Shared image cache pruning is not performed.
+- Initial tests failed for the absent method. Four isolated Unix-socket fault
+  checks passed: cache reuse, exact digest pull/reinspection, non-404 inspection
+  failures, stream errors, missing post-pull image, and stalled startup budget.
+  The component contract and official sources are in image-preparation.md.
+- Additional progress-stream cases passed: continuous records cannot reset the
+  startup deadline, and record overflow fails before post-pull inspection.
+  `make test lint smoke` passed. Agent integration and a real missing-image
+  execution gate are next. Private credentials and broader strict-scratch/runtime
+  release gates remain open. Evidence is local in ignored
+  `.local/verification/image-pull-{red,focused,bounds,component-native}.log`.
+  Review found no code blockers; full digest assertions now cover both pull and
+  inspection requests. Final focused checks (five tests, 2.02 seconds) and worker
+  clippy passed in `image-pull-component-final.log`.
