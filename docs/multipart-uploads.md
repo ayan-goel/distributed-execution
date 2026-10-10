@@ -14,9 +14,11 @@ still accepts one part and at most 64 MiB; R02 is not complete.
 | Operation | Contract |
 | --- | --- |
 | `BeginMultipart` | Check versioning and bounded size/part plan, request SHA-256 part checksums, return backend upload identity |
+| `BeginIdentifiedMultipart` | Bind the durable initialization UUID to server-owned object metadata during creation |
 | `PresignPart` | Bind one key/upload/part number, exact length, and SHA-256 to a short-lived PUT capability |
 | `CompleteMultipart` | Require consecutive ordered parts with ETags/checksums, check versioning, return the exact non-null version from storage |
 | `AbortMultipart` | Abort only the supplied key/upload, then inspect at most one remaining part; repeated missing-upload responses establish absence at the time of the check |
+| `RecoverMultipartVersion` | Inspect at most 16 listed versions/markers, HEAD exact versions, require one initialization/size match, and return its immutable version |
 
 Plans obey the existing configured object cap. Parts are 5–64 MiB except the
 last, which can be smaller; part counts are capped at 10,000. Calls share the
@@ -30,6 +32,17 @@ upload state returns `ErrMultipartGone`, not success: the upload may have been
 completed or aborted. Other transport/backend errors expose stable categories
 without signed URLs or raw diagnostics. The adapter never substitutes the key's
 latest version after an uncertain completion.
+
+Identified uploads can recover after a completion reply is lost: enumerate the
+generated key's versions, then inspect each exact version's server-bound
+initialization metadata. Recovery requires exactly one match of the declared
+size. It refuses truncated inventories, duplicate version IDs, null/substituted
+versions, and ambiguous matches. No match returns `ErrMultipartGone`, which does
+not distinguish an aborted upload from an unfinished or deleted one. The caller
+still needs durable completion intent and full-byte `Verify` before publication.
+Recovery shares the 30-second/concurrency budget and requires backend permission
+for `s3:ListBucketVersions` and exact-version metadata reads. The 16-entry bound
+keeps abnormal version histories from consuming unbounded finalization work.
 
 Multipart completion alone does not verify or accept a result. Call `Verify`
 against the returned exact version to check declared size and full-object
@@ -59,16 +72,19 @@ perform storage I/O outside the transaction, and bind afterward. A losing or
 fenced initializer must abort its unused backend upload. This slice does not
 recover ambiguous storage responses or implement automatic orphan cleanup.
 The initialization UUID alone is not proof of a completed storage version.
+Only the winning backend identity may receive part grants or completion calls;
+unused initializers must be aborted. Recovery rejects multiple completed versions
+carrying the same initialization UUID instead of choosing one.
 
 The migration preserves existing single-part replay and attempt deadlines. Its
 downgrade refuses to discard any multipart declaration or identity.
 
 ## Remaining R02 implementation
 
-1. Connect durable initialization metadata to storage calls, retain completion
-   intent and the exact completed version, and recover ambiguous
-   create/complete responses without issuing a new accepted identity or guessing
-   the latest object. Perform storage I/O outside ownership transactions and
+1. Connect durable initialization metadata and exact-version recovery to storage
+   calls, retain completion intent and the exact completed version, and handle
+   ambiguous create/complete responses without issuing a new accepted identity.
+   Perform storage I/O outside ownership transactions and
    recheck authority afterward. Preserve upgrade/rollback fixtures.
 2. Add bounded part-grant/completion RPCs and paired Go/Rust protocol validation.
    Avoid returning thousands of capabilities in one message. Bind part evidence
@@ -93,6 +109,12 @@ configured object cap, aborts twice, rejects the old part capability, and verifi
 that completed versions survive. Each test owns a fresh bucket inside the
 disposable backend.
 
+The multipart gate also discards each successful completion response after the
+backend commits, reconstructs the client, and recovers its exact version. After
+overwrite, recovery still selects the original identified version and full-byte
+verification succeeds. Unit cases cover missing, ambiguous, truncated,
+wrong-size, null, and substituted-version inventories.
+
 Unit tests cover signed scope/length/checksum, invalid plans, completion order,
 versioning loss, null versions, embedded errors, missing uploads, and remaining
 or truncated parts after abort. Run:
@@ -106,3 +128,5 @@ Sources: [S3 multipart lifecycle](https://docs.aws.amazon.com/AmazonS3/latest/us
 [completion and embedded errors](https://docs.aws.amazon.com/AmazonS3/latest/API/API_CompleteMultipartUpload.html),
 [abort and in-flight uploads](https://docs.aws.amazon.com/AmazonS3/latest/API/API_AbortMultipartUpload.html),
 and [part limits](https://docs.aws.amazon.com/AmazonS3/latest/userguide/qfacts.html).
+Recovery uses [version listing](https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListObjectVersions.html)
+and [exact-version metadata reads](https://docs.aws.amazon.com/AmazonS3/latest/API/API_HeadObject.html).

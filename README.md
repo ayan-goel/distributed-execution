@@ -79,9 +79,9 @@ other v0.1 release gates remain. See the
 The [release checklist](docs/release-checklist.md) tracks the finite remaining
 implementation, fault, benchmark, and packaging deliverables.
 The [multipart implementation](docs/multipart-uploads.md) includes verified
-storage operations and durable part plans with a set-once backend upload identity.
-Public worker uploads remain single-part until completion recovery and delivery
-are connected.
+storage operations, recovery of exact versions after lost completion replies,
+and durable part plans with a set-once backend upload identity. Public worker
+uploads remain single-part until durable completion and delivery are connected.
 
 ## Development
 

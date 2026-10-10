@@ -44,6 +44,19 @@ func validOpaque(value string) bool {
 // BeginMultipart creates storage state, not an accepted artifact. The caller must
 // persist its returned identity before exposing grants or attempting completion.
 func (s *Store) BeginMultipart(ctx context.Context, key string, size, partSize int64) (MultipartUpload, error) {
+	return s.beginMultipart(ctx, key, size, partSize, "")
+}
+
+// BeginIdentifiedMultipart binds the server's durable initialization identity to
+// object metadata, so recovery can inspect exact versions after a lost reply.
+func (s *Store) BeginIdentifiedMultipart(ctx context.Context, key string, size, partSize int64, initializationID string) (MultipartUpload, error) {
+	if !validInitializationID(initializationID) {
+		return MultipartUpload{}, ErrInvalid
+	}
+	return s.beginMultipart(ctx, key, size, partSize, initializationID)
+}
+
+func (s *Store) beginMultipart(ctx context.Context, key string, size, partSize int64, initializationID string) (MultipartUpload, error) {
 	u := MultipartUpload{Key: key, Size: size, PartSize: partSize}
 	if !s.validMultipartPlan(u) {
 		return MultipartUpload{}, ErrInvalid
@@ -56,7 +69,11 @@ func (s *Store) BeginMultipart(ctx context.Context, key string, size, partSize i
 	if err := s.checkVersioning(ctx); err != nil {
 		return MultipartUpload{}, err
 	}
-	result, err := s.client.CreateMultipartUpload(ctx, &s3.CreateMultipartUploadInput{Bucket: aws.String(s.bucket), Key: aws.String(key), ContentType: aws.String("application/octet-stream"), ChecksumAlgorithm: types.ChecksumAlgorithmSha256, ChecksumType: types.ChecksumTypeComposite})
+	var metadata map[string]string
+	if initializationID != "" {
+		metadata = map[string]string{initializationMetadataKey: initializationID}
+	}
+	result, err := s.client.CreateMultipartUpload(ctx, &s3.CreateMultipartUploadInput{Bucket: aws.String(s.bucket), Key: aws.String(key), ContentType: aws.String("application/octet-stream"), ChecksumAlgorithm: types.ChecksumAlgorithmSha256, ChecksumType: types.ChecksumTypeComposite, Metadata: metadata})
 	if err != nil {
 		return MultipartUpload{}, storageError(err)
 	}

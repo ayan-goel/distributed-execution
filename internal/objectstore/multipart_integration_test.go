@@ -20,6 +20,20 @@ import (
 	"github.com/google/uuid"
 )
 
+type lostMultipartReply struct{ base http.RoundTripper }
+
+func (t lostMultipartReply) RoundTrip(r *http.Request) (*http.Response, error) {
+	response, err := t.base.RoundTrip(r)
+	if err == nil && r.Method == "POST" && r.URL.Query().Get("uploadId") != "" {
+		// Consume the completed response before losing it, so the fault is after
+		// storage commits rather than an uncertain pre-request disconnect.
+		_, _ = io.Copy(io.Discard, response.Body)
+		_ = response.Body.Close()
+		return nil, errors.New("injected completion reply loss")
+	}
+	return response, err
+}
+
 func TestRealMultipartStorageVersionsIntegrityAndScopedAbort(t *testing.T) {
 	endpoint := os.Getenv("DISPATCH_TEST_S3_ENDPOINT")
 	if endpoint == "" {
@@ -74,9 +88,12 @@ func TestRealMultipartStorageVersionsIntegrityAndScopedAbort(t *testing.T) {
 	hash := func(body []byte) string { sum := sha256.Sum256(body); return hex.EncodeToString(sum[:]) }
 	key := "outputs/multipart-result"
 	body := append(bytes.Repeat([]byte("a"), int(MinMultipartPartBytes)), []byte("last part")...)
+	var originalUpload MultipartUpload
+	var originalInitialization string
 	uploadBody := func(body []byte) Object {
 		t.Helper()
-		upload, err := store.BeginMultipart(ctx, key, int64(len(body)), MinMultipartPartBytes)
+		initialization := uuid.NewString()
+		upload, err := store.BeginIdentifiedMultipart(ctx, key, int64(len(body)), MinMultipartPartBytes, initialization)
 		if err != nil {
 			t.Fatal("begin multipart", err)
 		}
@@ -105,9 +122,29 @@ func TestRealMultipartStorageVersionsIntegrityAndScopedAbort(t *testing.T) {
 			}
 			parts = append(parts, CompletedPart{Number: number, ETag: etag, SHA256: hash(part)})
 		}
-		version, err := store.CompleteMultipart(ctx, upload, parts)
+		originalClient := store.client
+		options := originalClient.Options()
+		httpClient := *options.HTTPClient.(*http.Client)
+		httpClient.Transport = lostMultipartReply{base: httpClient.Transport}
+		options.HTTPClient = &httpClient
+		store.client = s3.New(options)
+		_, err = store.CompleteMultipart(ctx, upload, parts)
+		store.client = originalClient
+		if !errors.Is(err, ErrUnavailable) {
+			t.Fatal("completion reply loss did not surface", err)
+		}
+		// Reconstruct the adapter to prove recovery uses storage identity rather
+		// than a remembered completion response or an in-memory version cache.
+		fresh, err := New(cfg)
 		if err != nil {
-			t.Fatal("complete multipart", err)
+			t.Fatal(err)
+		}
+		version, err := fresh.RecoverMultipartVersion(ctx, upload, initialization)
+		if err != nil {
+			t.Fatal("recover completed multipart version", err)
+		}
+		if originalInitialization == "" {
+			originalUpload, originalInitialization = upload, initialization
 		}
 		object := Object{Key: key, Version: version, Size: int64(len(body)), SHA256: hash(body)}
 		if err := store.Verify(ctx, object); err != nil {
@@ -120,6 +157,9 @@ func TestRealMultipartStorageVersionsIntegrityAndScopedAbort(t *testing.T) {
 	replacement := uploadBody(body)
 	if original.Version == replacement.Version {
 		t.Fatal("multipart overwrite reused version")
+	}
+	if recovered, err := store.RecoverMultipartVersion(ctx, originalUpload, originalInitialization); err != nil || recovered != original.Version {
+		t.Fatal("recovery substituted the latest overwrite", err)
 	}
 	if err := store.Verify(ctx, original); err != nil {
 		t.Fatal("multipart overwrite changed original", err)

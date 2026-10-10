@@ -3994,3 +3994,25 @@ This recorded gap is resolved by D17l/D17m below; the live sweep gate remains op
 - Final repository `make test lint smoke` passed, including Go race tests, Rust
   tests, paired protocol checks, vet, Clippy, and all three binary smoke checks.
   Evidence: `.local/verification/multipart-state-gate.log`.
+
+### R02c: Exact-version recovery after multipart completion reply loss
+
+- Added identified multipart creation and bounded recovery using the saved
+  initialization UUID in server-owned object metadata. Recovery lists at most
+  16 versions/markers, inspects exact versions, and requires one metadata/size
+  match. Truncated, ambiguous, duplicate, null, or substituted versions fail
+  closed. Full SHA-256 verification and fenced metadata publication remain
+  separate required operations.
+- The real versioned-storage gate discards successful completion replies after
+  storage commits, reconstructs the client, recovers both exact versions, and
+  recovers the original again after overwrite. Full-byte verification and
+  scoped-abort regressions pass. The full object-store gate took 4.407 seconds;
+  the real multipart case took 0.65 seconds. Unit tests cover identity validation
+  and missing, ambiguous, truncated, wrong-size, and wrong-version recovery.
+- Integration-tagged object-store vet and read-only review passed. Updated README,
+  multipart guide, and release checklist. Evidence:
+  `.local/verification/multipart-recovery-{red,unit,real}.log`. Durable completion
+  intent, database coordination, worker RPCs/delivery, larger transfers, and the
+  submitted-job demonstration remain required for R02.
+- Final `make test lint smoke` passed, including paired protocol checks and all
+  three binaries. Evidence: `.local/verification/multipart-recovery-gate.log`.
