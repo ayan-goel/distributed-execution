@@ -3548,3 +3548,23 @@ This recorded gap is resolved by D17l/D17m below; the live sweep gate remains op
 - Contract and evidence boundaries are in `phase-timeouts.md`. Real-worker timeout
   termination/reconciliation, strict Linux scratch, and the remaining v0.1 release
   gates are not claimed by these durable server tests.
+
+### D13f: Verify actual-worker execution timeout and replacement cleanup
+
+- Extended the existing active-job restart fixture with an execution timeout
+  case. A real worker starts a 120-second Docker workload with a five-second
+  execution budget and worker-loss retries enabled. The production periodic
+  reaper runs against the same real PostgreSQL fixture.
+- The gate observes physical stop and the durable `EXECUTION_TIMEOUT` failure,
+  quarantined capacity, and cleanup pending before stopping the old agent. An
+  explicitly approved replacement session then removes the old container and
+  private workspace, becomes ready, clears cleanup pending, and releases capacity.
+  Exactly one attempt exists and no completion is accepted.
+- Both the new gate (6.53 seconds) and existing running-job crash/restart gate
+  (0.94 seconds) passed with race detection, real mTLS, Docker, and PostgreSQL.
+  No worker production code changed in this slice. Evidence:
+  `.local/verification/agent-execution-timeout.log`. Review found no blockers;
+  formatting and whitespace checks passed.
+- This covers one local Docker engine and soft scratch. Startup/finalization
+  stalls, interrupted termination, independent Linux hosts, strict scratch, and
+  the broader v0.1 fault matrix remain open.

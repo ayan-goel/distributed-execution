@@ -207,6 +207,9 @@ The old container in the startup test is fixture-created. A separate
 `TestWorkerRestartFencesAndRemovesItsOwnRunningJob` starts a job through the actual
 agent, kills it, explicitly approves the replacement incarnation, and verifies
 fencing, physical cleanup, reservation release, and no stale completion before
-readiness. Automatic inactive-session takeover, strict scratch, input staging,
-logs/metrics, cancellation, signal shutdown, multi-host verification, and the rest
-of v0.1 remain required.
+readiness. `TestWorkerExecutionTimeoutStopsAndReconcilesItsOwnJob` uses the same
+actual-worker fixture to verify a five-second execution limit stops a running
+120-second job without retry; capacity stays quarantined until replacement cleanup.
+See [phase-timeouts.md](phase-timeouts.md) for the remaining timeout gates.
+Strict scratch, independent Linux hosts, and the broader timeout/failure matrix
+remain required for the v0.1 release.

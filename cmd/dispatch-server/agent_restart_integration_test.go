@@ -8,6 +8,8 @@ import (
 	"crypto/sha256"
 	"crypto/tls"
 	"encoding/json"
+	"io"
+	"log/slog"
 	"net"
 	"os"
 	"os/exec"
@@ -24,6 +26,15 @@ import (
 )
 
 func TestWorkerRestartFencesAndRemovesItsOwnRunningJob(t *testing.T) {
+	testWorkerRestartAndCleanup(t, false)
+}
+
+func TestWorkerExecutionTimeoutStopsAndReconcilesItsOwnJob(t *testing.T) {
+	testWorkerRestartAndCleanup(t, true)
+}
+
+func testWorkerRestartAndCleanup(t *testing.T, executionTimeout bool) {
+	t.Helper()
 	configureServerTestDatabase(t)
 	pki := testWorkerPKI(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
@@ -78,6 +89,13 @@ func TestWorkerRestartFencesAndRemovesItsOwnRunningJob(t *testing.T) {
 	job.Spec.Outputs = nil
 	job.Spec.Resources = resources
 	job.Spec.Retry.MaxAttempts = 1
+	if executionTimeout {
+		// Keep worker-loss retries enabled so misclassifying the timeout would
+		// schedule another attempt instead of preserving a permanent failure.
+		job.Spec.Retry.MaxAttempts = 2
+		job.Spec.Timeouts.ExecutionSeconds = 5
+		job.Spec.TerminationGraceSeconds = 1
+	}
 	job.Spec.Placement.Labels["architecture"] = architecture
 	_, hash, err := job.Canonical()
 	if err != nil {
@@ -101,6 +119,15 @@ func TestWorkerRestartFencesAndRemovesItsOwnRunningJob(t *testing.T) {
 	served := make(chan error, 1)
 	go func() { served <- server.Serve(listener) }()
 	t.Cleanup(func() { server.Stop(); <-served })
+	if executionTimeout {
+		reaping, stopReaping := context.WithCancel(ctx)
+		reaped := make(chan struct{})
+		go func() {
+			defer close(reaped)
+			runLeaseReaper(reaping, pool, slog.New(slog.NewTextHandler(io.Discard, nil)))
+		}()
+		defer func() { stopReaping(); <-reaped }()
+	}
 	root := t.TempDir()
 	for _, name := range []string{"state", "work"} {
 		if err := os.Mkdir(filepath.Join(root, name), 0700); err != nil {
@@ -183,8 +210,38 @@ func TestWorkerRestartFencesAndRemovesItsOwnRunningJob(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(root, "work", attempt)); err != nil {
 		t.Fatal("first agent did not create its attempt workspace", err)
 	}
+	if executionTimeout {
+		until := time.Now().Add(15 * time.Second)
+		stopped := false
+		for time.Now().Before(until) {
+			if docker("inspect", "--format", "{{.State.Running}}", container) == "false" {
+				stopped = true
+				break
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		if !stopped {
+			t.Fatal("worker failed to stop the actual Docker workload at execution expiry")
+		}
+		for {
+			var state, reason, reservation string
+			var cleanup bool
+			if err := pool.QueryRow(ctx, `SELECT a.state,coalesce(a.reason,''),r.state,a.cleanup_pending
+				FROM attempts a JOIN reservations r ON r.attempt_id=a.id WHERE a.id=$1`, attempt).
+				Scan(&state, &reason, &reservation, &cleanup); err != nil {
+				t.Fatal(err)
+			}
+			if state == "FAILED" && reason == "EXECUTION_TIMEOUT" && reservation == "quarantined" && cleanup {
+				break
+			}
+			if time.Now().After(until) {
+				t.Fatal("timeout was retried or released capacity before reconciliation", state, reason, reservation, cleanup)
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+	}
 	stopFirst()
-	if state := docker("inspect", "--format", "{{.State.Running}}", container); state != "true" {
+	if state := docker("inspect", "--format", "{{.State.Running}}", container); !executionTimeout && state != "true" {
 		t.Fatal("job stopped before the replacement agent fenced it", state)
 	}
 	second, stopSecond := start()
@@ -212,7 +269,11 @@ func TestWorkerRestartFencesAndRemovesItsOwnRunningJob(t *testing.T) {
 	JOIN workers w ON w.id=a.worker_id WHERE a.id=$1`, attempt).Scan(&jobState, &attemptState, &reason, &reservation, &workerState, &cleanup); err != nil {
 		t.Fatal(err)
 	}
-	if jobState != "FAILED" || attemptState != "LOST" || reason != "WORKER_LOST" || reservation != "released" || workerState != "READY" || cleanup {
+	wantState, wantReason := "LOST", "WORKER_LOST"
+	if executionTimeout {
+		wantState, wantReason = "FAILED", "EXECUTION_TIMEOUT"
+	}
+	if jobState != "FAILED" || attemptState != wantState || reason != wantReason || reservation != "released" || workerState != "READY" || cleanup {
 		t.Fatal("replacement did not fence, release, and reconcile the old job", jobState, attemptState, reason, reservation, workerState, cleanup)
 	}
 	var attempts, completions int

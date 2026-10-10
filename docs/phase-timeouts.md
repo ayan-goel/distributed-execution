@@ -32,6 +32,18 @@ failure rolls back the entire transition. Late success cannot publish a result.
 
 Expiry is not evidence of a physically stopped container. Capacity remains
 quarantined with `cleanup_pending` until a replacement incarnation proves cleanup.
-This slice verifies durable classification and fencing on real PostgreSQL,
-including concurrent deadline changes and rollback/reapply. It does not establish
-the complete real-worker timeout/cleanup matrix or strict Linux scratch support.
+Durable classification and fencing are verified on real PostgreSQL, including
+concurrent deadline changes and rollback/reapply.
+
+`TestWorkerExecutionTimeoutStopsAndReconcilesItsOwnJob` also runs the actual worker
+with mTLS and Docker. A 120-second sleep receives a five-second execution budget
+with worker-loss retries enabled. The test observes the container running, then
+stopped, and the server's nonretryable `EXECUTION_TIMEOUT` outcome with quarantined
+capacity. An explicitly approved replacement incarnation removes the container
+and workspace before readiness, clears cleanup pending, and releases capacity.
+It verifies one attempt and no accepted completion. The timeout gate passed in
+6.53 seconds; the existing active-job crash/restart gate also passed.
+
+This is one local Docker Desktop engine with development scratch. Real startup
+and finalization stalls, interrupted cleanup, independent Linux hosts, and strict
+scratch still require their own release evidence.
