@@ -231,10 +231,14 @@ uncertain response. A new key creates another retry sweep. Inspect/export using
 the new ID in the response; its child mapping includes immediate parent job IDs.
 
 For commands with a file or ID, options follow it. Successful commands exit 0; validation, API,
-configuration, transport, and output errors exit 2. For job commands, `--json`
+configuration, transport, and output errors exit 2. `dispatch wait` returns 1 for
+a failed or cancelled job and 2 for timeout or interruption. For job commands, `--json`
 writes one job object to stdout for submit/get/cancel, or `{valid,specHash}` for
 validation; diagnostics stay on stderr. Human submit/get/cancel output includes
-the job UUID and quoted state. Wait remains to be implemented.
+the job UUID and quoted state. `dispatch wait JOB_UUID --timeout 30m --json`
+polls until terminal and emits one final job object. A timeout leaves the job
+running unless `--cancel-on-timeout` is supplied. See [waiting for jobs](wait.md)
+for exit codes, interruption, and cancellation behavior.
 Use `bin/dispatch jobs list --project research --state QUEUED --label cohort=alpha`
 to find work. Repeat `--label KEY=VALUE` for AND matching; add `--json` for the full
 page envelope. `--limit` accepts 1–100 (default 50). When `hasMore` is true, pass

@@ -25,6 +25,7 @@ const usage = `usage:
   dispatch sweep export SWEEP_ID [--format json|csv]
   dispatch jobs list [--project PROJECT] [--state STATE] [--label KEY=VALUE] [--limit 1..100] [--cursor CURSOR] [--json]
   dispatch jobs get JOB_ID [--json]
+  dispatch wait JOB_ID [--timeout DURATION] [--poll-interval DURATION] [--cancel-on-timeout] [--json]
   dispatch cancel JOB_ID [--json]
   dispatch logs JOB_ID [--follow] [--stream stdout|stderr]
   dispatch artifacts download JOB_ID NAME --output FILE [--json]
@@ -36,6 +37,9 @@ Set DISPATCH_DEV_INSECURE=1 only for literal-loopback HTTP development.
 
 func Run(ctx context.Context, args []string, getenv func(string) string, out, errout io.Writer) int {
 	if err := run(ctx, args, getenv, out, errout); err != nil {
+		if errors.Is(err, errWaitJobFailed) {
+			return 1
+		}
 		// Parser, filesystem, and server errors may contain user-controlled text.
 		// Quote the whole error so it cannot inject terminal commands or new lines.
 		fmt.Fprintf(errout, "dispatch: %q\n", err.Error())
@@ -67,6 +71,9 @@ func run(ctx context.Context, args []string, getenv func(string) string, out, er
 	}
 	if args[0] == "logs" {
 		return showLogs(ctx, args, getenv, out)
+	}
+	if args[0] == "wait" {
+		return waitJob(ctx, args, getenv, out)
 	}
 	if args[0] == "jobs" && args[1] == "list" {
 		return listJobs(ctx, args, getenv, out)

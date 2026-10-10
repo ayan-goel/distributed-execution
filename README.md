@@ -54,6 +54,8 @@ The scheduler records bounded per-job blocker history, visible through job statu
 and `dispatch jobs get` with worker context and timestamps.
 `dispatch jobs list` finds project-owned jobs by state and metadata labels, with
 bounded cursor pagination and JSON output.
+`dispatch wait` waits for a terminal job outcome with script-friendly exit codes
+and an optional timeout; timeout cancellation requires an explicit flag.
 Declared metric outputs are collected into source-bound completion reports.
 Strict scratch limits, full retry policy coverage, and
 other v0.1 gates remain. See the

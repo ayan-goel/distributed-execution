@@ -3315,3 +3315,24 @@ This recorded gap is resolved by D17l/D17m below; the live sweep gate remains op
   runtime gates are not rerun or claimed as new evidence. Documentation describes
   the URL budget, mutable-filter semantics, and one-page command contract. The
   full v0.1 release audit remains open.
+
+### D05j: Wait for terminal job outcomes from the CLI
+
+- Added `dispatch wait JOB_UUID` with optional timeout, bounded polling interval,
+  and one final JSON or human-readable result. Success returns 0; failed/cancelled
+  jobs return 1; timeout, interruption, invalid responses, and client/output errors
+  return 2. Ordinary timeout and parent interruption do not mutate the job.
+- Explicit `--cancel-on-timeout` requires a positive wait timeout and sends one
+  bounded request under the live parent context. Lost responses report uncertain
+  cancellation; terminal races report the returned state without claiming cleanup.
+  Authentication and authorization use the existing job APIs.
+- Tests first failed for the missing command. Final focused CLI checks passed
+  (4.745 seconds). Real CLI/HTTP/PostgreSQL checks passed (2.366), including an
+  unchanged job/event snapshot after ordinary timeout and forbidden cancellation.
+  Separate review found no blockers.
+- `make test lint smoke` passed, as did all HTTP PostgreSQL/race integration tests
+  (7.938 seconds). Local evidence is under ignored `.local/verification/` in
+  `wait-{red,focused-final,postgres-focused,native,postgres}.log`. Operator usage
+  and the complete wait contract are documented in running.md and wait.md.
+- No server, schema, scheduler, or worker runtime logic changed. Independent
+  Linux-host execution and the remaining v0.1 release gates remain open.
