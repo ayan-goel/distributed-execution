@@ -239,6 +239,11 @@ the job UUID and quoted state. `dispatch wait JOB_UUID --timeout 30m --json`
 polls until terminal and emits one final job object. A timeout leaves the job
 running unless `--cancel-on-timeout` is supplied. See [waiting for jobs](wait.md)
 for exit codes, interruption, and cancellation behavior.
+
+Use `bin/dispatch attempts list JOB_UUID --json` to inspect the full ordered
+attempt history, including worker IDs, failure reasons, exit codes, and pending
+cleanup. Omit `--json` for human-readable rows. See [attempt history](attempt-history.md).
+
 Use `bin/dispatch jobs list --project research --state QUEUED --label cohort=alpha`
 to find work. Repeat `--label KEY=VALUE` for AND matching; add `--json` for the full
 page envelope. `--limit` accepts 1–100 (default 50). When `hasMore` is true, pass

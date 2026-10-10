@@ -21,7 +21,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D02 job and sweep contracts | D01 | Strict schema, unsafe input rejection, stable canonical hash, deterministic expansion | parser/expansion gates passed; published schemas pending |
 | D03 database invariants | D01 | Real PostgreSQL migrations up/down/upgrade; uniqueness, references, checks | core schema and migration runner gates passed; later feature tables pending |
 | D04 worker protocol | D01 | Generated Go/Rust gRPC bindings; cross-language golden round-trip, drift check | wire and implemented mTLS service boundary gates passed; remaining handlers/client integration pending |
-| D05 durable submission | D02,D03 | HTTP/CLI submission; 100 identical requests yield one job; changed payload conflicts | job admission, auth, image resolution, dataset bindings, and filtered HTTP/CLI listing gates passed |
+| D05 durable submission | D02,D03 | HTTP/CLI submission; 100 identical requests yield one job; changed payload conflicts | job admission, auth, image resolution, dataset bindings, filtered HTTP/CLI listing, wait exit codes, and CLI attempt history gates passed |
 | D06 worker identities | D03,D04 | Authenticated registration, session takeover/recovery; stale-session rejection | control-plane, Rust client, and worker startup/health loop gates passed; active-job supervision pending |
 | D07 acquisition | D03,D06 | Atomic assignment/reservations; concurrent quota/capacity races; acquisition replay | store, RPC, Rust client, sequential agent loop, and local operator policy switch passed; broader scheduler pending |
 | D08 Docker adapter | D04 | Real bounded create/start/inspect/stop; ambiguous create reconciles one identity | cached launch, RUNNING/FINALIZING coordination, phase store/RPC/client, and actual daemon execution passed; staging and strict workspaces pending |
@@ -3336,3 +3336,26 @@ This recorded gap is resolved by D17l/D17m below; the live sweep gate remains op
   and the complete wait contract are documented in running.md and wait.md.
 - No server, schema, scheduler, or worker runtime logic changed. Independent
   Linux-host execution and the remaining v0.1 release gates remain open.
+
+### D05k: Expose ordered attempt history in the CLI
+
+- Added `dispatch attempts list JOB_UUID [--json]` using the existing read-only
+  project-scoped history API. Both formats preserve job identity; human rows show
+  attempt identity/number, state, worker, reason, exit code, cleanup status, and UTC
+  timestamps. Missing optional values remain explicit; reasons escape terminal
+  controls. JSON matches the existing API envelope and includes empty arrays.
+- Invalid arguments fail before credential lookup. API/transport/validation and
+  output failures return 2 without rendering a history for failed reads. Successful
+  inspection returns 0 regardless of attempt outcome or pending cleanup.
+- Tests first failed for the absent command. Focused CLI race checks passed
+  (4.245 seconds). Real CLI/HTTP/PostgreSQL checks passed (1.525), exercising
+  acquisition, lease-loss reaping, replacement acquisition, unchanged attempts
+  after reads, and denied foreign-project/invalid-token requests. The fixture
+  advances lease/retry eligibility only in its disposable database.
+- `make test lint smoke` passed, including additional CLI error-response tests.
+  All HTTP PostgreSQL/race integration tests passed (8.238 seconds). Read-only
+  review and diff checks found no blockers. Local evidence is under ignored
+  `.local/verification/attempts-cli-{red,focused,postgres-focused,native,postgres}.log`.
+  Usage and evidence boundaries are documented in attempt-history.md and running.md.
+- No server, client, schema, scheduler, or worker runtime logic changed. The
+  remaining public interfaces and v0.1 release audit remain open.
