@@ -107,7 +107,8 @@ func finalizeUploadTx(ctx context.Context, pool *pgxpool.Pool, id WorkerIdentity
 	}
 	var object ArtifactObject
 	var kind string
-	err = tx.QueryRow(ctx, `SELECT object_key,size_bytes,sha256,kind FROM artifact_uploads WHERE upload_id=$1 AND job_id=$2 AND attempt_id=$3 AND worker_id=$4 AND session_id=$5 AND generation=$6`, r.UploadID, r.Authority.JobID, r.Authority.AttemptID, id.WorkerID, r.Authority.SessionID, r.Authority.Generation).Scan(&object.Key, &object.SizeBytes, &object.SHA256, &kind)
+	var partCount int
+	err = tx.QueryRow(ctx, `SELECT object_key,size_bytes,sha256,kind,part_count FROM artifact_uploads WHERE upload_id=$1 AND job_id=$2 AND attempt_id=$3 AND worker_id=$4 AND session_id=$5 AND generation=$6`, r.UploadID, r.Authority.JobID, r.Authority.AttemptID, id.WorkerID, r.Authority.SessionID, r.Authority.Generation).Scan(&object.Key, &object.SizeBytes, &object.SHA256, &kind, &partCount)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return FinalizeUploadResult{}, ErrNotFound
 	}
@@ -117,6 +118,17 @@ func finalizeUploadTx(ctx context.Context, pool *pgxpool.Pool, id WorkerIdentity
 	object.Version = r.Object.Version
 	if object != r.Object {
 		return FinalizeUploadResult{}, ErrInvalid
+	}
+	if partCount > 1 {
+		// Multipart verification may publish only the version bound by durable
+		// completion. Matching bytes alone cannot substitute another upload.
+		var stored bool
+		if err := tx.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM artifact_multipart_completions WHERE upload_id=$1 AND object_version=$2)", r.UploadID, object.Version).Scan(&stored); err != nil {
+			return FinalizeUploadResult{}, err
+		}
+		if !stored {
+			return FinalizeUploadResult{}, ErrConflict
+		}
 	}
 	finalizationID, err := uuid.NewRandom()
 	if err != nil {

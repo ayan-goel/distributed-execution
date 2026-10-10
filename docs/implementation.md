@@ -4016,3 +4016,28 @@ This recorded gap is resolved by D17l/D17m below; the live sweep gate remains op
   submitted-job demonstration remain required for R02.
 - Final `make test lint smoke` passed, including paired protocol checks and all
   three binaries. Evidence: `.local/verification/multipart-recovery-gate.log`.
+
+### R02d: Durable multipart completion and exact-version publication guard
+
+- Migration `0022` persists one immutable ordered completion intent per upload
+  and binds one exact storage version. Internal completion commits intent before
+  network work and rechecks authority with fresh database time afterward.
+  Storage/event failures preserve prepared intent. Stored replay skips storage;
+  concurrent prepared callbacks must use safe storage completion/recovery.
+- Multipart artifact finalization now requires the stored version in both the
+  Go preflight and SQL guard, then retains the trusted full-byte verifier and
+  fenced artifact transaction. Storage completion alone creates no artifact and
+  does not accept a job. Downgrade refuses to discard prepared or stored intent.
+- Real PostgreSQL race tests prove durable intent before unlocked storage work,
+  retry and changed-payload conflict, 16-way completion replay with one version/
+  event, expiry during storage, event rollback/recovery, exact-version artifact
+  gating, SQL immutability, and binding/deadline preservation through migration.
+  Final affected tests passed in 13.551 seconds; all migration fixtures passed
+  in 4.113 seconds. Fresh schema/down/reapply passed. The earlier broad run read
+  newly edited rollback SQL after compiling the previous embedded up migration;
+  those mixed-revision fixture failures were resolved by the finalized runs.
+- Read-only review, integration-tagged store vet, and `make test lint smoke`
+  passed. Updated README, multipart guide, and release checklist. Evidence:
+  `.local/verification/multipart-completion-{red,final,migrations-final,schema-final,gate}.log`.
+  R02 remains open for public coordination, part grants/protocols, Rust delivery,
+  larger object policy, and a submitted large-output job.

@@ -2,8 +2,8 @@
 
 Specification §13.3 requires multipart outputs above a configurable threshold.
 The storage lifecycle is implemented and verified against the local versioned
-backend. Part plans and initialization identities are durable. Completion
-recovery, worker RPCs, Rust delivery, larger object limits,
+backend. Part plans, initialization identities, and completion intent/version
+are durable. Public coordination, worker RPCs, Rust delivery, larger object limits,
 and the submitted-job demonstration remain required. The public upload path
 still accepts one part and at most 64 MiB; R02 is not complete.
 
@@ -79,13 +79,37 @@ carrying the same initialization UUID instead of choosing one.
 The migration preserves existing single-part replay and attempt deadlines. Its
 downgrade refuses to discard any multipart declaration or identity.
 
+## Durable completion and publication gate
+
+Migration `0022` stores one completion intent per multipart upload: a stable
+request ID, immutable ordered part numbers/ETags/SHA-256 values, and a set-once
+exact completed version. The internal `CompleteMultipartUpload` path commits
+this intent before invoking storage outside database transactions. After storage
+returns, a second transaction rechecks credentials, session, cancellation, lease,
+and phase using fresh database time before saving the version and audit event.
+Storage failure or an event rollback leaves the prepared intent available for
+retry. Downgrade refuses to discard prepared or stored intents.
+
+A stored replay returns its version without another storage call. Concurrent
+prepared requests may both call storage; the callback must tolerate concurrent
+completion and use identified exact-version recovery for lost replies or
+`NoSuchUpload`. Only one version/event can be recorded. Changed request IDs or
+part evidence conflict. Binding the storage version does not verify bytes or
+accept a job result.
+
+`FinalizeUpload` and its database guard require multipart artifact verification
+to use this stored version. The existing trusted full-byte verifier and fenced
+artifact transaction still apply. Another version with matching bytes cannot
+substitute for the completed version. These internal paths currently retain the
+64 MiB artifact limit; larger size policy and public worker integration remain
+pending.
+
 ## Remaining R02 implementation
 
-1. Connect durable initialization metadata and exact-version recovery to storage
-   calls, retain completion intent and the exact completed version, and handle
-   ambiguous create/complete responses without issuing a new accepted identity.
-   Perform storage I/O outside ownership transactions and
-   recheck authority afterward. Preserve upgrade/rollback fixtures.
+1. Connect the durable initialization/completion paths to identified storage calls
+   and recovery, handling ambiguous create/complete responses without issuing a
+   new accepted identity. Preserve the transaction boundaries and fresh authority
+   checks in the public coordinator.
 2. Add bounded part-grant/completion RPCs and paired Go/Rust protocol validation.
    Avoid returning thousands of capabilities in one message. Bind part evidence
    to durable declarations and reject changed replay payloads or fenced owners.
