@@ -13,7 +13,7 @@ and strict ext4 scratch quotas. The latest two-VM gates establish 27-child sweep
 recovery and rejection of a delayed old completion. These establish the core
 execution path; they do not establish every fault or release condition below.
 
-## Remaining deliverables
+## Release deliverables
 
 Close these bounded deliverables in dependency order. Add work only when it maps
 to a specification requirement or a reproduced defect. Reuse passing evidence
@@ -21,7 +21,7 @@ when its scope matches; do not repeat tests merely for reassurance.
 
 | ID | Specification | Deliverable and acceptance evidence | Current gap |
 | --- | --- | --- | --- |
-| R01 | §19.1, §20 | `make dev-up` starts isolated, persistent local PostgreSQL and versioned S3 dependencies; documented credentials and stop/restart path; verify both services and preserved data | No `deploy/dev/` or root task |
+| R01 | §19.1, §20 | `make dev-up` starts isolated, persistent local PostgreSQL and versioned S3 dependencies; documented credentials and stop/restart path; verify both services and preserved data | Complete: [development setup](development.md); actual DB/object-version persistence across restart, credential isolation, and server startup verified |
 | R02 | §13.3 | Multipart output transfers above a configurable threshold, scoped parts, exact-version verification, bounded retry, and abandoned-upload abort; real storage and worker tests | Current grants and transfers require one part, at most 64 MiB |
 | R03 | §13.5 | Configurable project retention, reference-aware tombstones and exact-version deletion, abandoned multipart cleanup; prove active work and registered datasets survive cleanup | No retention implementation |
 | R04 | §14.3, §18 | Bounded platform metric labels, latency histograms, queue/reservation/health/retry/transfer/log-gap/cleanup measurements; verify request-rate limits and audited operator/token actions | Platform metrics absent; HTTP already caps 200 requests/second and 256 in flight; limit and audit coverage need reconciliation |

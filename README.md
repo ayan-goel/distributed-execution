@@ -90,6 +90,10 @@ make integration
 make generate-check
 ```
 
+For persistent local PostgreSQL and versioned S3 storage, run `make dev-up`, then
+load `. .local/dev/env`. `make dev-down` stops the stack and preserves its data.
+See [local development](docs/development.md) for setup and worker requirements.
+
 ## Documentation
 
 - [Project specification](Dispatch_Project_Spec.md) — scope, architecture, and roadmap

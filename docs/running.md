@@ -2,11 +2,10 @@
 
 The control plane admits jobs and parameter sweeps, exposes progress and logs,
 and serves verified output downloads. The [worker agent](worker-agent.md) executes
-jobs, including registered dataset inputs, with cached images under the explicit
-soft-scratch development policy. The server command defaults to strict scratch;
-opt into the local development profile with `--worker-dev-soft-scratch` on loopback
-listeners. Hard scratch quotas and the independent Linux release profile remain
-pending.
+jobs with registered dataset inputs and pinned images. The default Linux profile
+uses [ext4 project quotas](project-quotas.md), verified on dedicated ARM64 VMs.
+The local soft-scratch fallback requires explicit server and worker development
+flags. Broader release coverage remains in the [checklist](release-checklist.md).
 
 ## Prerequisites
 
@@ -14,6 +13,9 @@ Build with `make build`. Provide a dedicated PostgreSQL database through
 `DISPATCH_DATABASE_URL`; do not point development tests at production data.
 Database credentials belong in the environment, not command-line arguments.
 The test harness provisions disposable databases automatically via `make integration`.
+For reusable local dependencies, `make dev-up` creates an isolated PostgreSQL and
+versioned S3 stack; load `. .local/dev/env` before operator commands. See
+[local development](development.md) for persistence and shutdown instructions.
 
 ## Operator setup
 
@@ -201,9 +203,10 @@ uses the system certificate trust store and refuses redirects. Environment token
 are never included in normal output. Do not enable shell tracing while loading them.
 
 Submission resolves the image tag to a verified digest. The example needs no
-dataset and computes the deterministic sum 4,999,950,000. Running it currently
-requires the explicit soft-scratch development switches and a cached pinned image;
-the agent does not pull images yet. The server must permit Docker Hub via
+dataset and computes the deterministic sum 4,999,950,000. The worker pulls missing
+pinned images within the startup deadline and reuses cached images. Configure
+strict Linux scratch or the explicit local soft-scratch development switches.
+The server must permit Docker Hub via
 `--allow-registry index.docker.io`.
 
 The CLI prints `Idempotency-Key` to stderr **before** sending a submission. If you

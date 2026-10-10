@@ -4,8 +4,15 @@ export GOCACHE := $(CURDIR)/.local/go-build
 export GOPATH := $(CURDIR)/.local/go
 export GOTOOLCHAIN := local
 export GO
+.DEFAULT_GOAL := build
 
-.PHONY: build test lint smoke integration store-test objectstore-test tools generate protocol-test generate-check
+.PHONY: build test lint smoke integration store-test objectstore-test tools generate protocol-test generate-check dev-up dev-down
+dev-up:
+	sh scripts/dev.sh up
+
+dev-down:
+	sh scripts/dev.sh down
+
 build:
 	$(GO) build -trimpath -o bin/dispatch ./cmd/dispatch
 	$(GO) build -trimpath -o bin/dispatch-server ./cmd/dispatch-server
@@ -17,7 +24,7 @@ test:
 	sh scripts/test-protocol.sh
 
 lint:
-	test -z "$$($(GOFMT) -l $$(find cmd internal migrations -name '*.go' 2>/dev/null))"
+	test -z "$$($(GOFMT) -l $$(find cmd internal migrations deploy -name '*.go' 2>/dev/null))"
 	$(GO) vet ./...
 	cargo fmt --all -- --check
 	cargo clippy --workspace --all-targets --locked -- -D warnings

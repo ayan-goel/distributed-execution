@@ -22,16 +22,15 @@ already recorded here; historical slice statuses below are not a completion audi
 The full specification and ledger remain authoritative. Prioritize these gaps;
 expand existing tests only to resolve a named requirement or observed defect:
 
-1. Complete an actual evaluation workload. The 27-job recovery demonstration and
-   delayed-result fencing gate passed across two independent Linux VMs with
-   verified downloads; those synthetic fixtures do not establish practical use.
-2. Reconcile every remaining contract/fault gate below against current evidence,
-   then close the missing cases without repeating already-established coverage.
-   Include the strict agent's live enforcement-loss transition.
-3. Run and publish the specification's measured benchmarks with hardware, offered
-   load, cache state, and limitations recorded.
+1. Complete multipart output transfers (R02), reference-aware retention (R03),
+   and platform measurements (R04). Persistent local dependencies (R01) are verified.
+2. Close the named contract/fault gaps (R05/R06), including the strict agent's live
+   enforcement-loss transition, without repeating already-established coverage.
+3. Complete an actual evaluation workload (R07; selection pending) and measured
+   benchmarks (R08) with hardware, offered load, cache state, and limitations.
+   The verified synthetic two-VM sweep does not establish practical research use.
 4. Finish release packaging/CI, backup and restore, operator documentation, and
-   tutorial verification, then audit specification sections 1–26 before release.
+   second-user tutorial (R09/R10), then audit specification sections 1–26.
 
 ## Ordered slices
 
@@ -3915,3 +3914,30 @@ This recorded gap is resolved by D17l/D17m below; the live sweep gate remains op
   establish independent VM recovery/fencing, not benchmark targets or practical
   research use. Old-worker restart/reconciliation, wider runtime/fault coverage,
   AMD64, measured benchmarks, and remaining release requirements stay open.
+
+
+### R01: Persistent local development dependencies
+
+- Added `make dev-up` / `make dev-down`, a pinned PostgreSQL/SeaweedFS Compose
+  topology, and a bounded loopback-only bucket-versioning initializer. Dynamic
+  host ports avoid shared-service conflicts; named volumes and generated private
+  credentials survive service removal. Bare `make` retains its build behavior.
+- The generated environment overrides saved local access/secret credentials and
+  clears an ambient session token. No AWS account or CLI is required. Shutdown
+  removes only this development stack's services/network and preserves its data.
+- Verified a PostgreSQL marker and two distinct exact object versions before and
+  after `dev-down`/`dev-up` with conflicting ambient credentials. The successful
+  check removed its own verification records/versions. Started the actual server,
+  applied migrations, verified HTTP health and versioned-storage startup, then
+  stopped the owned server and development services. Volumes/credentials remain.
+- `go test -race ./...`, `go vet ./...`, server build, Go formatting, shell syntax,
+  default-target inspection, and `git diff --check` passed. Review caught and fixed
+  the Make default target and inherited session-token issues. No Rust runtime
+  changes; prior VM recovery/fencing gates were not repeated.
+- Evidence: `.local/verification/dev-persistence-final.log`, `dev-server.log`, and
+  `dev-go-tests.log`. The first verification helper failed before writing objects
+  because its upload source was not seekable; the final helper uses the supported
+  SDK checksum profile and a seekable source. No production transfer change was
+  needed. This slice proves reusable dependencies, not production backup/restore
+  or a second user's tutorial. Updated README, operator guide, development guide,
+  and release checklist; R02 multipart remains the next implementation gap.
