@@ -37,20 +37,28 @@ func (r fixtureImageResolver) Resolve(_ context.Context, reference string) (stri
 }
 
 func TestWorkerDaemonAcquiresExecutesAndPublishes(t *testing.T) {
-	testWorkerDaemonExecution(t, false, "")
+	testWorkerDaemonExecution(t, false, "", "")
 }
 
 func TestWorkerDaemonFinishesExistingJobAfterOperatorDrain(t *testing.T) {
-	testWorkerDaemonExecution(t, true, "")
+	testWorkerDaemonExecution(t, true, "", "")
 }
 
 func TestWorkerDaemonPullsMissingPinnedImageAndPublishes(t *testing.T) {
 	// Official BusyBox 1.37.0 multi-platform manifest, read without downloading
 	// layers. This fixture must start absent; it never evicts an existing image.
-	testWorkerDaemonExecution(t, false, "index.docker.io/library/busybox@sha256:bdf57e528e45e4433820e045b29b4597825a1c9e38353532d90a01445013f82e")
+	testWorkerDaemonExecution(t, false, "index.docker.io/library/busybox@sha256:bdf57e528e45e4433820e045b29b4597825a1c9e38353532d90a01445013f82e", "")
 }
 
-func testWorkerDaemonExecution(t *testing.T, drainDuringRun bool, coldImage string) {
+func TestWorkerDaemonEnforcesStrictScratchQuota(t *testing.T) {
+	mount := os.Getenv("DISPATCH_TEST_QUOTA_MOUNT")
+	if mount == "" {
+		t.Skip("requires scripts/test-quota-agent.sh on dedicated Linux")
+	}
+	testWorkerDaemonExecution(t, false, "", mount)
+}
+
+func testWorkerDaemonExecution(t *testing.T, drainDuringRun bool, coldImage, strictMount string) {
 	t.Helper()
 	configureServerTestDatabase(t)
 	publication := &publicationEvidence{}
@@ -69,6 +77,9 @@ func testWorkerDaemonExecution(t *testing.T, drainDuringRun bool, coldImage stri
 	architecture := docker("version", "--format", "{{.Server.Arch}}")
 	socket := strings.TrimPrefix(docker("context", "inspect", "--format", "{{.Endpoints.docker.Host}}"), "unix://")
 	image := "rust@sha256:38bc5a86d998772d4aec2348656ed21438d20fcdce2795b56ca434cf21430d89"
+	if strictMount != "" {
+		image = "debian@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587"
+	}
 	if coldImage != "" {
 		image = coldImage
 		output, err := exec.CommandContext(ctx, "docker", "image", "inspect", image).CombinedOutput()
@@ -101,6 +112,13 @@ func testWorkerDaemonExecution(t *testing.T, drainDuringRun bool, coldImage stri
 	if err != nil {
 		t.Fatal(err)
 	}
+	if strictMount != "" {
+		// The outer filesystem fixture needs this identity for safe cleanup even
+		// if the agent exits before completion. Never inventory unrelated workers.
+		if err := os.WriteFile(filepath.Join(filepath.Dir(strictMount), "worker-id"), []byte(worker.WorkerID), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	t.Cleanup(func() {
 		// Only this worker's labeled containers belong to this fixture.
 		output, _ := exec.Command("docker", "ps", "-aq", "--filter", "label=dev.dispatch.worker="+worker.WorkerID).Output()
@@ -120,6 +138,12 @@ func testWorkerDaemonExecution(t *testing.T, drainDuringRun bool, coldImage stri
 	job.Spec.Inputs = []spec.Input{{Dataset: "sample-v1", MountPath: "/inputs/data"}}
 	job.Spec.Image = image
 	job.Spec.Command = []string{"sh", "-c", "cat /inputs/data/input.txt > /outputs/result; printf 'run out'; head -c 3300000 /dev/zero; printf 'run err' >&2; sleep 15; exit 0"}
+	if strictMount != "" {
+		// Catch the real EDQUOT, then free the test payload so logs and result
+		// finalization can complete under the same shared workspace quota.
+		probe := `if LC_ALL=C dd if=/dev/zero of=/scratch/full bs=1048576 count=128 2>/tmp/quota-error; then exit 90; fi; grep -q 'Disk quota exceeded' /tmp/quota-error || exit 91; test "$(stat -c %s /scratch/full)" -le 67108864 || exit 92; rm /scratch/full; `
+		job.Spec.Command[2] = probe + strings.Replace(job.Spec.Command[2], "printf 'run err'", "printf 'run err quota enforced'", 1)
+	}
 	if drainDuringRun {
 		// Keep execution live until the agent observes drain. A bounded barrier
 		// removes the race between heartbeat/storage latency and a fixed sleep.
@@ -176,7 +200,7 @@ func testWorkerDaemonExecution(t *testing.T, drainDuringRun bool, coldImage stri
 	if err != nil {
 		t.Fatal(err)
 	}
-	service := &launchService{WorkerServiceServer: workerapi.NewService(pool, store.AcquisitionPolicy{AllowSoftScratch: true}, objects), pool: pool, t: t, mode: "agent", publication: publication}
+	service := &launchService{WorkerServiceServer: workerapi.NewService(pool, store.AcquisitionPolicy{AllowSoftScratch: strictMount == ""}, objects), pool: pool, t: t, mode: "agent", publication: publication}
 	server, err := workerapi.NewServer(pool, certificate, pki.roots, service)
 	if err != nil {
 		t.Fatal(err)
@@ -189,10 +213,16 @@ func testWorkerDaemonExecution(t *testing.T, drainDuringRun bool, coldImage stri
 	go func() { served <- server.Serve(listener) }()
 	t.Cleanup(func() { server.Stop(); <-served })
 	root := t.TempDir()
+	workspaceRoot := filepath.Join(root, "work")
+	attemptRoot := workspaceRoot
+	if strictMount != "" {
+		workspaceRoot = strictMount
+		attemptRoot = filepath.Join(strictMount, "work")
+	}
 	t.Cleanup(func() {
 		// Staged cache directories are sealed read-only. Reopen only this test's
 		// root after execution so TempDir can remove verified bytes.
-		err := filepath.WalkDir(filepath.Join(root, "work", ".dataset-cache"), func(path string, entry os.DirEntry, walkErr error) error {
+		err := filepath.WalkDir(filepath.Join(attemptRoot, ".dataset-cache"), func(path string, entry os.DirEntry, walkErr error) error {
 			if os.IsNotExist(walkErr) {
 				return nil
 			}
@@ -216,7 +246,7 @@ func testWorkerDaemonExecution(t *testing.T, drainDuringRun bool, coldImage stri
 	config, err := json.Marshal(map[string]any{
 		"worker_id": worker.WorkerID, "server_url": "https://" + listener.Addr().String(),
 		"ca_cert": pki.ca, "client_cert": pki.clientCert, "client_key": pki.clientKey,
-		"journal_dir": filepath.Join(root, "state"), "workspace_root": filepath.Join(root, "work"),
+		"journal_dir": filepath.Join(root, "state"), "workspace_root": workspaceRoot,
 		"docker_socket": socket, "cpu_millis": 500, "memory_mib": 128, "scratch_mib": 64,
 		"execution_slots": 1, "labels": labels,
 	})
@@ -231,7 +261,18 @@ func testWorkerDaemonExecution(t *testing.T, drainDuringRun bool, coldImage stri
 	if err != nil {
 		t.Fatal(err)
 	}
-	command := exec.CommandContext(ctx, binary, "run", "--config", path, "--dev-soft-scratch")
+	if selected := os.Getenv("DISPATCH_TEST_WORKER_BINARY"); selected != "" {
+		binary = selected
+	}
+	args := []string{"run", "--config", path}
+	if strictMount == "" {
+		args = append(args, "--dev-soft-scratch")
+	} else {
+		if output, err := exec.CommandContext(ctx, binary, "init-scratch", "--config", path).CombinedOutput(); err != nil {
+			t.Fatalf("initialize strict filesystem: %v: %s", err, output)
+		}
+	}
+	command := exec.CommandContext(ctx, binary, args...)
 	stdout, err := command.StdoutPipe()
 	if err != nil {
 		t.Fatal(err)
@@ -340,6 +381,12 @@ func testWorkerDaemonExecution(t *testing.T, drainDuringRun bool, coldImage stri
 		t.Fatal("worker did not publish both verified log streams", publication.logCreates, publication.logFinalizes, publication.logRegistrations, stdoutBytes, stdoutSegments)
 	}
 	logs := string(cliRun("logs", submitted.ID))
+	if strictMount != "" {
+		var quota, soft bool
+		if err := pool.QueryRow(ctx, `SELECT capabilities ? 'scratch.quota', capabilities ? 'scratch.soft' FROM workers WHERE id=$1`, worker.WorkerID).Scan(&quota, &soft); err != nil || !quota || soft || !strings.Contains(logs, "quota enforced") {
+			t.Fatal("strict capability or quota evidence missing", quota, soft, err)
+		}
+	}
 	if !strings.Contains(logs, "[stdout #1] run out") || !strings.Contains(logs, "[stderr #1] run err") || strings.Contains(logs, "[logs incomplete") {
 		t.Fatal("CLI did not render the verified log objects", logs)
 	}
@@ -356,7 +403,7 @@ func testWorkerDaemonExecution(t *testing.T, drainDuringRun bool, coldImage stri
 	if err := pool.QueryRow(ctx, "SELECT count(*) FROM attempts WHERE worker_id=$1", worker.WorkerID).Scan(&attempts); err != nil || attempts != 1 {
 		t.Fatal("one job produced an unexpected number of attempts", attempts, err)
 	}
-	if _, err := os.Stat(filepath.Join(root, "work", attempt)); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(attemptRoot, attempt)); !os.IsNotExist(err) {
 		t.Fatal("attempt workspace survived terminal cleanup", err)
 	}
 	if containers := docker("ps", "-aq", "--filter", "label=dev.dispatch.worker="+worker.WorkerID); containers != "" {

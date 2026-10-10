@@ -8,13 +8,17 @@ async fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
     #[cfg(unix)]
-    if args.len() == 4
-        && args[0] == "run"
+    if (args.len() == 3 || args.len() == 4)
+        && matches!(args[0].as_str(), "run" | "init-scratch")
         && args[1] == "--config"
-        && args[3] == "--dev-soft-scratch"
+        && (args.len() == 3 || (args[0] == "run" && args[3] == "--dev-soft-scratch"))
     {
         let result = match dispatch_worker::agent::AgentConfig::load(std::path::Path::new(&args[2]))
         {
+            Ok(config) if args[0] == "init-scratch" => {
+                dispatch_worker::agent::initialize_scratch(&config)
+            }
+            Ok(config) if args.len() == 4 => dispatch_worker::agent::run_development(config).await,
             Ok(config) => dispatch_worker::agent::run(config).await,
             Err(error) => Err(error),
         };
@@ -24,6 +28,6 @@ async fn main() -> ExitCode {
         }
         return ExitCode::SUCCESS;
     }
-    eprintln!("usage: dispatch-worker --version | run --config FILE --dev-soft-scratch");
+    eprintln!("usage: dispatch-worker --version | init-scratch --config FILE | run --config FILE [--dev-soft-scratch]");
     ExitCode::from(2)
 }

@@ -56,6 +56,8 @@ findmnt -n -o FSTYPE,OPTIONS --target "$fixture/fs/work"
 DISPATCH_QUOTA_TEST_ROOT="$fixture/fs/work" "$binary" --ignored \
     --exact ext4_limits_cover_nested_outputs_and_scratch_without_affecting_siblings --nocapture
 if test -n "$runtime_binary"; then
+    rmdir "$fixture/fs/work"
+    chmod 700 "$fixture/fs"
     DISPATCH_QUOTA_TEST_ROOT="$fixture/fs/work" "$runtime_binary" --ignored \
         --exact real_container_cannot_escape_its_project_quota --nocapture
 fi

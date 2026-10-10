@@ -84,25 +84,13 @@ impl ProjectQuota {
         {
             return Err(invalid("quota directory must be private, owned, and empty"));
         }
-        // SAFETY: zero initializes an integer-only output struct; fstatfs receives
-        // a live descriptor and a correctly sized writable buffer.
-        let mut filesystem: libc::statfs = unsafe { std::mem::zeroed() };
-        if unsafe { libc::fstatfs(directory.as_raw_fd(), &mut filesystem) } != 0 {
-            return Err(Error::last_os_error());
-        }
-        if filesystem.f_type != libc::EXT4_SUPER_MAGIC {
-            return Err(Error::new(
-                ErrorKind::Unsupported,
-                "strict scratch requires ext4",
-            ));
-        }
+        Self::verify_filesystem(&directory)?;
         let quota = Self {
             directory,
             project_id,
             bytes,
             inodes,
         };
-        quota.verify_enforcement()?;
         let mut attributes = quota.attributes()?;
         if attributes.projid != 0 || attributes.xflags & PROJECT_INHERIT != 0 {
             return Err(invalid("directory already belongs to a project"));
@@ -142,6 +130,31 @@ impl ProjectQuota {
         quota.directory.sync_all()?;
         quota.verify()?;
         Ok(quota)
+    }
+
+    pub fn verify_filesystem(directory: &File) -> io::Result<()> {
+        // SAFETY: zero initializes an integer-only output struct; fstatfs receives
+        // a live descriptor and a correctly sized writable buffer.
+        let mut filesystem: libc::statfs = unsafe { std::mem::zeroed() };
+        if unsafe { libc::fstatfs(directory.as_raw_fd(), &mut filesystem) } != 0 {
+            return Err(Error::last_os_error());
+        }
+        if filesystem.f_type != libc::EXT4_SUPER_MAGIC {
+            return Err(Error::new(
+                ErrorKind::Unsupported,
+                "strict scratch requires ext4",
+            ));
+        }
+        Self::enforcement(directory)
+    }
+
+    pub(crate) fn verify_unassigned(directory: &File) -> io::Result<()> {
+        Self::verify_filesystem(directory)?;
+        let attributes = Self::read_attributes(directory)?;
+        if attributes.projid != 0 || attributes.xflags & PROJECT_INHERIT != 0 {
+            return Err(invalid("directory already belongs to a project"));
+        }
+        Ok(())
     }
 
     pub fn verify(&self) -> io::Result<()> {
@@ -193,6 +206,10 @@ impl ProjectQuota {
     }
 
     fn verify_enforcement(&self) -> io::Result<()> {
+        Self::enforcement(&self.directory)
+    }
+
+    fn enforcement(directory: &File) -> io::Result<()> {
         let mut state = QuotaState {
             version: 1,
             ..Default::default()
@@ -204,7 +221,7 @@ impl ProjectQuota {
         let result = unsafe {
             libc::syscall(
                 libc::SYS_quotactl_fd,
-                self.directory.as_raw_fd(),
+                directory.as_raw_fd(),
                 libc::QCMD(((b'X' as i32) << 8) + 8, PROJECT_QUOTA),
                 0,
                 &mut state as *mut QuotaState,
@@ -220,12 +237,16 @@ impl ProjectQuota {
     }
 
     fn attributes(&self) -> io::Result<Fsxattr> {
+        Self::read_attributes(&self.directory)
+    }
+
+    fn read_attributes(directory: &File) -> io::Result<Fsxattr> {
         let mut attributes = Fsxattr::default();
         // SAFETY: FSGETXATTR writes exactly the Linux UAPI structure into this
         // live, correctly aligned buffer; the descriptor pins our directory.
         if unsafe {
             libc::ioctl(
-                self.directory.as_raw_fd(),
+                directory.as_raw_fd(),
                 libc::_IOR::<Fsxattr>(b'X' as u32, 31),
                 &mut attributes,
             )

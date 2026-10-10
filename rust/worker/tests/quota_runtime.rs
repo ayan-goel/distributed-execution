@@ -2,10 +2,10 @@
 
 use dispatch_protocol::v1::{Assignment, AttemptAuthority, InputManifest, Resources};
 use dispatch_worker::{
+    agent::quota::QuotaWorkspaces,
     execution::ExecutionSpec,
     lease::{AuthorityWindow, MonoTime},
-    project_quota::ProjectQuota,
-    runtime::{DockerRuntime, PreparedWorkspace, RecoveryRuntime, Runtime, RuntimeError},
+    runtime::{DockerRuntime, RecoveryRuntime, Runtime, RuntimeError},
 };
 use ring::digest::{digest, SHA256};
 use std::{fs, io::Write, os::unix::fs::PermissionsExt, path::Path};
@@ -27,21 +27,49 @@ async fn daemon_without_remapping_rejects_strict_runtime() {
 async fn real_container_cannot_escape_its_project_quota() {
     let root = std::env::var_os("DISPATCH_QUOTA_TEST_ROOT").expect("quota fixture");
     let root = Path::new(&root);
-    let work = root.join("container");
-    fs::create_dir(&work).unwrap();
-    fs::set_permissions(&work, fs::Permissions::from_mode(0o700)).unwrap();
-    let quota = ProjectQuota::attach_empty(&work, 2001, 64 << 20, 4096).unwrap();
-    assert!(quota.verify_directory(root).is_err());
-    for name in ["inputs", "outputs", "scratch"] {
-        fs::create_dir(work.join(name)).unwrap();
-        fs::set_permissions(work.join(name), fs::Permissions::from_mode(0o777)).unwrap();
-    }
+    let mount = root.parent().unwrap();
+    let worker = "00000000-0000-0000-0000-000000002001";
+    let mut store = QuotaWorkspaces::initialize(mount, worker).unwrap();
+    assert_eq!(store.root(), root);
+    assert!(QuotaWorkspaces::open(mount, worker).is_err());
+    assert!(QuotaWorkspaces::initialize(mount, worker).is_err());
+    assert!(QuotaWorkspaces::open(root, worker).is_err());
+    let alias = mount.parent().unwrap().join("bind-alias");
+    fs::create_dir(&alias).unwrap();
+    assert!(std::process::Command::new("mount")
+        .arg("--bind")
+        .arg(mount)
+        .arg(&alias)
+        .status()
+        .unwrap()
+        .success());
+    let competing = QuotaWorkspaces::open(&alias, worker);
+    assert!(std::process::Command::new("umount")
+        .arg(&alias)
+        .status()
+        .unwrap()
+        .success());
+    fs::remove_dir(alias).unwrap();
+    assert!(competing.is_err());
+    assert!(store.prepare("../escape", 64 << 20).is_err());
+    let first = store
+        .prepare("00000000-0000-0000-0000-000000002005", 64 << 20)
+        .unwrap();
+    fs::remove_dir_all(first.root()).unwrap();
+    drop(first);
+    drop(store);
+    assert!(QuotaWorkspaces::open(mount, "00000000-0000-0000-0000-000000002099").is_err());
+    let mut store = QuotaWorkspaces::open(mount, worker).unwrap();
+    // Reopening cannot reuse the first ID, whose quota record remains installed.
+    let mut workspace = store
+        .prepare("00000000-0000-0000-0000-000000002006", 64 << 20)
+        .unwrap();
+    let work = workspace.root().to_owned();
     let source = root.parent().unwrap().parent().unwrap().join("probe");
     fs::create_dir(&source).unwrap();
     fs::copy(std::env::current_exe().unwrap(), source.join("probe")).unwrap();
     fs::set_permissions(source.join("probe"), fs::Permissions::from_mode(0o555)).unwrap();
     fs::set_permissions(&source, fs::Permissions::from_mode(0o555)).unwrap();
-    let mut workspace = PreparedWorkspace::project_quota(&work, quota).unwrap();
     workspace.bind_input("/inputs/probe", &source).unwrap();
     let image = std::env::var("DISPATCH_QUOTA_TEST_IMAGE").expect("pinned Debian image");
     let argv = [
@@ -134,6 +162,11 @@ async fn real_container_cannot_escape_its_project_quota() {
     fs::remove_dir_all(work).unwrap();
     fs::set_permissions(&source, fs::Permissions::from_mode(0o700)).unwrap();
     fs::remove_dir_all(source).unwrap();
+    store.verify().unwrap();
+    drop(store);
+    fs::remove_file(mount.join(".dispatch-projects/.project-ids")).unwrap();
+    assert!(QuotaWorkspaces::open(mount, worker).is_err());
+    assert!(QuotaWorkspaces::initialize(mount, worker).is_err());
 }
 
 #[test]
@@ -192,7 +225,8 @@ fn assert_project_attributes_protected(path: &Path) {
         },
         0
     );
-    assert_eq!(attributes.project, 2001);
+    assert_ne!(attributes.project, 0);
+    let project = attributes.project;
     assert_ne!(attributes.flags & 0x200, 0);
     attributes.project = 0;
     assert_eq!(
@@ -203,7 +237,7 @@ fn assert_project_attributes_protected(path: &Path) {
         std::io::Error::last_os_error().raw_os_error(),
         Some(libc::EINVAL)
     );
-    attributes.project = 2001;
+    attributes.project = project;
     attributes.flags &= !0x200;
     assert_eq!(
         unsafe { libc::ioctl(fd, libc::_IOW::<Attributes>(b'X' as u32, 32), &attributes) },

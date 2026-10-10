@@ -1,5 +1,5 @@
 //! Sequential admission keeps local capacity owned until terminal cleanup.
-use super::{workspace::prepare_attempt_workspace, *};
+use super::*;
 use crate::{
     control::{ClientError, GrantedAssignment, WorkOutcome},
     dataset_assignment::{stage_validated_input, validate_replayed_input, InputStageError},
@@ -20,6 +20,7 @@ use dispatch_protocol::v1::{AcquireWorkRequest, CompleteAttemptResponse, WorkerS
 pub(super) struct ExecutionContext<'a> {
     pub config: &'a AgentConfig,
     pub root: &'a Path,
+    pub workspaces: &'a workspace::Workspaces,
     pub session_id: &'a str,
     pub runtime: &'a DockerRuntime,
     pub journal: &'a AsyncJournal,
@@ -133,7 +134,7 @@ async fn run_assignment(
         .as_ref()
         .ok_or(AgentError::Task)?;
     let path = context.root.join(&identity.attempt_id);
-    let root = context.root.to_owned();
+    let storage = context.workspaces.clone();
     let attempt_id = identity.attempt_id.clone();
     let scratch = grant
         .assignment()
@@ -152,7 +153,7 @@ async fn run_assignment(
         return Err(AgentError::Task);
     }
     let mut preparation =
-        tokio::task::spawn_blocking(move || prepare_attempt_workspace(&root, &attempt_id, scratch));
+        tokio::task::spawn_blocking(move || storage.prepare(&attempt_id, scratch));
     let mut workspace = match authority.while_live(&mut preparation).await {
         Ok(result) => result.map_err(|_| AgentError::Task)??,
         Err(reason) => {
@@ -163,7 +164,7 @@ async fn run_assignment(
             if reason == StopReason::Rejected(Decision::StopRequested) {
                 return acknowledge_unlaunched(context, client, identity, Some(path)).await;
             }
-            remove_workspace(path).await?;
+            remove_workspace(context, path).await?;
             return Err(AgentError::Task);
         }
     };
@@ -182,7 +183,7 @@ async fn run_assignment(
             return acknowledge_unlaunched(context, client, identity, Some(path)).await;
         }
         Err(_) => {
-            remove_workspace(path).await?;
+            remove_workspace(context, path).await?;
             return Err(AgentError::Task);
         }
     }
@@ -206,11 +207,11 @@ async fn run_assignment(
                 return complete_unlaunched_transfer_failure(context, client, identity, path).await;
             }
             Ok(Err(StageReplayError::Input(error))) => {
-                remove_workspace(path).await?;
+                remove_workspace(context, path).await?;
                 return Err(error.into());
             }
             Ok(Err(StageReplayError::Control(error))) => {
-                remove_workspace(path).await?;
+                remove_workspace(context, path).await?;
                 return Err(error.into());
             }
             Ok(Err(StageReplayError::StopRequested)) => {
@@ -220,7 +221,7 @@ async fn run_assignment(
                 return acknowledge_unlaunched(context, client, identity, Some(path)).await;
             }
             Err(_) => {
-                remove_workspace(path).await?;
+                remove_workspace(context, path).await?;
                 return Err(AgentError::Task);
             }
         }
@@ -243,7 +244,7 @@ async fn run_assignment(
             {
                 complete_removed_launch_failure(context, client, grant).await?;
                 drop(workspace);
-                remove_workspace(path).await?;
+                remove_workspace(context, path).await?;
                 return Ok(());
             }
             let Some(cleanup) = confirmed_cancellation(&error) else {
@@ -269,7 +270,7 @@ async fn run_assignment(
             if !terminal_decision(&reply) {
                 return Err(AgentError::Task);
             }
-            remove_workspace(path).await?;
+            remove_workspace(context, path).await?;
             return Ok(());
         }
     };
@@ -318,7 +319,7 @@ async fn run_assignment(
                 }
                 context.runtime.remove(finalizing.handle()).await?;
                 drop(finalizing);
-                return remove_workspace(path).await;
+                return remove_workspace(context, path).await;
             }
         }
         prepare_cancelled_completion(context.journal, identity, CleanupEvidence::Stopped).await?;
@@ -328,7 +329,7 @@ async fn run_assignment(
         if !terminal_decision(&reply) {
             return Err(AgentError::Task);
         }
-        return remove_workspace(path).await;
+        return remove_workspace(context, path).await;
     }
     let reply = deliver_terminal(context.journal, client, &identity.attempt_id).await?;
     if reply.decision == Decision::StopRequested as i32 {
@@ -341,14 +342,14 @@ async fn run_assignment(
         if !terminal_decision(&cancelled) {
             return Err(AgentError::Task);
         }
-        return remove_workspace(path).await;
+        return remove_workspace(context, path).await;
     }
     if !terminal_decision(&reply) {
         return Err(AgentError::Task);
     }
     context.runtime.remove(finalizing.handle()).await?;
     drop(finalizing);
-    remove_workspace(path).await
+    remove_workspace(context, path).await
 }
 
 async fn complete_removed_launch_failure(
@@ -473,7 +474,7 @@ async fn deliver_unlaunched_failure(
     } else if !terminal_decision(&reply) {
         return Err(AgentError::Task);
     }
-    remove_workspace(workspace).await
+    remove_workspace(context, workspace).await
 }
 
 async fn acknowledge_unlaunched(
@@ -484,7 +485,7 @@ async fn acknowledge_unlaunched(
 ) -> Result<(), AgentError> {
     prepare_cancelled_completion(context.journal, identity, CleanupEvidence::NotCreated).await?;
     if let Some(path) = workspace {
-        remove_workspace(path).await?;
+        remove_workspace(context, path).await?;
     }
     let reply = deliver_terminal(context.journal, client, &identity.attempt_id).await?;
     if !terminal_decision(&reply) {
@@ -537,13 +538,15 @@ fn terminal_decision(reply: &CompleteAttemptResponse) -> bool {
     )
 }
 
-async fn remove_workspace(path: std::path::PathBuf) -> Result<(), AgentError> {
+async fn remove_workspace(
+    context: &ExecutionContext<'_>,
+    path: std::path::PathBuf,
+) -> Result<(), AgentError> {
     // Removal follows a durable terminal decision. A failed unlink quarantines
     // this process rather than silently reusing local scratch for another job.
-    tokio::task::spawn_blocking(move || {
-        std::fs::remove_dir_all(path).map_err(|_| AgentError::File)
-    })
-    .await
-    .map_err(|_| AgentError::Task)??;
+    let storage = context.workspaces.clone();
+    tokio::task::spawn_blocking(move || storage.remove(&path))
+        .await
+        .map_err(|_| AgentError::Task)??;
     Ok(())
 }

@@ -53,11 +53,16 @@ fn worker_configuration_is_bounded_strict_and_has_explicit_local_paths() {
 }
 
 #[test]
-fn worker_run_requires_explicit_development_scratch_profile() {
+fn worker_defaults_to_strict_scratch_and_exposes_explicit_initialization() {
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_dispatch-worker"))
         .args(["run", "--config", "/missing.json"])
         .output()
         .unwrap();
-    assert!(!output.status.success());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("--dev-soft-scratch"));
+    assert_eq!(output.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("file unavailable"));
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_dispatch-worker"))
+        .args(["init-scratch", "--config", "/missing.json"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
 }

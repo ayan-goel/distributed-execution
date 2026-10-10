@@ -18,16 +18,14 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 The full specification and ledger remain authoritative. Prioritize these gaps;
 expand existing tests only to resolve a named requirement or observed defect:
 
-1. Finish the strict ext4 agent profile: exclusive filesystem ownership, allocator
-   and workspace integration, health checks, cleanup, and submitted quota-exhausting
-   jobs. Durable IDs and the quota-protected Docker adapter passed their gates.
-2. Run the required 27-job recovery/fencing demonstration across two independent
+1. Run the required 27-job recovery/fencing demonstration across two independent
    Linux VMs, including verified downloads and an actual evaluation workload.
-3. Reconcile every remaining contract/fault gate below against current evidence,
+2. Reconcile every remaining contract/fault gate below against current evidence,
    then close the missing cases without repeating already-established coverage.
-4. Run and publish the specification's measured benchmarks with hardware, offered
+   Include the strict agent's live enforcement-loss transition.
+3. Run and publish the specification's measured benchmarks with hardware, offered
    load, cache state, and limitations recorded.
-5. Finish release packaging/CI, backup and restore, operator documentation, and
+4. Finish release packaging/CI, backup and restore, operator documentation, and
    tutorial verification, then audit specification sections 1–26 before release.
 
 ## Ordered slices
@@ -41,7 +39,7 @@ expand existing tests only to resolve a named requirement or observed defect:
 | D05 durable submission | D02,D03 | HTTP/CLI submission; 100 identical requests yield one job; changed payload conflicts | job admission, auth, image resolution, dataset bindings, filtered HTTP/CLI listing, wait exit codes, CLI attempt history, and paginated HTTP events gates passed |
 | D06 worker identities | D03,D04 | Authenticated registration, session takeover/recovery; stale-session rejection | control-plane, Rust client, startup/health loop, operator drain, and project-scoped HTTP/CLI fleet listing gates passed; broader release audit pending |
 | D07 acquisition | D03,D06 | Atomic assignment/reservations; concurrent quota/capacity races; acquisition replay | store, RPC, Rust client, sequential agent loop, and local operator policy switch passed; broader scheduler pending |
-| D08 Docker adapter | D04 | Real bounded create/start/inspect/stop; ambiguous create reconciles one identity | pinned image pulls, staged inputs, RUNNING/FINALIZING coordination, actual daemon execution, and rejected-start cleanup passed; strict workspaces pending |
+| D08 Docker adapter | D04 | Real bounded create/start/inspect/stop; ambiguous create reconciles one identity | pinned image pulls, staged inputs, RUNNING/FINALIZING coordination, actual daemon execution, rejected-start cleanup, and strict ext4 quota workspaces through a submitted Linux job passed |
 | D09 leases | D06,D07 | Fresh DB-time expiry checks; delayed grants; local monotonic deadline enforcement | deadline, store/RPC/client, watchdog, periodic renewal, daemon execution, production lease reaper, and actual-worker control-channel partition gate passed; independent-host/pause/runtime-failure matrix pending |
 | D10 worker recovery | D08,D09 | Durable journal; agent kill/restart stops old containers before new capacity | agent-owned job kill/restart, fencing, container/workspace cleanup, and reservation release passed; broader recovery matrix pending |
 | D11 artifacts | D03,D04 | Scoped grants; verified exact versions; stale publication rejection | grants, verification, completion, public metadata, and verified CLI download gates passed; Rust transfers and multipart support pending |
@@ -68,7 +66,7 @@ expand existing tests only to resolve a named requirement or observed defect:
   unsafe/missing outputs, control-channel partition, and agent restart.
 - [ ] Security boundary in §18 is enforced, including non-root containers, no Docker
   socket exposure, read-only inputs/root, network policy, scoped transfers, and limits.
-- [ ] Strict scratch quotas verified on supported dedicated Linux filesystem/profile.
+- [x] Strict scratch quotas verified on supported dedicated Linux filesystem/profile (Debian ARM64 ext4; live enforcement-loss fault gate remains open).
 - [ ] All §20 root tasks and generated-binding drift checks work; CI covers declared
   Linux architectures. Benchmarks record conditions and actual results (§22).
 - [ ] Deployment/upgrade/backup/restore/retention instructions verified (§19).
@@ -3823,3 +3821,39 @@ This recorded gap is resolved by D17l/D17m below; the live sweep gate remains op
   `6.12.111+deb13-cloud-arm64` and Docker `26.1.5+dfsg1`. Exclusive filesystem
   ownership, agent configuration/allocation/readiness/cleanup, and a submitted
   quota-exhausting job through the complete agent remain the next required slice.
+
+### D08t: Connect strict scratch to the complete Linux agent
+
+- `dispatch-worker run --config FILE` now defaults to strict Linux scratch;
+  `init-scratch --config FILE` explicitly initializes a fresh dedicated filesystem.
+  The development flag retains the existing soft profile. Strict startup verifies
+  root-owned mode-0700 ext4 storage and enabled quota enforcement before claiming
+  `scratch.quota`, and requires Docker user namespace remapping and built-in seccomp.
+- The agent holds a filesystem-root inode lock, including across bind aliases,
+  and keeps the worker-bound durable counter outside its `work/` cleanup tree.
+  IDs commit before attempt creation and are never recycled. Restart refuses
+  missing/corrupt counters and wrong-worker identity; initialization cannot reset
+  existing state. Attempts install byte and bounded inode limits before children.
+- Health checks revalidate storage identity, counter state, enforcement, and daemon
+  support. An unhealthy strict profile revokes readiness and requests active-job
+  termination even when a pending heartbeat holds an older healthy snapshot.
+  Cleanup checks the storage and exact attempt parent, then syncs removal. The
+  live enforcement-loss stop transition remains code-reviewed rather than fault-tested.
+- RED checks established missing workspace APIs and rejection of the new CLI forms.
+  Native focused tests, 80 Linux library tests, Linux all-target Clippy, and full
+  `make test lint smoke` passed. The final dedicated-VM component gate passed byte
+  and inode exhaustion, sibling isolation, quota attribute protection, exact limits,
+  restart, bind-alias exclusivity, missing-counter refusal, and accounting-only rejection.
+- `TestWorkerDaemonEnforcesStrictScratchQuota` passed in 26.03 seconds through the
+  actual Linux worker, PostgreSQL, mTLS, versioned SeaweedFS, CLI submission and
+  download. A 128 MiB write hit `EDQUOT` within the job's 64 MiB reservation; after
+  freeing that payload the job completed with verified live logs, output, strict
+  capability claims, one attempt, and no surviving container or workspace.
+  The fixture used isolated host services over SSH loopback tunnels and removed
+  only its own containers and new loop-backed filesystem.
+- Read-only review found no production blockers. Updated README, worker setup,
+  quota instructions, and release order. Evidence under `.local/verification/`:
+  `quota-workspace-red.log`, `quota-agent-{red,focused,linux,linux-clippy,native,e2e,
+  component-final}.log`. Verified profile: Debian ARM64 kernel
+  `6.12.111+deb13-cloud-arm64`, Docker `26.1.5+dfsg1`. Independent hosts, AMD64,
+  remaining fault gates, benchmarks, and release requirements remain open.

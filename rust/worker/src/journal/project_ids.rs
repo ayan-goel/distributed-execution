@@ -60,6 +60,10 @@ impl ProjectIds {
         Ok(next as u32)
     }
 
+    pub fn verify(&self) -> Result<(), JournalError> {
+        self.next().map(|_| ())
+    }
+
     fn next(&self) -> Result<u64, JournalError> {
         let bytes = self.directory.read(COUNTER)?.ok_or(JournalError::Corrupt)?;
         let next = u64::from_be_bytes(bytes.try_into().map_err(|_| JournalError::Corrupt)?);

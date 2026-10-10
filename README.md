@@ -70,11 +70,11 @@ expiry and reconcile cleanup before reusing capacity.
 `dispatch workers drain` lets authorized operators stop new assignments for
 maintenance while existing attempts finish.
 Declared metric outputs are collected into source-bound completion reports.
-An [ext4 quota profile](docs/project-quotas.md) passed byte/inode enforcement tests
-on a dedicated Linux VM, including a real container that could not bypass its
-limit. Durable project-ID allocation passes restart tests; agent integration remains pending.
-Strict scratch limits, full retry policy coverage, and
-other v0.1 gates remain. See the
+The default Linux worker now uses [ext4 project quotas](docs/project-quotas.md).
+A submitted job on a dedicated VM hit its 64 MiB limit, then completed with
+verified logs, output download, and cleanup. Filesystem ownership and durable IDs
+also pass restart checks. Independent-host recovery, broader fault coverage, and
+other v0.1 release gates remain. See the
 [implementation ledger](docs/implementation.md) for verified progress and remaining work.
 
 ## Development

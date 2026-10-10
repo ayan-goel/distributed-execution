@@ -26,6 +26,8 @@ use std::{
 use tokio::sync::watch;
 
 mod acquisition;
+#[cfg(target_os = "linux")]
+pub mod quota;
 mod workspace;
 
 #[derive(Debug)]
@@ -157,7 +159,7 @@ impl AgentConfig {
         }
         Ok(config)
     }
-    fn claims(&self) -> RegisterWorkerRequest {
+    fn claims(&self, strict: bool) -> RegisterWorkerRequest {
         RegisterWorkerRequest {
             worker_id: self.worker_id.clone(),
             protocol_version: VERSION,
@@ -173,7 +175,11 @@ impl AgentConfig {
                 "cpu.hard",
                 "memory.hard",
                 "pids.hard",
-                "scratch.soft",
+                if strict {
+                    "scratch.quota"
+                } else {
+                    "scratch.soft"
+                },
             ]
             .map(str::to_string)
             .to_vec(),
@@ -255,8 +261,29 @@ fn event(name: &str, worker: &str, session: &str) {
 }
 
 pub async fn run(config: AgentConfig) -> Result<(), AgentError> {
+    run_profile(config, true).await
+}
+
+pub async fn run_development(config: AgentConfig) -> Result<(), AgentError> {
+    run_profile(config, false).await
+}
+
+pub fn initialize_scratch(config: &AgentConfig) -> Result<(), AgentError> {
+    #[cfg(target_os = "linux")]
+    {
+        quota::QuotaWorkspaces::initialize(&config.workspace_root, &config.worker_id)?;
+        Ok(())
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = config;
+        Err(AgentError::Runtime(RuntimeError::Unsupported))
+    }
+}
+
+async fn run_profile(config: AgentConfig, strict: bool) -> Result<(), AgentError> {
     let prepared = config.clone();
-    let (journal, saved, root, ca, cert, key) = tokio::task::spawn_blocking(move || {
+    let (journal, saved, workspaces, ca, cert, key) = tokio::task::spawn_blocking(move || {
         let root = workspace(&prepared.workspace_root)?;
         let journal_root = prepared
             .journal_dir
@@ -271,16 +298,20 @@ pub async fn run(config: AgentConfig) -> Result<(), AgentError> {
         let ca = read_file(&prepared.ca_cert, 1 << 20, false)?;
         let cert = read_file(&prepared.client_cert, 1 << 20, false)?;
         let key = read_file(&prepared.client_key, 1 << 20, true)?;
+        let workspaces = workspace::Workspaces::open(&root, &prepared.worker_id, strict)?;
         let mut journal =
             Journal::open(journal_root, &prepared.worker_id, JournalLimits::default())?;
-        let saved = journal.begin_incarnation(prepared.claims())?;
-        Ok::<_, AgentError>((journal, saved, root, ca, cert, key))
+        let saved = journal.begin_incarnation(prepared.claims(strict))?;
+        Ok::<_, AgentError>((journal, saved, workspaces, ca, cert, key))
     })
     .await
     .map_err(|_| AgentError::Task)??;
     let session_id = saved.registration().requested_session_id.clone();
     event("session_pending", &config.worker_id, &session_id);
     let runtime = DockerRuntime::connect_with_logs(&config.docker_socket).await?;
+    if strict {
+        runtime.check_quota_support().await?;
+    }
     runtime
         .check_capacity(
             saved.registration().allocatable.as_ref().unwrap(),
@@ -317,7 +348,7 @@ pub async fn run(config: AgentConfig) -> Result<(), AgentError> {
     tokio::try_join!(
         health_loop(
             &config,
-            &root,
+            &workspaces,
             &session_id,
             &runtime,
             &mut client,
@@ -333,7 +364,8 @@ pub async fn run(config: AgentConfig) -> Result<(), AgentError> {
         acquisition::acquire_and_run(
             acquisition::ExecutionContext {
                 config: &config,
-                root: &root,
+                root: workspaces.root(),
+                workspaces: &workspaces,
                 session_id: &session_id,
                 runtime: &runtime,
                 journal: &journal,
@@ -385,7 +417,7 @@ fn registration_retryable(error: &ClientError) -> bool {
 
 async fn health_loop(
     config: &AgentConfig,
-    root: &Path,
+    workspaces: &workspace::Workspaces,
     session: &str,
     runtime: &DockerRuntime,
     client: &mut ControlClient,
@@ -396,18 +428,32 @@ async fn health_loop(
     let mut pending: Option<HeartbeatRequest> = None;
     let mut announced = "registered";
     let mut workspaces_reconciled = false;
+    let root = workspaces.root();
     loop {
         let inventory = runtime.inventory(&config.worker_id).await;
-        let healthy = inventory.is_ok();
+        let storage = workspaces.clone();
+        let storage_healthy = tokio::task::spawn_blocking(move || storage.verify().is_ok())
+            .await
+            .map_err(|_| AgentError::Task)?;
+        let quota_healthy = !workspaces.strict() || runtime.check_quota_support().await.is_ok();
+        let healthy = inventory.is_ok() && storage_healthy && quota_healthy;
         let inventory = inventory.unwrap_or_default();
         let owner = active.borrow().clone();
+        if !healthy {
+            readiness.send_replace(false);
+        }
+        if workspaces.strict() && (!storage_healthy || !quota_healthy) {
+            // Strict enforcement loss revokes local execution, even if a pending
+            // heartbeat still carries an older healthy snapshot.
+            if let Some(controller) = &owner {
+                controller.stop(StopReason::RuntimeUnavailable);
+            }
+        }
         if !workspaces_reconciled && healthy && inventory.is_empty() && owner.is_none() {
-            let abandoned_root = root.to_owned();
-            tokio::task::spawn_blocking(move || {
-                workspace::clear_abandoned_attempts(&abandoned_root)
-            })
-            .await
-            .map_err(|_| AgentError::Task)??;
+            let storage = workspaces.clone();
+            tokio::task::spawn_blocking(move || storage.reconcile())
+                .await
+                .map_err(|_| AgentError::Task)??;
             workspaces_reconciled = true;
         }
         let known = inventory.iter().all(|container| {

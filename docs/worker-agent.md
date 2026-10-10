@@ -6,8 +6,8 @@ health/readiness periodically. It then acquires one job at a time, renews its le
 prepares its pinned image in Docker, verifies and publishes declared outputs, records
 completion, and removes the container and private attempt workspace. Startup also
 delivers journaled completion requests and persists their authoritative outcomes.
-This is the soft-scratch development path; the strict Linux release profile and
-other v0.1 features remain unfinished.
+The default Linux path uses strict ext4 project quotas; an explicit soft-scratch
+development profile is also available. Other v0.1 release gates remain unfinished.
 
 Before staging inputs or creating a container, the agent reuses the exact image
 digest or pulls it on a cache miss. Live lease supervision preserves the original
@@ -16,18 +16,25 @@ preparation errors seal a replayable `RUNTIME_UNAVAILABLE` completion with no
 container or exit evidence. A cancellation that wins completion delivery is
 acknowledged as an unlaunched stop. See [image-preparation.md](image-preparation.md).
 
-## Development setup
+## Setup
 
 Build with `make build`, enroll the worker certificate with the operator commands
 in [running.md](running.md), and start the server's worker TLS listener. The current
-agent supports the explicit soft-scratch development profile:
+agent defaults to the dedicated Linux [quota profile](project-quotas.md). Initialize
+its empty, root-owned quota filesystem once, then start the worker:
+
+```sh
+sudo dispatch-worker init-scratch --config /absolute/path/worker.json
+sudo dispatch-worker run --config /absolute/path/worker.json
+```
+
+For local development, select the soft-scratch profile explicitly:
 
 ```sh
 dispatch-worker run --config /absolute/path/worker.json --dev-soft-scratch
 ```
 
-The checkout binary is `.local/cargo-target/debug/dispatch-worker`. The flag is
-required: quota-backed scratch and the strict Linux release profile remain pending.
+The checkout binary is `.local/cargo-target/debug/dispatch-worker`.
 The development client may run on macOS against a local Docker Desktop Linux daemon;
 that does not establish an independent Linux worker deployment.
 
@@ -54,8 +61,11 @@ worker's values):
 }
 ```
 
-Create the journal and workspace parent as the service user with mode 0700 before
-starting. They must be separate directories; neither may contain the other. All
+For strict execution, `workspace_root` is the dedicated filesystem root; the worker
+uses its `work/` child and preserves `.dispatch-projects/` across cleanup and restart.
+For development, create the workspace parent as the service user with mode 0700.
+Create the journal with mode 0700. They must be separate directories; neither may
+contain the other. All
 configured filesystem paths are absolute. Local ancestor directories and the Docker
 socket are trusted operator configuration. The workspace parent is never a job mount.
 Keep credentials outside future per-attempt workspace directories.
@@ -74,8 +84,9 @@ Labels must exactly match enrollment. Resources and slots cannot exceed enrollme
 ceilings. Docker's actual architecture, CPU count, and total memory also bound the
 claims; configure allocatable memory below total memory to leave host overhead.
 The daemon must support the existing hard CPU/memory/PID/seccomp checks. Scratch is
-advertised as `scratch.soft`, never `scratch.quota`. The server's default acquisition
-policy continues to reject soft-scratch execution. For local development only, add
+advertised as `scratch.quota` only after strict storage and daemon verification.
+The development profile advertises `scratch.soft`; the server's default acquisition
+policy rejects it. For local development only, add
 `--worker-dev-soft-scratch` to `dispatch-server serve` along with loopback
 `--dev-insecure` HTTP and a literal loopback worker listener. Worker mTLS remains
 mandatory. This explicit policy has no scratch quota guarantee.
@@ -123,7 +134,8 @@ loop does not adopt or delete them through previous-session cleanup.
 
 Available space on the workspace filesystem must cover configured scratch capacity
 plus 64 MiB of headroom. A failed space check reports disk pressure. This conservative
-check is not a filesystem quota. File sync and space checks run in blocking tasks;
+headroom check supplements the strict per-attempt quota; development uses only the
+space check. File sync and space checks run in blocking tasks;
 steady-state health reports normally occur every five seconds, while uncertain
 requests retry after one second. RPC/runtime deadlines remain in their adapters.
 Lease renewal runs independently of execution and upload work.
@@ -226,5 +238,9 @@ verify permanent failure and local cleanup. Rejected Docker starts now report a
 runtime failure after checked removal and independently observed absence; a missing
 executable that actually exits 127 remains an application failure.
 See [runtime-failures.md](runtime-failures.md).
-Strict scratch, independent Linux hosts, and the broader timeout/failure matrix
-remain required for the v0.1 release.
+`TestWorkerDaemonEnforcesStrictScratchQuota` passed on a dedicated Linux VM with
+the default strict profile: a dataset-backed job hit its 64 MiB quota, then
+published logs/output and cleaned up. See [project-quotas.md](project-quotas.md)
+for setup, allocator restart checks, and the remaining live enforcement-loss gate.
+Independent Linux hosts and the broader timeout/failure matrix remain required
+for the v0.1 release.

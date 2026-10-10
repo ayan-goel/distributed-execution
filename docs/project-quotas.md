@@ -1,9 +1,9 @@
 # Strict scratch: ext4 project quotas and Docker
 
-The Linux quota primitive and Docker enforcement profile are implemented and
-verified on a separate Debian VM. They are not yet connected to agent workspace
-allocation or worker admission. The agent still
-requires the explicit soft-scratch development profile and advertises `scratch.soft`.
+The default Linux worker connects ext4 project quotas to workspace allocation,
+admission, health checks, and cleanup. A complete submitted-job gate passed on a
+dedicated Debian ARM64 VM. The optional `--dev-soft-scratch` profile remains
+explicit and advertises only `scratch.soft`.
 
 The selected release filesystem is ext4 with project quotas enabled. An attempt's
 private directory receives a unique project ID and hard byte/inode limits before
@@ -27,16 +27,42 @@ directory once; reopen requires its identity and counter. Each reservation commi
 the next counter before returning an ID. IDs are never recycled, including after
 failed quota setup. Missing/corrupt state, write uncertainty, and namespace
 exhaustion fail closed. The control directory must remain outside workload mounts;
-strict integration must still ensure one allocator owns the entire filesystem.
+the strict agent holds an exclusive lock on the filesystem root inode throughout
+its lifetime. Bind-mount aliases contend on the same lock. A subdirectory cannot
+serve as an independent project-ID namespace.
 
-Before the worker can advertise `scratch.quota`, the remaining integration must provide:
+## Agent setup and recovery
 
-- Exclusive filesystem ownership and integration of the durable project-ID allocator.
-- Agent configuration, quota-backed workspace preparation, health checks, and
-  verified cleanup, followed by a submitted job through the complete agent path.
+Run the strict worker as root on a dedicated Linux host with the Docker profile
+below. Set `workspace_root` to the canonical root of a dedicated ext4 filesystem
+with project quotas enabled, owned by root with mode 0700. The filesystem must
+initially be empty except for an optional empty, root-owned mode-0700 `lost+found`.
+Keep the journal and credentials outside this filesystem. Provision the enrolled
+worker's configuration before initializing:
 
-These are enforcement requirements. The component gates do not establish completed
-agent integration or authorize the existing development worker to claim strict scratch.
+```sh
+sudo dispatch-worker init-scratch --config /absolute/path/worker.json
+sudo dispatch-worker run --config /absolute/path/worker.json
+```
+
+Initialization creates `.dispatch-projects/` for the worker-bound counter and
+`work/` for attempt directories and the sealed dataset cache. It is an explicit
+one-time operation, not a repair command. Restart uses the existing counter;
+missing, corrupt, wrong-worker, or partially initialized state stops admission.
+Do not delete or reset the counter to recover a filesystem with retained quotas.
+Use a new dedicated filesystem or investigate the retained evidence.
+
+Each attempt receives a fresh ID before its scratch/output children exist.
+The inode limit is one inode per 4 KiB of requested scratch, bounded to 16–1,000,000.
+Reconciliation removes abandoned attempts only under `work/`, preserving the
+allocator. Cleanup syncs that parent and never recycles project IDs or removes
+their quota records.
+
+Before registration, the agent verifies filesystem enforcement and Docker's quota
+profile, then advertises `scratch.quota`. Periodic health checks revalidate storage
+identity, counter health, enforcement, and the daemon profile. Observed loss of
+enforcement revokes readiness and requests termination of an active job; the live
+loss transition is code-reviewed but has not yet been exercised by a fault gate.
 
 ## Runtime enforcement profile
 
@@ -50,7 +76,7 @@ The strict runtime requires a rootful Docker daemon with `userns-remap` enabled
 and its built-in seccomp profile. Capability checks run before create and start,
 so a daemon restart cannot silently remove the remapping requirement. Inspection
 rejects `UsernsMode=host`; jobs cannot supply namespace or seccomp overrides.
-The worker must also check this capability before advertising strict readiness.
+The worker also checks this capability before registration and during health checks.
 
 This restriction protects quota attributes, not just process privileges. In the
 initial user namespace, an unprivileged inode owner can change project attributes.
@@ -114,8 +140,9 @@ A second mount without `prjquota` retains accounting but must reject quota setup
 The container gate uses the actual Docker adapter with a 64 MiB project. A job-owned
 nested directory cannot be retagged or lose inheritance through either ioctl
 interface (`EINVAL`); scratch and output writes share the limit and return `EDQUOT`.
-The gate also checks root identity, exact reservation matching, and recovery
-inventory. Cleanup removes only this run's randomly labelled job before unmounting;
+The gate also checks root identity, exact reservation matching, recovery inventory,
+allocator restart, filesystem exclusivity through bind aliases, and refusal to
+reset a missing counter. Cleanup removes only this run's randomly labelled job before unmounting;
 inventory or removal failure retains the fixture. A separate ignored test,
 `daemon_without_remapping_rejects_strict_runtime`, passed with remapping disabled
 on the idle test VM, then the VM configuration was restored.
@@ -124,7 +151,29 @@ Verified locally on Debian kernel `6.12.111+deb13-cloud-arm64`, with ext4 mounte
 `rw,nosuid,nodev,relatime,prjquota`. Docker Desktop kernel `6.10.14-linuxkit` rejected
 the initial mount because it lacks `CONFIG_QUOTA` and `CONFIG_QFMT_V2`; it cannot
 substitute for this gate. The container gate passed with Docker `26.1.5+dfsg1` and
-its built-in seccomp profile. AMD64 and the complete agent path remain unverified.
+its built-in seccomp profile. AMD64 remains unverified.
+
+## Reproduce the complete agent gate
+
+Build the Linux worker and an integration-tagged Go server test binary for the
+VM's architecture. Place the test binary, worker, this repository's
+`schema/examples/job.yaml`, and `scripts/test-quota-agent.sh` on the VM, preserving
+the repository layout and `cmd/dispatch-server/` working directory. Supply the
+isolated database and versioned S3 fixture environment used by
+`scripts/test-store.sh` and `scripts/test-objectstore.sh`, then run:
+
+```sh
+sudo -E sh scripts/test-quota-agent.sh /absolute/path/dispatch-server.test /absolute/path/dispatch-worker
+```
+
+The script formats only its newly allocated 256 MiB loop-backed fixture and runs
+`TestWorkerDaemonEnforcesStrictScratchQuota`. The test enrolls the actual worker,
+initializes strict storage, submits a dataset-backed job through the CLI, and
+attempts a 128 MiB write against a 64 MiB reservation. It verifies `EDQUOT` and the
+bounded file size, frees the test payload, and checks accepted completion, live
+logs, exact output download, strict capability claims, and container/workspace
+removal. This gate passed in 26.03 seconds using disposable host services through
+SSH loopback tunnels. It establishes one Linux worker, not the two-host release gate.
 
 Shut down the test VM with its disposable key:
 
