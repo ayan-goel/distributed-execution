@@ -39,6 +39,37 @@ samples. The internal recorder requires the cluster transition lock and prior ca
 authorization; stored worker/session provenance is not an authentication mechanism.
 Only queued, uncancelled jobs can gain a new observation.
 
-The foundation is not yet connected to acquisitions or public job status. Sequence
-IDs may restart after a development rollback drops and recreates the diagnostic
-table; they are not externally durable identifiers across that rollback.
+Sequence IDs may restart after a development rollback drops and recreates the
+diagnostic table; they are not externally durable identifiers across that rollback.
+
+## Scheduler sampling (D18e)
+
+Fresh acquisitions from initially ready workers now record up to 16 blocked jobs
+per request, including backfilled jobs. Candidate selection captures one database
+wall-time sample for eligibility, reasons, aging, and observation timestamps.
+Reason precedence is disabled project, retry backoff, placement, physical resources,
+project quota, then sweep concurrency. Only authorized, queued, uncancelled jobs
+enter the diagnostic pool. Disabled/backoff jobs do not enter winner selection;
+existing assignment ordering and no-work outcomes remain unchanged.
+
+The latest sequence determines each job's previous observation. Its timestamp
+controls a 30-second cooldown shared across all workers, sessions, reasons, and
+attempts. Cooldown filtering happens before the 16-job limit; unsampled jobs come
+first, then oldest observations, with creation time and UUID breaking ties. This
+reduces polling churn and gives previously unsampled jobs coverage. Clock rollback
+can delay resampling. Another worker or a changed blocker does not bypass cooldown,
+so retained history may show only one worker's context during an interval.
+
+The full selected/sampled union locks jobs in UUID order before worker/accounting
+rows. History and acquisition response share one transaction; failures roll both
+back. Durable replay returns before sampling, even after its observation is evicted.
+Recording precedes fresh readiness/time checks and lease issuance, so observation
+lock waits do not consume an already-issued lease.
+
+The row bound and per-request write bound do not bound queue scans or scheduling
+latency. Missing or old observations do not imply an absence of blockers, and a
+worker-specific observation does not establish global unschedulability. Public job
+status/CLI exposure remains pending. Focused PostgreSQL/race checks, repository
+build/lint/smoke checks, and the full local worker/Docker/storage runtime gate passed.
+See the [implementation ledger](implementation.md#d18e-record-scheduler-blocker-observations)
+for evidence and the fixture startup correction encountered during verification.

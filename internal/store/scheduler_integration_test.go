@@ -210,6 +210,20 @@ func TestProjectRoundRobinSkipsIneligibleProjects(t *testing.T) {
 			}
 			fitting := queueAcquisitionJob(t, pool, func(job *spec.Job) { job.Metadata.Project = "second" })
 			acquireSchedulerJob(t, pool, worker, registration.SessionID, fitting.ID)
+			history, err := GetQueueBlockers(ctx, pool, blocked.ProjectID, blocked.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if blocker == "unauthorized" {
+				if len(history) != 0 {
+					t.Fatal("worker sampled an unauthorized project", history)
+				}
+			} else {
+				want := map[string]string{"disabled": "PROJECT_DISABLED", "placement": "PLACEMENT_MISMATCH", "resources": "NO_RESOURCE_FIT", "quota": "PROJECT_QUOTA", "backoff": "RETRY_BACKOFF"}[blocker]
+				if len(history) != 1 || history[0].Reason != want || history[0].WorkerID != worker.WorkerID || history[0].SessionID != registration.SessionID {
+					t.Fatal("backfilled project's blocker missing", want, history)
+				}
+			}
 		})
 	}
 }
@@ -222,6 +236,7 @@ func TestProjectRoundRobinRollsBackWithAcquisitionResponse(t *testing.T) {
 	acquireSchedulerJob(t, pool, worker, registration.SessionID, first.ID)
 	cursor, changed := schedulerCursor(t, pool)
 	ctx := context.Background()
+	blocked := queueAcquisitionJob(t, pool, func(job *spec.Job) { job.Spec.Placement.Labels["architecture"] = "amd64" })
 	// Fail after the cursor write: neither rotation nor assignment may survive
 	// if the response reference cannot commit, and the request must remain usable.
 	if _, err := pool.Exec(ctx, `CREATE FUNCTION reject_scheduler_response() RETURNS trigger LANGUAGE plpgsql AS $$
@@ -235,6 +250,9 @@ func TestProjectRoundRobinRollsBackWithAcquisitionResponse(t *testing.T) {
 		t.Fatal("failed response exposed assignment", result, err)
 	}
 	requireSchedulerCursor(t, pool, *cursor, changed)
+	if history, err := GetQueueBlockers(ctx, pool, blocked.ProjectID, blocked.ID); err != nil || len(history) != 0 {
+		t.Fatal("failed acquisition retained diagnostic writes", history, err)
+	}
 	for _, table := range []string{"attempts", "reservations", "worker_requests"} {
 		var count int
 		if err := pool.QueryRow(ctx, "SELECT count(*) FROM "+table).Scan(&count); err != nil || count != 1 {
@@ -246,6 +264,9 @@ func TestProjectRoundRobinRollsBackWithAcquisitionResponse(t *testing.T) {
 	}
 	if result, err := AcquireWork(ctx, pool, worker, request, AcquisitionPolicy{}); err != nil || result.Assignment == nil || result.Assignment.Authority.JobID != second.ID {
 		t.Fatal("rolled back request was not reusable", result, err)
+	}
+	if history, err := GetQueueBlockers(ctx, pool, blocked.ProjectID, blocked.ID); err != nil || len(history) != 1 || history[0].RequestID != request.RequestID {
+		t.Fatal("reused request did not commit diagnostics", history, err)
 	}
 }
 

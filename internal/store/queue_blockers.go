@@ -33,8 +33,9 @@ func validQueueBlockerReason(reason string) bool {
 // recordQueueBlocker requires the cluster transition lock and caller authorization.
 // Provenance identifies an observation; it cannot authenticate a worker or grant
 // placement authority. Only retained observations can be deduplicated here.
-func recordQueueBlocker(ctx context.Context, tx pgx.Tx, jobID, workerID string, request AcquisitionRequest, reason string) error {
-	if !canonicalUUID(jobID) || !canonicalUUID(workerID) || !canonicalUUID(request.SessionID) || !canonicalUUID(request.RequestID) || !validQueueBlockerReason(reason) {
+// Use the selection's database time so lock waits do not shift the observed check.
+func recordQueueBlocker(ctx context.Context, tx pgx.Tx, jobID, workerID string, request AcquisitionRequest, reason string, observedAt time.Time) error {
+	if !canonicalUUID(jobID) || !canonicalUUID(workerID) || !canonicalUUID(request.SessionID) || !canonicalUUID(request.RequestID) || !validQueueBlockerReason(reason) || observedAt.IsZero() {
 		return ErrInvalid
 	}
 	var savedReason string
@@ -53,14 +54,14 @@ func recordQueueBlocker(ctx context.Context, tx pgx.Tx, jobID, workerID string, 
 	// may contain gaps, so taking an ID modulo the bound could evict newer history.
 	// Reject nonqueued jobs so stale placement checks cannot append new blockers.
 	var sequence int64
-	err = tx.QueryRow(ctx, `INSERT INTO job_queue_blockers(job_id,slot,worker_id,session_id,request_id,attempt_counter,reason)
+	err = tx.QueryRow(ctx, `INSERT INTO job_queue_blockers(job_id,slot,worker_id,session_id,request_id,attempt_counter,reason,observed_at)
 		SELECT j.id,(SELECT s.slot FROM generate_series(0,$6::integer-1) s(slot)
 			LEFT JOIN job_queue_blockers b ON b.job_id=j.id AND b.slot=s.slot
-			ORDER BY b.id NULLS FIRST,s.slot LIMIT 1),$2,$3,$4,j.attempt_counter,$5 FROM jobs j
+			ORDER BY b.id NULLS FIRST,s.slot LIMIT 1),$2,$3,$4,j.attempt_counter,$5,$7 FROM jobs j
 		WHERE j.id=$1 AND j.state IN ('QUEUED','RETRY_WAIT') AND NOT j.cancel_requested
 		ON CONFLICT(job_id,slot) DO UPDATE SET id=EXCLUDED.id,worker_id=EXCLUDED.worker_id,
 			session_id=EXCLUDED.session_id,request_id=EXCLUDED.request_id,attempt_counter=EXCLUDED.attempt_counter,
-			reason=EXCLUDED.reason,observed_at=EXCLUDED.observed_at RETURNING id`, jobID, workerID, request.SessionID, request.RequestID, reason, QueueBlockerHistoryLimit).Scan(&sequence)
+			reason=EXCLUDED.reason,observed_at=EXCLUDED.observed_at RETURNING id`, jobID, workerID, request.SessionID, request.RequestID, reason, QueueBlockerHistoryLimit, observedAt).Scan(&sequence)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrInvalid
 	}

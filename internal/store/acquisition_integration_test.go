@@ -165,6 +165,9 @@ func TestSweepConcurrencyBlocksOnlyItsOwnChildren(t *testing.T) {
 			t.Fatal("sweep cap did not block concurrent second child", result)
 		}
 	}
+	if history, err := GetQueueBlockers(ctx, pool, created.ProjectID, created.ChildIDs[1]); err != nil || len(history) != 1 || history[0].Reason != "SWEEP_CONCURRENCY" {
+		t.Fatal("concurrent sweep cap polls did not share diagnostic cooldown", history, err)
+	}
 	unrelated := queueAcquisitionJob(t, pool, nil)
 	if backfill := acquire(); backfill.Assignment == nil || backfill.Assignment.Authority.JobID != unrelated.ID {
 		t.Fatal("blocked sweep hid unrelated job", backfill)

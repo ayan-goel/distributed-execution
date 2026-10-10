@@ -34,7 +34,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D15 logs | D08,D11 | Bounded queues/spool, noisy-job truncation, stream cursors, reconnect | catalog, HTTP cursor/tail gaps, binary format, private spool, Rust registration client, journaled delivery, bounded Docker follower, assembler, completion summary, CLI follow, pre-start capture, and live publication passed; reconnect/fault matrix pending |
 | D16 datasets | D11 | Immutable registration/cache; corruption rejection; pin-aware eviction | ownership schema, upload/completion APIs, project-scoped resolution, real CLI registration, isolated worker cache, atomic store admission bindings, durable replay, archive assignment contract, worker validation, store assignment population, signed RPC grants, strict job-to-wire matching, real read-only Docker mount, startup cache reset, assignment-to-cache preparation, agent cache initialization, unlaunched transfer-failure completion, replay-binding validation, worker input acquisition path, HTTP submission, and one live dataset-to-output Docker job passed; dataset fault matrix still pending |
 | D17 sweeps/metrics | D05,D13,D16 | Atomic 27-child sweep; 1000 cap; concurrency; fail-fast; finite scalar export | deterministic expansion, schema constraints, HTTP/CLI submission/replay, scheduler cap/terminal release, fail-fast, bounded CLI/HTTP progress/accepted metrics, CSV/JSON export, real worker metric ingestion, local 27-child success/fail-fast/worker-loss sweeps, immutable project-scoped retry lineage, atomic failed/cancelled-only store/HTTP/client/CLI retry, and local dataset-backed retry execution passed; independent-host gates pending |
-| D18 placement | D07,D17 | Project fairness/aging, blockers, two real independent hosts without oversubscription | durable project round-robin, public 0–3 job priorities, eligible queue aging, and bounded diagnostic storage checks passed; scheduler/API blocker integration and independent hosts pending |
+| D18 placement | D07,D17 | Project fairness/aging, blockers, two real independent hosts without oversubscription | durable project round-robin, public 0–3 job priorities, eligible queue aging, bounded diagnostic storage, and scheduler recording gates passed; public blocker status and independent hosts pending |
 | D19 faults/benchmarks | D14–D18 | Spec §21/22 runtime matrix, 27-job worker kill, stale result, measured benchmarks | local 27-child worker kill/natural lease recovery and real delayed completion rejection after replacement passed; independent-host evidence, broader fault matrix, and published measurements pending |
 | D20 release | D19 | TLS/auth/permissions, retention, migrations/backups, packaging, tutorial, actual research run | pending |
 
@@ -3189,3 +3189,34 @@ This recorded gap is resolved by D17l/D17m below; the live sweep gate remains op
 - [The remaining diagnostics slices](queue-diagnostics.md) connect fresh acquisition
   sampling (including backfill) and project-scoped public job status. This foundation
   alone does not satisfy visible blockers or the independent Linux-host D18 gate.
+
+### D18e: Record scheduler blocker observations
+
+- Fresh initially ready acquisitions now sample up to 16 blocked authorized jobs,
+  including work bypassed by backfill. Disabled projects and retry backoff enter
+  diagnostics only; winner ordering, project rotation, and no-work decisions remain.
+  One captured database time governs reasons and timestamps. A global per-job
+  30-second cooldown applies before the bound, favoring unsampled/oldest checks.
+- Lock the full selected/sampled union in UUID order before worker/accounting rows
+  to preserve ordering with renewal batches. Recording and acquisition response
+  commit together. Durable replay precedes sampling, including after history eviction;
+  final fresh readiness/time checks and lease issuance follow diagnostic writes.
+- Focused PostgreSQL/race checks passed for backfill/frozen identity, fairness/aging,
+  all six reason codes, unauthorized/unready/cancelled exclusion, sampling bounds,
+  cooldown/coverage, replay after eviction, rollback, and competing sorted job locks.
+  The lock test proves ordering against a competing transaction; it does not run a
+  real renewal batch. Retention/write bounds do not establish bounded scan latency.
+- `make test lint smoke` passed with authorized local-listener access after the
+  sandbox denied a dataset test fixture's loopback bind. Separate-model review
+  found no blockers. The first runtime run passed store tests (44.330 seconds),
+  but a Docker Desktop port-publication race supplied an empty storage endpoint.
+  Stopped that invalid run and verified cleanup; preserved its logs. Fixed the
+  wrapper separately in `59ccab5`, with delayed/absent publication and cleanup checks.
+- The complete corrected PostgreSQL/Docker/S3-compatible run passed: store 45.403
+  seconds, admission 1.384, API 3.962, worker API 19.722, and server 495.422.
+  This includes the local 27-child sweep, fail-fast, natural worker-loss recovery,
+  linked failed/cancelled retries, and delayed-result rejection. Temporary idle-sleep
+  inhibition remained active. Local logs are under ignored `.local/verification/`
+  as `blocker-scheduler-native-authorized.log` and `blocker-scheduler-full-retry.log`.
+  Review and diff checks found no blockers. Public job/CLI diagnostics and independent
+  Linux-host execution remain pending; the whole v0.1 goal is not complete.

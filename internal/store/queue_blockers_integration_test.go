@@ -7,6 +7,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -18,7 +19,11 @@ func saveQueueBlocker(ctx context.Context, pool *pgxpool.Pool, jobID, workerID s
 		return err
 	}
 	defer rollback(tx)
-	if err := recordQueueBlocker(ctx, tx, jobID, workerID, request, reason); err != nil {
+	var observedAt time.Time
+	if err := tx.QueryRow(ctx, "SELECT clock_timestamp()").Scan(&observedAt); err != nil {
+		return err
+	}
+	if err := recordQueueBlocker(ctx, tx, jobID, workerID, request, reason, observedAt); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
@@ -157,7 +162,12 @@ func TestQueueBlockerConcurrentRequestsAndRollback(t *testing.T) {
 		t.Fatal(err)
 	}
 	request.RequestID = uuid.NewString()
-	if err := recordQueueBlocker(ctx, tx, job.ID, worker.WorkerID, request, "PROJECT_QUOTA"); err != nil {
+	var observedAt time.Time
+	if err := tx.QueryRow(ctx, "SELECT clock_timestamp()").Scan(&observedAt); err != nil {
+		rollback(tx)
+		t.Fatal(err)
+	}
+	if err := recordQueueBlocker(ctx, tx, job.ID, worker.WorkerID, request, "PROJECT_QUOTA", observedAt); err != nil {
 		rollback(tx)
 		t.Fatal(err)
 	}

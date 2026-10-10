@@ -36,10 +36,10 @@ serializes its use across worker requests and control-plane connections. Only a
 new committed assignment advances it; replay, no-work, and rolled-back transactions
 leave it unchanged. If its singleton row is missing, new scheduling fails closed.
 This provides approximate admission fairness, not equal CPU time or preemption.
-Per-job blocker history and independent-host verification remain D18 requirements.
+Public blocker status and independent-host verification remain D18 requirements.
 
-The transaction holds the existing cluster transition lock, locks its selected job,
-then worker and project accounting. It rechecks capacity/quotas/readiness and reads
+The transaction holds the existing cluster transition lock, locks the selected and
+sampled jobs in UUID order, then worker and project accounting. It rechecks capacity/quotas/readiness and reads
 fresh database wall time after those locks. No runtime or network call occurs inside
 the transaction. For an assignment it atomically:
 
@@ -76,6 +76,24 @@ Even a fully aged job must fit resources. It does not preempt running work or pr
 a start deadline. A fresh time sample after job/accounting locks still rechecks the
 selected job and worker before assignment. Durable replay returns the original
 assignment without recalculating placement or spending another project's turn.
+
+## Queue-blocker recording (D18e)
+
+Fresh acquisitions from initially ready workers sample up to 16 blocked authorized
+jobs, including those bypassed by backfill. One database time sample determines
+both reasons and observation timestamps. A global per-job 30-second cooldown limits
+polling churn; unsampled jobs precede the oldest eligible observations. Disabled
+projects and future retry deadlines are diagnostic-only candidates and preserve
+the existing QUEUE_EMPTY behavior. Replay, unauthorized workers, initially unready
+workers, and cancelled jobs do not create samples.
+
+The selected job and sampled jobs form a deduplicated union of at most 17 locks,
+taken in UUID order before worker/accounting locks to avoid cycles with renewal
+batches. Observations commit with the acquisition response or roll back with it.
+Recording finishes before the final readiness/time checks and lease issuance.
+These are historical worker-specific checks, not proof that every worker is blocked.
+See [queue diagnostics](queue-diagnostics.md) for retention, sampling limitations,
+and the remaining public-status slice.
 
 ## Replay
 

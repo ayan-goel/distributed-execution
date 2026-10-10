@@ -50,7 +50,8 @@ A local dataset-backed test verifies those retry jobs execute and publish output
 across the remaining workers after a worker loss.
 The scheduler now rotates among eligible projects with a durable database cursor;
 jobs accept priorities from 0–3 and gain one level per 10 eligible waiting minutes.
-Per-job blocker history remains pending.
+The scheduler records bounded per-job blocker history; public job-status display
+remains pending.
 Declared metric outputs are collected into source-bound completion reports.
 Strict scratch limits, full retry policy coverage, and
 other v0.1 gates remain. See the
