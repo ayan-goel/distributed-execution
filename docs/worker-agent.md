@@ -220,7 +220,8 @@ cannot publish when its upload-grant request stalls past the phase budget.
 mTLS transport, leaving Docker reachable. The agent stops its job before the server
 lease expires; natural fencing quarantines capacity until replacement cleanup.
 See [worker-leases.md](worker-leases.md#control-channel-partition-gate).
-The real OOM/exit-137 gate verifies Docker's independent OOM flag, permanent failure
-classification, and local cleanup. See [runtime-failures.md](runtime-failures.md).
+Real runtime failure gates distinguish OOM from exit 137 and reject missing,
+oversized, symlink, and directory outputs before upload declarations. They also
+verify permanent failure and local cleanup. See [runtime-failures.md](runtime-failures.md).
 Strict scratch, independent Linux hosts, and the broader timeout/failure matrix
 remain required for the v0.1 release.

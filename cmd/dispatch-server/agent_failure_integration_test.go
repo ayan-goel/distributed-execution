@@ -74,6 +74,21 @@ func TestWorkerDaemonDistinguishesOOMFromExit137(t *testing.T) {
 	}
 }
 
+func TestWorkerDaemonRejectsMissingAndUnsafeRequiredOutputs(t *testing.T) {
+	for _, tc := range []struct{ name, command string }{
+		{"missing", "true"},
+		{"oversized", "head -c 4097 /dev/zero > /outputs/result"},
+		{"symlink", "ln -s /etc/passwd /outputs/result"},
+		{"directory", "mkdir /outputs/result"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			testWorkerDaemonFailure(t, []string{"sh", "-c", tc.command},
+				[]spec.Output{{Name: "result", Path: "/outputs/result", Required: true, MaxBytes: 4096}},
+				"OUTPUT_INVALID", 0, false)
+		})
+	}
+}
+
 func testWorkerDaemonFailure(t *testing.T, command []string, outputs []spec.Output, wantReason string, wantExit int32, wantOOM bool) {
 	t.Helper()
 	configureServerTestDatabase(t)
@@ -220,6 +235,12 @@ func testWorkerDaemonFailure(t *testing.T, command []string, outputs []spec.Outp
 		case <-ctx.Done():
 			t.Fatal("failure was not accepted", jobState, attemptState, reason, logs.String())
 		case <-time.After(100 * time.Millisecond):
+		}
+	}
+	if wantReason == "OUTPUT_INVALID" {
+		var uploads int
+		if err := pool.QueryRow(ctx, "SELECT count(*) FROM artifact_uploads WHERE attempt_id=$1 AND kind='OUTPUT'", attempt).Scan(&uploads); err != nil || uploads != 0 {
+			t.Fatal("invalid required file reached the output upload boundary", uploads, err)
 		}
 	}
 	for {

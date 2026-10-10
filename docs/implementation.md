@@ -35,7 +35,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D16 datasets | D11 | Immutable registration/cache; corruption rejection; pin-aware eviction | ownership schema, upload/completion APIs, project-scoped resolution, real CLI registration, isolated worker cache, atomic store admission bindings, durable replay, archive assignment contract, worker validation, store assignment population, signed RPC grants, strict job-to-wire matching, real read-only Docker mount, startup cache reset, assignment-to-cache preparation, agent cache initialization, unlaunched transfer-failure completion, replay-binding validation, worker input acquisition path, HTTP submission, and one live dataset-to-output Docker job passed; dataset fault matrix still pending |
 | D17 sweeps/metrics | D05,D13,D16 | Atomic 27-child sweep; 1000 cap; concurrency; fail-fast; finite scalar export | deterministic expansion, schema constraints, HTTP/CLI submission/replay, scheduler cap/terminal release, fail-fast, bounded CLI/HTTP progress/accepted metrics, CSV/JSON export, real worker metric ingestion, local 27-child success/fail-fast/worker-loss sweeps, immutable project-scoped retry lineage, atomic failed/cancelled-only store/HTTP/client/CLI retry, and local dataset-backed retry execution passed; independent-host gates pending |
 | D18 placement | D07,D17 | Project fairness/aging, blockers, two real independent hosts without oversubscription | durable project round-robin, public 0–3 job priorities, eligible queue aging, bounded diagnostic storage, scheduler recording, and public historical blocker status gates passed; independent hosts pending |
-| D19 faults/benchmarks | D14–D18 | Spec §21/22 runtime matrix, 27-job worker kill, stale result, measured benchmarks | local 27-child worker kill/natural lease recovery, delayed completion rejection after replacement, and actual-worker OOM versus exit-137 classification passed; independent-host evidence, broader fault matrix, and published measurements pending |
+| D19 faults/benchmarks | D14–D18 | Spec §21/22 runtime matrix, 27-job worker kill, stale result, measured benchmarks | local 27-child worker kill/natural lease recovery, delayed completion rejection after replacement, and actual-worker OOM/exit-137 and invalid-output gates passed; independent-host evidence, broader fault matrix, and published measurements pending |
 | D20 release | D19 | TLS/auth/permissions, retention, migrations/backups, packaging, tutorial, actual research run | pending |
 
 ## Release audit (all required)
@@ -3658,3 +3658,25 @@ This recorded gap is resolved by D17l/D17m below; the live sweep gate remains op
 - This verifies one local Docker Desktop engine with development scratch. Dedicated
   Linux hosts, unsafe/missing outputs, disk pressure, strict scratch, and the rest
   of the runtime/release matrix remain required.
+
+### D19d: Verify missing and unsafe required outputs from actual jobs
+
+- Extended the verified failure fixture with four real jobs declaring one required
+  regular file at `/outputs/result`, bounded to 4096 bytes. Workloads leave it
+  missing, write 4097 bytes, create a symlink to `/etc/passwd`, or create a directory.
+  Independent Docker inspection requires exit zero and no OOM for every case,
+  preventing a command failure from impersonating output validation.
+- Each job records permanent OUTPUT_INVALID, one accepted failure completion, one
+  attempt, no canonical result, released capacity, and completed container/workspace
+  cleanup. The database contains zero OUTPUT upload declarations for each attempt;
+  invalid paths and bytes never cross that boundary. Normal logs still use real
+  versioned object storage.
+- The four new cases first passed in 3.23 seconds. Final shared-fixture regression
+  passed all six runtime failure cases with race detection: OOM/exit-137 1.78 seconds
+  and invalid outputs 2.86; package total 6.096 seconds. Integration-tagged Go vet,
+  formatting, whitespace, and review checks passed. No production code changed.
+  Evidence: `.local/verification/agent-invalid-outputs{,-final,-vet}.log`.
+- Updated `runtime-failures.md` and the worker guide. This local Docker Desktop
+  evidence does not establish nested-path/concurrent filesystem mutation cases,
+  dedicated Linux hosts, disk pressure, strict scratch, or the remaining release
+  matrix.

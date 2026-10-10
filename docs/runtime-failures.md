@@ -22,12 +22,26 @@ finite upper bound; the job's 30-second execution budget and 60-second fixture
 deadline also bound a runtime regression. Failed jobs may retain diagnostic logs,
 but neither becomes the job's accepted result.
 
-Run with both disposable data services:
+## Required output validation
+
+`TestWorkerDaemonRejectsMissingAndUnsafeRequiredOutputs` declares one required
+regular file at `/outputs/result`, limited to 4096 bytes. Each real workload exits
+zero but leaves that path missing, writes 4097 bytes, creates a symlink to
+`/etc/passwd`, or creates a directory. Docker independently confirms successful
+process exit and no OOM in each case.
+
+All four jobs fail permanently with `OUTPUT_INVALID`. The fixture checks that no
+OUTPUT upload declaration exists, so the invalid path or bytes never cross the
+output upload boundary. Normal diagnostic log delivery still runs. Container and
+workspace cleanup complete without accepting a canonical result. These cases do
+not establish every nested-path or concurrent filesystem mutation interleaving.
+
+Run all six cases with both disposable data services:
 
 ```sh
 sh scripts/test-objectstore.sh sh scripts/test-store.sh \
   .tools/go/bin/go test -v -race -tags integration ./cmd/dispatch-server \
-  -run '^TestWorkerDaemonDistinguishesOOMFromExit137$' -count=1
+  -run '^(TestWorkerDaemonDistinguishesOOMFromExit137|TestWorkerDaemonRejectsMissingAndUnsafeRequiredOutputs)$' -count=1
 ```
 
 These gates use one Docker Desktop Linux engine and development scratch. They
