@@ -19,6 +19,8 @@ mod files;
 pub use asynchronous::AsyncJournal;
 mod session;
 pub use session::StoredSession;
+mod project_ids;
+pub use project_ids::ProjectIds;
 mod uploads;
 pub use uploads::OutputUpload;
 mod logs;

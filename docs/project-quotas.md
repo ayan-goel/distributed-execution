@@ -20,16 +20,24 @@ limits alone do not establish an enforced quota.
 Errors retain any installed limits. The caller must serialize allocation and
 quarantine IDs after uncertain setup; dropping the handle does not clear quotas.
 
-Before the worker can advertise `scratch.quota`, the next slice must provide:
+`journal::ProjectIds` now persists worker-bound project IDs through the existing
+exclusive, checksummed journal writer. Initialize an empty private control
+directory once; reopen requires its identity and counter. Each reservation commits
+the next counter before returning an ID. IDs are never recycled, including after
+failed quota setup. Missing/corrupt state, write uncertainty, and namespace
+exhaustion fail closed. The control directory must remain outside workload mounts;
+strict integration must still ensure one allocator owns the entire filesystem.
 
-- Durable project-ID allocation across restart and exclusive filesystem ownership.
+Before the worker can advertise `scratch.quota`, the remaining integration must provide:
+
+- Exclusive filesystem ownership and integration of the durable project-ID allocator.
 - A runtime restriction against project retagging or clearing inheritance through
   `FS_IOC_FSSETXATTR`/`FS_IOC_SETFLAGS`. Unprivileged ownership alone is insufficient.
 - Agent configuration, strict workspace preparation, verified cleanup, and runtime
   mount/profile checks, followed by a real quota-exhausting container job.
 
-These are enforcement requirements, not optional hardening. The primitive test
-does not establish container isolation or completed strict-scratch integration.
+These are enforcement requirements, not optional hardening. The primitive and allocator tests
+do not establish container isolation or completed strict-scratch integration.
 
 ## Reproduce the filesystem gate
 

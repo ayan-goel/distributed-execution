@@ -3769,3 +3769,27 @@ This recorded gap is resolved by D17l/D17m below; the live sweep gate remains op
   changes, and a real quota-exhausting container job remain the next slice.
   AMD64, two-host execution, remaining runtime faults, benchmarks, and release
   requirements remain open. Added an explicit remaining release order above.
+
+
+### D08r: Persist exclusive, worker-bound project-ID allocation
+
+- Added `journal::ProjectIds` using the existing private Directory lock,
+  checksummed records, atomic replacement, file/directory sync, and poisoned-writer
+  behavior. Initialization requires an unused control directory; reopen requires
+  the original worker identity and valid counter. The counter commits before an
+  ID becomes available for quota installation. Missing state is never reset, IDs
+  are never recycled, and exhaustion at the signed kernel-ID ceiling cannot wrap.
+- The public acceptance test first failed because the allocator API was missing.
+  Tests cover exclusive ownership, worker mismatch, reopen monotonicity,
+  initialization refusal, aliased roots, and missing/corrupt counters. Five
+  durable-write failpoints prove uncertain reservations poison the writer and
+  reopening cannot reuse a previously returned ID; a separate test checks exhaustion.
+- Native `make test lint smoke` passed. Linux tests on an actual anonymous Docker
+  volume passed 80 library tests and all three allocator integration tests with
+  pinned Rust 1.88.0. Review found no correctness blockers. Evidence:
+  `.local/verification/project-ids-{red-final,green,linux,native}.log`.
+- Updated quota documentation and README. Exclusive ownership of the full quota
+  filesystem remains a caller prerequisite to enforce in strict agent integration.
+  This slice does not change advertised scratch capabilities or workspace cleanup;
+  runtime attribute protection and the full real-container strict profile remain
+  required next.

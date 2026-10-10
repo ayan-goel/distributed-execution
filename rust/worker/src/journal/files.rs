@@ -137,6 +137,14 @@ impl Directory {
             if name == ".lock" || name == ".identity" {
                 continue;
             }
+            if name == ".project-ids" {
+                let metadata = fs::symlink_metadata(entry.path())?;
+                metadata_safe(&metadata, false)?;
+                if metadata.len() != (8 + HEADER) as u64 {
+                    return Err(JournalError::Corrupt);
+                }
+                continue;
+            }
             if name == ".session" {
                 let metadata = fs::symlink_metadata(entry.path())?;
                 metadata_safe(&metadata, false)?;
