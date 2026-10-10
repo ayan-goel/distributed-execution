@@ -89,6 +89,17 @@ func TestAttemptsCLIReadsRealRetryHistoryAndEnforcesProjectScope(t *testing.T) {
 		t.Fatal(err)
 	}
 	second := acquire("history-second")
+	eventsResponse := call(h, "GET", "/v1/jobs/"+job.ID+"/events", reader, "", nil)
+	var events testEventPage
+	if eventsResponse.Code != 200 || json.Unmarshal(eventsResponse.Body.Bytes(), &events) != nil || len(events.Events) != 4 {
+		t.Fatal("real attempt events missing", eventsResponse.Code, eventsResponse.Body.String())
+	}
+	for index, want := range []struct{ kind, attempt string }{{"ASSIGNED", first.AttemptID}, {"ATTEMPT_LOST", first.AttemptID}, {"ASSIGNED", second.AttemptID}} {
+		event := events.Events[index+1]
+		if event.Type != want.kind || event.AttemptID == nil || *event.AttemptID != want.attempt || event.Sequence != int64(index+2) {
+			t.Fatal("event lost attempt identity", event, want)
+		}
+	}
 	before, err := store.ListAttempts(ctx, pool, job.ProjectID, job.ID)
 	if err != nil {
 		t.Fatal(err)

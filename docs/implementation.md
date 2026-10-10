@@ -21,7 +21,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D02 job and sweep contracts | D01 | Strict schema, unsafe input rejection, stable canonical hash, deterministic expansion | parser/expansion gates passed; published schemas pending |
 | D03 database invariants | D01 | Real PostgreSQL migrations up/down/upgrade; uniqueness, references, checks | core schema and migration runner gates passed; later feature tables pending |
 | D04 worker protocol | D01 | Generated Go/Rust gRPC bindings; cross-language golden round-trip, drift check | wire and implemented mTLS service boundary gates passed; remaining handlers/client integration pending |
-| D05 durable submission | D02,D03 | HTTP/CLI submission; 100 identical requests yield one job; changed payload conflicts | job admission, auth, image resolution, dataset bindings, filtered HTTP/CLI listing, wait exit codes, and CLI attempt history gates passed |
+| D05 durable submission | D02,D03 | HTTP/CLI submission; 100 identical requests yield one job; changed payload conflicts | job admission, auth, image resolution, dataset bindings, filtered HTTP/CLI listing, wait exit codes, CLI attempt history, and paginated HTTP events gates passed |
 | D06 worker identities | D03,D04 | Authenticated registration, session takeover/recovery; stale-session rejection | control-plane, Rust client, and worker startup/health loop gates passed; active-job supervision pending |
 | D07 acquisition | D03,D06 | Atomic assignment/reservations; concurrent quota/capacity races; acquisition replay | store, RPC, Rust client, sequential agent loop, and local operator policy switch passed; broader scheduler pending |
 | D08 Docker adapter | D04 | Real bounded create/start/inspect/stop; ambiguous create reconciles one identity | cached launch, RUNNING/FINALIZING coordination, phase store/RPC/client, and actual daemon execution passed; staging and strict workspaces pending |
@@ -3359,3 +3359,30 @@ This recorded gap is resolved by D17l/D17m below; the live sweep gate remains op
   Usage and evidence boundaries are documented in attempt-history.md and running.md.
 - No server, client, schema, scheduler, or worker runtime logic changed. The
   remaining public interfaces and v0.1 release audit remain open.
+
+### D05l: Expose bounded resumable job events
+
+- Added authenticated `GET /v1/jobs/{id}/events` with sequence ordering, default
+  50/maximum 100 rows, and a 1 MiB encoded envelope budget. A read-only repeatable
+  snapshot scopes both job existence and event rows to the authenticated project.
+  Existing `(job_id,sequence)` ordering supports continuation without a migration.
+- Canonical versioned cursors bind project, job, and sequence; query strings are
+  bounded to 2 KiB and cursors to 256 bytes. Cursors carry no authority, remain
+  usable after anchor deletion, and retain their position on empty/end pages so
+  clients can poll newly committed events. Page size can change between reads.
+- Encoded-byte accounting includes JSON escaping and reserves envelope space.
+  A lookahead row is never skipped, and the complete response is checked before
+  headers. Invalid queries return 400; invalid/unknown/foreign jobs return 404.
+  Raw payload JSON preserves event-specific metadata without floating conversion.
+- The initial HTTP/PostgreSQL test failed for the missing route. Focused checks
+  passed (1.694 seconds), then escaped-payload traversal and query-boundary checks
+  passed (1.904). Unit tests cover canonical shape, scope, integer overflow, query
+  bounds, and pre-database input rejection. Final focused HTTP/PostgreSQL checks
+  passed (2.103), including real assignment/loss/replacement attempt identities.
+- `make test lint smoke` passed. All HTTP PostgreSQL/race integration tests passed
+  (8.789 seconds). Review and diff checks found no blockers. Logs are local under
+  ignored `.local/verification/events-{red,focused,bounds,native,postgres,final-focused}.log`.
+  The public contract, retention limits, and polling behavior are in job-events.md.
+- No event writers, lifecycle transitions, schema, or worker runtime changed.
+  Optional SSE is not implemented; worker administration and the full v0.1 release
+  audit remain open.
