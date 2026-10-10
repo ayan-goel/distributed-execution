@@ -1,5 +1,8 @@
 # Worker maintenance
 
+Inspect health and occupied/free capacity with `bin/dispatch workers list`.
+See [worker listing](worker-listing.md) for pagination and observation freshness.
+
 Request drain before planned maintenance:
 
 ```sh

@@ -72,6 +72,12 @@ func validDiagnosticTime(t time.Time) bool {
 // decoding accepts duplicate members and null integers, hiding ambiguous evidence.
 // Strictness stays within the new diagnostic objects for old-server compatibility.
 func requiredDiagnosticObject(body []byte, fields map[string]any) error {
+	return requiredNullableDiagnosticObject(body, fields, "")
+}
+
+// Some evidence, such as a never-observed heartbeat, is explicitly nullable.
+// The named exception still requires the field and preserves duplicate checks.
+func requiredNullableDiagnosticObject(body []byte, fields map[string]any, nullable string) error {
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	opening, err := decoder.Token()
 	if err != nil || opening != json.Delim('{') {
@@ -86,7 +92,7 @@ func requiredDiagnosticObject(body []byte, fields map[string]any) error {
 			return errQueueDiagnostics
 		}
 		var raw json.RawMessage
-		if decoder.Decode(&raw) != nil || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) || json.Unmarshal(raw, destination) != nil {
+		if decoder.Decode(&raw) != nil || (nullable == "" || key != nullable) && bytes.Equal(bytes.TrimSpace(raw), []byte("null")) || json.Unmarshal(raw, destination) != nil {
 			return errQueueDiagnostics
 		}
 		seen[key] = true

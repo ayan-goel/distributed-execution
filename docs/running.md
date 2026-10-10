@@ -66,6 +66,11 @@ session; fencing occurs when that incarnation registers successfully. Without an
 approval, automatic recovery requires inactivity and expiry of all active leases.
 These commands require direct operator database access, not a project bearer token.
 
+Use `bin/dispatch workers list --json` to inspect authorized hosts, heartbeat
+times, and capacity held by active or quarantined reservations. The command
+returns one bounded page; continue with `--cursor` when `hasMore` is true.
+Read [worker listing](worker-listing.md) before interpreting free headroom.
+
 For planned maintenance, `bin/dispatch workers drain WORKER_UUID --json` uses
 an operator-role project token through HTTP. It prevents new assignments across
 the whole host, including other authorized projects, while existing attempts may

@@ -22,7 +22,7 @@ Never use a fake-runtime test as evidence for a real-runtime or multi-host gate.
 | D03 database invariants | D01 | Real PostgreSQL migrations up/down/upgrade; uniqueness, references, checks | core schema and migration runner gates passed; later feature tables pending |
 | D04 worker protocol | D01 | Generated Go/Rust gRPC bindings; cross-language golden round-trip, drift check | wire and implemented mTLS service boundary gates passed; remaining handlers/client integration pending |
 | D05 durable submission | D02,D03 | HTTP/CLI submission; 100 identical requests yield one job; changed payload conflicts | job admission, auth, image resolution, dataset bindings, filtered HTTP/CLI listing, wait exit codes, CLI attempt history, and paginated HTTP events gates passed |
-| D06 worker identities | D03,D04 | Authenticated registration, session takeover/recovery; stale-session rejection | control-plane, Rust client, startup/health loop, and operator HTTP/CLI drain gates passed; fleet listing pending |
+| D06 worker identities | D03,D04 | Authenticated registration, session takeover/recovery; stale-session rejection | control-plane, Rust client, startup/health loop, operator drain, and project-scoped HTTP/CLI fleet listing gates passed; broader release audit pending |
 | D07 acquisition | D03,D06 | Atomic assignment/reservations; concurrent quota/capacity races; acquisition replay | store, RPC, Rust client, sequential agent loop, and local operator policy switch passed; broader scheduler pending |
 | D08 Docker adapter | D04 | Real bounded create/start/inspect/stop; ambiguous create reconciles one identity | cached launch, RUNNING/FINALIZING coordination, phase store/RPC/client, and actual daemon execution passed; staging and strict workspaces pending |
 | D09 leases | D06,D07 | Fresh DB-time expiry checks; delayed grants; local monotonic deadline enforcement | deadline, store/RPC/client, watchdog, periodic renewal, daemon execution, and production lease reaper passed; control-channel partition gate pending |
@@ -3437,3 +3437,37 @@ This recorded gap is resolved by D17l/D17m below; the live sweep gate remains op
   and native test/lint/smoke gates passed. Review found no blockers.
 - Evidence: ignored `.local/verification/worker-listing-{red,store,store-bounds,postgres,native-final}.log`.
   HTTP and CLI exposure is the next dependent slice; the release audit remains open.
+
+### D06l: Expose bounded authorized fleet listing through HTTP and CLI
+
+- Added read-authorized `GET /v1/workers` and `dispatch workers list`, with one-page
+  human/JSON output, limits of 1–100, and canonical project-bound continuation.
+  Hosts are ordered by UUID ascending. Membership removal at the previous anchor
+  does not strand later hosts. Actual escaped responses are bounded to 1 MiB;
+  raw queries and cursors are bounded to 2 KiB and 256 bytes respectively.
+- Read-only repeatable snapshots expose recorded health, drain, labels, heartbeat
+  time, current advertised capacity, and global active/quarantined reservations.
+  Available headroom clamps to zero after reduced claims; reserved evidence remains
+  intact. Shared-host totals include other projects without disclosing their jobs.
+  Listing takes no scheduler locks and writes no lifecycle state. Credentials,
+  certificates, and session IDs are excluded. Freshness and headroom limitations
+  are documented in worker-listing.md, running.md, and README.
+- Store/API/client checks first failed for absent interfaces; the real CLI/HTTP
+  check failed on the former drain-only usage. Focused PostgreSQL/race store
+  checks passed (2.027 seconds), including assignment, lease expiry/quarantine,
+  released reservations, reduced claims, shared scope, large escaped labels, and
+  full traversal after membership removal. Fixture SQL advances time and marks
+  release for accounting assertions; it does not establish runtime cleanup.
+- Real CLI/HTTP/PostgreSQL checks passed (final: 1.520 seconds), including all
+  project roles, empty scope, pagination, drain visibility, and private-field
+  exclusion. Focused client/CLI checks passed (4.250/4.408 seconds), covering strict
+  evidence validation, nullable heartbeat, ordering, missing/duplicate fields,
+  response bounds, malformed options, empty pages, and output errors.
+- `make test lint smoke` passed, including a final run after review corrections.
+  All store and API PostgreSQL/race regressions passed (50.089/9.560 seconds).
+  Review found no blockers; empty continuation output was clarified to avoid
+  claiming the whole authorized fleet is empty. Diff checks passed. Evidence is
+  local under ignored `.local/verification/worker-listing-*.log`.
+- No schema, scheduling, or Rust runtime changes. The full v0.1 release audit,
+  independent Linux-host evidence, strict scratch quotas, and broader runtime
+  fault/security gates remain open.

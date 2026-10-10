@@ -58,6 +58,8 @@ bounded cursor pagination and JSON output.
 and an optional timeout; timeout cancellation requires an explicit flag.
 `dispatch attempts list` exposes ordered execution history and pending cleanup.
 The HTTP API also serves bounded, resumable pages of durable job events.
+`dispatch workers list` shows authorized hosts, recorded health, and occupied/free
+capacity, including reservations awaiting cleanup.
 `dispatch workers drain` lets authorized operators stop new assignments for
 maintenance while existing attempts finish.
 Declared metric outputs are collected into source-bound completion reports.

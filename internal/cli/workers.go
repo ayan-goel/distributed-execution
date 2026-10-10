@@ -13,8 +13,11 @@ import (
 )
 
 func runWorkers(ctx context.Context, args []string, getenv func(string) string, out io.Writer) error {
+	if len(args) >= 2 && args[1] == "list" {
+		return listWorkers(ctx, args, getenv, out)
+	}
 	if len(args) < 3 || args[1] != "drain" {
-		return errors.New("usage: dispatch workers drain WORKER_ID [--json]")
+		return errors.New("usage: dispatch workers list [--limit N] [--cursor CURSOR] [--json] | drain WORKER_ID [--json]")
 	}
 	fs := flag.NewFlagSet("workers drain", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)

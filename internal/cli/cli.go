@@ -26,6 +26,7 @@ const usage = `usage:
   dispatch jobs list [--project PROJECT] [--state STATE] [--label KEY=VALUE] [--limit 1..100] [--cursor CURSOR] [--json]
   dispatch jobs get JOB_ID [--json]
   dispatch attempts list JOB_ID [--json]
+  dispatch workers list [--limit N] [--cursor CURSOR] [--json]
   dispatch workers drain WORKER_ID [--json]
   dispatch wait JOB_ID [--timeout DURATION] [--poll-interval DURATION] [--cancel-on-timeout] [--json]
   dispatch cancel JOB_ID [--json]
