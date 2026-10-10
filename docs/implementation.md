@@ -3857,3 +3857,20 @@ This recorded gap is resolved by D17l/D17m below; the live sweep gate remains op
   component-final}.log`. Verified profile: Debian ARM64 kernel
   `6.12.111+deb13-cloud-arm64`, Docker `26.1.5+dfsg1`. Independent hosts, AMD64,
   remaining fault gates, benchmarks, and release requirements remain open.
+
+### D19a: Prepare two independent Linux VM runtimes
+
+- Added an optional bounded VM name to `scripts/run-quota-vm.sh`, preserving the
+  default paths and cloud-init identity. Named VMs share only the pinned read-only
+  Debian base; writable disks, firmware, SSH keys, cloud-init identity, and kernels
+  are separate. Reusing the base avoids another 322 MiB image download.
+- Booted `sweep-worker-2` with 2 vCPUs, 1 GiB RAM, a 4 GiB sparse virtual disk,
+  and SSH exposed only on loopback port 22232. Verified different kernel boot IDs
+  and Docker daemon IDs from the original quota VM. Configured user namespace
+  remapping only inside the new VM and pulled the pinned small Debian image.
+- The second VM passed real byte/inode `EDQUOT`, sibling isolation, and rejection
+  of accounting without enforcement. Both daemons report built-in seccomp and
+  user namespace remapping. Shell syntax, diff checks, and read-only review passed.
+  Evidence: `.local/verification/sweep-vm-{1-identity,2-identity,2-docker,2-quota}.log`.
+- Documented named-VM setup. This closes the independent runtime prerequisite;
+  the 27-job recovery/fencing sweep itself remains required next.

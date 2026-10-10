@@ -7,22 +7,26 @@ test "$(uname -s):$(uname -m)" = Darwin:arm64 || {
     echo 'This fixture requires Apple Silicon macOS and QEMU.' >&2
     exit 1
 }
-root="$PWD/.local/quota-vm"
+name=${DISPATCH_QUOTA_VM_NAME:-quota}
+case "$name" in ''|*[!a-z0-9-]*|-*|*-) exit 1 ;; esac
+test "${#name}" -le 32
+root="$PWD/.local/$name-vm"
 image=debian-13-genericcloud-arm64-20261001-2618.qcow2
+base="$PWD/.local/quota-vm/$image"
 checksum=d8470b8c6c38fead046c794b5800a5a7b96672d5bcf543cc230ceb0c4b8ace05ed341a0c8928045422243fde26b2f1f2f58e99244c65709ffda2e3d4b674dd5a
 port=${DISPATCH_QUOTA_VM_PORT:-22231}
 case "$port" in ''|*[!0-9]*) exit 1 ;; esac
 test "$port" -ge 1024 && test "$port" -le 65535
-mkdir -p "$root/seed"
+mkdir -p "$root/seed" "$PWD/.local/quota-vm"
 chmod 700 "$root" "$root/seed"
-if ! test -f "$root/$image"; then
+if ! test -f "$base"; then
     curl --fail --location --retry 3 --silent --show-error \
         "https://cloud.debian.org/images/cloud/trixie/20261001-2618/$image" \
-        -o "$root/$image.pending"
-    printf '%s  %s\n' "$checksum" "$root/$image.pending" | shasum -a 512 -c
-    mv "$root/$image.pending" "$root/$image"
+        -o "$base.pending"
+    printf '%s  %s\n' "$checksum" "$base.pending" | shasum -a 512 -c
+    mv "$base.pending" "$base"
 fi
-printf '%s  %s\n' "$checksum" "$root/$image" | shasum -a 512 -c
+printf '%s  %s\n' "$checksum" "$base" | shasum -a 512 -c
 if ! test -f "$root/id_ed25519"; then
     ssh-keygen -q -t ed25519 -N '' -C dispatch-quota-fixture -f "$root/id_ed25519"
 fi
@@ -39,13 +43,15 @@ users:
 ssh_pwauth: false
 disable_root: true
 EOF
-printf 'instance-id: dispatch-quota-v1\nlocal-hostname: dispatch-quota\n' > "$root/seed/meta-data"
+printf 'instance-id: dispatch-%s-v1\nlocal-hostname: dispatch-%s\n' "$name" "$name" > "$root/seed/meta-data"
 if ! test -f "$root/seed.iso"; then
     hdiutil makehybrid -iso -joliet -default-volume-name cidata \
         -o "$root/seed.iso" "$root/seed" >/dev/null
 fi
 if ! test -f "$root/disk.qcow2"; then
-    qemu-img create -f qcow2 -F qcow2 -b "$root/$image" "$root/disk.qcow2" 4G
+    # Share only the verified read-only base. Each named VM has its own writable
+    # disk, firmware state, SSH key, and cloud-init identity.
+    qemu-img create -f qcow2 -F qcow2 -b "$base" "$root/disk.qcow2" 4G
 fi
 if ! test -f "$root/vars.fd"; then
     cp /opt/homebrew/share/qemu/edk2-arm-vars.fd "$root/vars.fd"

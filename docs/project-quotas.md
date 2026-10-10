@@ -111,6 +111,22 @@ image is about 322 MiB and the writable disk is sparse with a 4 GiB virtual ceil
 Keep the foreground process running while testing. The default port can be changed
 with `DISPATCH_QUOTA_VM_PORT`.
 
+To start a second independent VM, first initialize the default VM so the verified
+base image already exists, then run in another foreground session:
+
+```sh
+DISPATCH_QUOTA_VM_NAME=sweep-worker-2 DISPATCH_QUOTA_VM_PORT=22232 sh scripts/run-quota-vm.sh
+```
+
+Named VMs share only the verified read-only base image. Each has its own 4 GiB
+virtual writable disk, firmware, cloud-init identity, SSH key, and kernel.
+Second-VM state is under `.local/sweep-worker-2-vm/`; use its key and known-hosts
+file with port 22232. Names contain lowercase letters, digits, and internal
+hyphens, at most 32 characters. Configure Docker inside each VM independently.
+Two VMs were booted locally with distinct boot IDs and Docker daemon IDs; byte,
+inode, isolation, and accounting-only rejection gates passed on the second VM.
+This verifies the infrastructure, not yet the two-worker sweep.
+
 Build the Linux test binaries with the pinned worker toolchain:
 
 ```sh
