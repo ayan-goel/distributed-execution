@@ -61,6 +61,39 @@ Go and Rust validate the range. Use updated server and worker binaries together
 for nonzero priorities: an older strict worker decoder rejects the new field.
 Documents without it remain valid; this is not a rolling-upgrade compatibility claim.
 
+### Job status diagnostics (D18f)
+
+`GET /v1/jobs/{id}` adds a project-scoped `queueDiagnostics` object:
+
+```json
+{
+  "asOf": "2026-10-10T12:00:00Z",
+  "attemptCounter": 1,
+  "observations": [{
+    "sequence": 42,
+    "workerId": "00000000-0000-0000-0000-000000000002",
+    "sessionId": "00000000-0000-0000-0000-000000000003",
+    "requestId": "00000000-0000-0000-0000-000000000004",
+    "attemptCounter": 0,
+    "reason": "NO_RESOURCE_FIT",
+    "observedAt": "2026-10-10T11:58:00Z"
+  }]
+}
+```
+
+This is a historical worker-specific check before a later attempt; it does not
+declare the current job blocked on every host. `observations` is always an array,
+including `[]`, with at most 16 entries ordered by descending positive sequence.
+Reason codes are PLACEMENT_MISMATCH, NO_RESOURCE_FIT, PROJECT_QUOTA,
+SWEEP_CONCURRENCY, PROJECT_DISABLED, and RETRY_BACKOFF. Missing observations do not
+prove absence of blockers. Clock rollback can put `observedAt` after `asOf`.
+
+`dispatch jobs get ID` renders historical checks; `--json` preserves the object.
+Mutation response shapes are unchanged. New clients accept older servers that omit
+the field; a present field is strictly validated before display. See
+[queue diagnostics](queue-diagnostics.md#public-job-status-d18f) for bounds, sampling,
+counter semantics, authorization, and compatibility.
+
 ### Canonical identity
 
 Validated jobs serialize to compact JSON with sorted map keys. Retry reasons are

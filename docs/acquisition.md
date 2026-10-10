@@ -36,7 +36,7 @@ serializes its use across worker requests and control-plane connections. Only a
 new committed assignment advances it; replay, no-work, and rolled-back transactions
 leave it unchanged. If its singleton row is missing, new scheduling fails closed.
 This provides approximate admission fairness, not equal CPU time or preemption.
-Public blocker status and independent-host verification remain D18 requirements.
+Independent-host verification remains a D18 requirement.
 
 The transaction holds the existing cluster transition lock, locks the selected and
 sampled jobs in UUID order, then worker and project accounting. It rechecks capacity/quotas/readiness and reads
@@ -93,7 +93,7 @@ batches. Observations commit with the acquisition response or roll back with it.
 Recording finishes before the final readiness/time checks and lease issuance.
 These are historical worker-specific checks, not proof that every worker is blocked.
 See [queue diagnostics](queue-diagnostics.md) for retention, sampling limitations,
-and the remaining public-status slice.
+and the public job-status contract.
 
 ## Replay
 

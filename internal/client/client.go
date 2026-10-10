@@ -20,14 +20,15 @@ import (
 const MaxResponseBytes = 4 << 20
 
 type Job struct {
-	ID                string          `json:"id"`
-	ProjectID         string          `json:"projectId"`
-	State             string          `json:"state"`
-	Spec              json.RawMessage `json:"spec"`
-	SpecHash          string          `json:"specHash"`
-	CreatedAt         time.Time       `json:"createdAt"`
-	AcceptedAttemptID *string         `json:"acceptedAttemptId"`
-	AcceptedManifest  json.RawMessage `json:"acceptedManifest"`
+	ID                string            `json:"id"`
+	ProjectID         string            `json:"projectId"`
+	State             string            `json:"state"`
+	Spec              json.RawMessage   `json:"spec"`
+	SpecHash          string            `json:"specHash"`
+	CreatedAt         time.Time         `json:"createdAt"`
+	AcceptedAttemptID *string           `json:"acceptedAttemptId"`
+	AcceptedManifest  json.RawMessage   `json:"acceptedManifest"`
+	QueueDiagnostics  *QueueDiagnostics `json:"queueDiagnostics,omitempty"`
 }
 
 type APIError struct {
@@ -108,8 +109,20 @@ func (c *Client) request(ctx context.Context, method, path string, body []byte, 
 		return Job{}, err
 	}
 	var j Job
-	if json.Unmarshal(b, &j) != nil || j.State == "" {
+	// Keep absence compatible with older servers while rejecting explicit null
+	// or incomplete diagnostics. Existing job fields retain their decoding rules.
+	response := struct {
+		*Job
+		Diagnostics json.RawMessage `json:"queueDiagnostics"`
+	}{Job: &j}
+	if json.Unmarshal(b, &response) != nil || j.State == "" {
 		return Job{}, errors.New("invalid job response")
+	}
+	if len(response.Diagnostics) > 0 {
+		j.QueueDiagnostics, err = decodeQueueDiagnostics(response.Diagnostics)
+		if err != nil {
+			return Job{}, err
+		}
 	}
 	if _, err := uuid.Parse(j.ID); err != nil {
 		return Job{}, errors.New("invalid job ID in response")

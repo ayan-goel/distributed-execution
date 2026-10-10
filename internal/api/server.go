@@ -149,6 +149,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			s.storeError(w, err)
 			return
 		}
+		// Cancellation reuses the store's status read, but its mutation response
+		// retains the existing shape. Diagnostics belong to explicit job inspection.
+		job.QueueDiagnostics = nil
 		writeJSON(w, 200, job)
 	case strings.HasPrefix(r.URL.Path, "/v1/jobs/") && strings.HasSuffix(r.URL.Path, "/artifacts") && r.Method == http.MethodGet:
 		s.artifacts(w, r, p)

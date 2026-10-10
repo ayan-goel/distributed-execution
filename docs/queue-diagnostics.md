@@ -22,6 +22,7 @@ they cannot prove that no other worker can execute the job.
 
 Each slice runs focused PostgreSQL/race checks and relevant repository gates.
 Scheduler integration also runs the combined real-worker/Docker/storage suite.
+All three slices are implemented and verified locally.
 Independent Linux-host validation remains a separate D18 acceptance gate.
 
 ## Bounds and interpretation
@@ -68,8 +69,43 @@ lock waits do not consume an already-issued lease.
 
 The row bound and per-request write bound do not bound queue scans or scheduling
 latency. Missing or old observations do not imply an absence of blockers, and a
-worker-specific observation does not establish global unschedulability. Public job
-status/CLI exposure remains pending. Focused PostgreSQL/race checks, repository
-build/lint/smoke checks, and the full local worker/Docker/storage runtime gate passed.
+worker-specific observation does not establish global unschedulability. Focused
+PostgreSQL/race checks, repository build/lint/smoke checks, and the full local
+worker/Docker/storage runtime gate passed.
 See the [implementation ledger](implementation.md#d18e-record-scheduler-blocker-observations)
 for evidence and the fixture startup correction encountered during verification.
+
+## Public job status (D18f)
+
+`GET /v1/jobs/{id}` includes `queueDiagnostics` for the authorized owning project.
+Its `asOf` is a database wall-time sample during the read, `attemptCounter` is the
+job's current counter, and `observations` contains the newest 0–16 retained checks
+in descending sequence order. Lifecycle, accepted manifest, counter, and history
+come from one SQL statement snapshot. Reads acquire no execution authority and
+do not change queue state, history, or leases. The time sample is not a global
+snapshot of other workers or an availability guarantee.
+
+Each observation contains `sequence`, `workerId`, `sessionId`, `requestId`,
+`attemptCounter`, `reason`, and `observedAt`. The counter is the job's counter at
+the check, not the number of an allocated attempt. History remains visible after
+assignment, retries, and terminal outcomes; a retained check can belong to an older
+counter. Neither a matching counter nor a recent timestamp makes it a current
+global blocker decision. Sequence order survives clock rollback, which can put a
+retained timestamp after `asOf`. No global `blocked` flag is returned.
+
+`dispatch jobs get JOB_ID` labels these checks as historical and shows their
+absolute server timestamps, reason, worker ID, and attempt counter. Empty history
+prints “No queue observations recorded.” `--json` preserves the full object,
+including session/request provenance. UUIDs are identifiers, not credentials or
+execution capabilities. Foreign and absent jobs both return NOT_FOUND.
+
+Submission/replay and cancellation mutation responses omit this additive field.
+The client accepts its absence for older servers, but rejects explicit null or
+incomplete objects when present. Diagnostic objects require exact, non-null fields;
+unknown/duplicate fields, invalid times/UUIDs/reasons, out-of-range counters,
+non-descending sequences, duplicate identities, and more than 16 checks fail
+validation before CLI rendering. Existing job-field decoding remains unchanged.
+
+Store/client, real CLI-to-HTTP-to-PostgreSQL, repository build/lint/smoke, and all
+affected PostgreSQL package gates passed. Exact evidence is in the
+[implementation ledger](implementation.md#d18f-expose-historical-blockers-in-job-status).

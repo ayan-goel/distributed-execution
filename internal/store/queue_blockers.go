@@ -12,6 +12,12 @@ import (
 
 const QueueBlockerHistoryLimit = 16
 
+type QueueDiagnostics struct {
+	AsOf           time.Time      `json:"asOf"`
+	AttemptCounter int64          `json:"attemptCounter"`
+	Observations   []QueueBlocker `json:"observations"`
+}
+
 type QueueBlocker struct {
 	Sequence       int64     `json:"sequence"`
 	WorkerID       string    `json:"workerId"`

@@ -24,15 +24,16 @@ var (
 )
 
 type JobRecord struct {
-	ID                string          `json:"id"`
-	ProjectID         string          `json:"projectId"`
-	State             string          `json:"state"`
-	Spec              json.RawMessage `json:"spec"`
-	SpecHash          string          `json:"specHash"`
-	CreatedAt         time.Time       `json:"createdAt"`
-	AcceptedAttemptID *string         `json:"acceptedAttemptId"`
-	AcceptedManifest  json.RawMessage `json:"acceptedManifest"`
-	Replayed          bool            `json:"-"`
+	ID                string            `json:"id"`
+	ProjectID         string            `json:"projectId"`
+	State             string            `json:"state"`
+	Spec              json.RawMessage   `json:"spec"`
+	SpecHash          string            `json:"specHash"`
+	CreatedAt         time.Time         `json:"createdAt"`
+	AcceptedAttemptID *string           `json:"acceptedAttemptId"`
+	AcceptedManifest  json.RawMessage   `json:"acceptedManifest"`
+	QueueDiagnostics  *QueueDiagnostics `json:"queueDiagnostics,omitempty"`
+	Replayed          bool              `json:"-"`
 }
 
 type rowQuerier interface {
@@ -41,14 +42,28 @@ type rowQuerier interface {
 
 func GetJob(ctx context.Context, pool *pgxpool.Pool, projectID, id string) (JobRecord, error) {
 	var job JobRecord
+	var diagnostics QueueDiagnostics
+	var history []byte
 	// Scope the lookup in SQL and follow only the accepted completion pointer.
 	// Partial uploads and failed-attempt diagnostics must never become canonical.
-	err := pool.QueryRow(ctx, `SELECT j.id::text,j.project_id::text,j.state,j.spec,j.spec_hash,j.created_at,j.accepted_attempt_id::text,c.manifest_json
+	// One statement keeps lifecycle, attempt counter, and retained history on the
+	// same database snapshot; a second read could mix observations across a retry.
+	err := pool.QueryRow(ctx, `SELECT j.id::text,j.project_id::text,j.state,j.spec,j.spec_hash,j.created_at,j.accepted_attempt_id::text,c.manifest_json,
+		clock_timestamp(),j.attempt_counter,(`+queueBlockerHistorySQL+`)
 		FROM jobs j LEFT JOIN attempt_completions c ON c.job_id=j.id AND c.attempt_id=j.accepted_attempt_id AND c.state='SUCCEEDED'
-		WHERE j.id=$1 AND j.project_id=$2`, id, projectID).Scan(&job.ID, &job.ProjectID, &job.State, &job.Spec, &job.SpecHash, &job.CreatedAt, &job.AcceptedAttemptID, &job.AcceptedManifest)
+		WHERE j.id=$1 AND j.project_id=$2`, id, projectID).Scan(&job.ID, &job.ProjectID, &job.State, &job.Spec, &job.SpecHash, &job.CreatedAt, &job.AcceptedAttemptID, &job.AcceptedManifest,
+		&diagnostics.AsOf, &diagnostics.AttemptCounter, &history)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return job, ErrNotFound
 	}
+	if err != nil {
+		return job, err
+	}
+	if err = json.Unmarshal(history, &diagnostics.Observations); err != nil {
+		return JobRecord{}, err
+	}
+	diagnostics.AsOf = diagnostics.AsOf.UTC()
+	job.QueueDiagnostics = &diagnostics
 	job.CreatedAt = job.CreatedAt.UTC()
 	return job, err
 }

@@ -144,5 +144,8 @@ func run(ctx context.Context, args []string, getenv func(string) string, out, er
 	}
 	// ID has been validated by the client; quote the remote state for terminal safety.
 	_, err = fmt.Fprintf(out, "%s %q\n", job.ID, job.State)
+	if err == nil && command == "get" {
+		err = writeQueueDiagnostics(out, job.QueueDiagnostics)
+	}
 	return err
 }
