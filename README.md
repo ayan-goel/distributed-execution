@@ -83,7 +83,8 @@ storage operations, recovery after lost completion replies, and durable part pla
 and completion versions. Part retries bind immutable hashes; multipart verification
 requires the stored exact version.
 The authenticated API supports multipart uploads within the current 64 MiB cap.
-Automatic Rust multipart delivery and larger-file support remain in progress.
+The Rust journal preserves part checksums, ETags, and completion retries across
+restarts. Automatic multipart delivery and larger-file support remain in progress.
 
 ## Development
 

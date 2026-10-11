@@ -10,8 +10,8 @@
 
 The low-level methods do not generate IDs, automatically repeat PUTs, renew
 authority, or complete an attempt. The journal and delivery path below now manage
-durable output evidence. Production execution integration remains required; the
-actual worker startup command still does not acquire work.
+durable output evidence. The execution loop integrates single-part delivery;
+automatic multipart transfer remains in progress.
 
 ## Journaled output delivery
 
@@ -39,16 +39,22 @@ is saved, retrying never repeats PUT or selects another version.
 ## Control-plane validation
 
 Create requests require canonical authority/request UUIDs, a positive bounded
-generation, a valid logical name/kind, lowercase SHA-256, and one part of at most
-64 MiB. The server additionally validates job declarations and live ownership.
+generation, a valid logical name/kind, and lowercase SHA-256. Single-part uploads
+and multipart OUTPUT plans remain bounded to 64 MiB. The server additionally
+validates job declarations and live ownership.
 Grant validation binds the key to the requested job, attempt, and returned upload
 UUID within the server's project/job/attempt/upload path. It bounds URLs and headers
-and rejects multipart responses. The worker cannot independently infer the project
+and checks multipart plan consistency without accepting inline capabilities. The worker cannot independently infer the project
 UUID from this RPC's authority; the authenticated server owns that relationship.
 
-Finalization requests require that same key scope and a nonempty, non-null version
-of at most 1024 printable ASCII bytes. The reply must contain a canonical artifact
-UUID and match the requested object in every field. Both RPCs use five-second local
+Single-part finalization requests require that same key scope and a nonempty,
+non-null version of at most 1024 printable ASCII bytes. Multipart requests provide
+the expected object without a version and ordered part numbers, ETags, and
+SHA-256 values; replies must supply the verified exact version. The reply must
+contain a canonical artifact UUID and match the expected key, size, and checksum.
+The [multipart guide](multipart-uploads.md#rust-journal) describes the durable
+part preparation and completion APIs; network delivery is not connected yet.
+All control RPCs use five-second local
 and wire deadlines. A verified artifact is still subject to the final completion
 transaction's authority, cancellation, and required-output checks.
 
@@ -111,5 +117,4 @@ adding a second crypto provider. The lockfile records the HTTP/platform trust
 dependencies. See the [client builder API](https://docs.rs/reqwest/0.13.5/reqwest/struct.ClientBuilder.html)
 and [streaming body API](https://docs.rs/reqwest/0.13.5/reqwest/struct.Body.html).
 
-Multipart, authority-aware live finalization, and the agent's acquisition/execution/
-publication loop remain part of the v0.1 work.
+Automatic multipart delivery and larger objects remain part of the v0.1 work.

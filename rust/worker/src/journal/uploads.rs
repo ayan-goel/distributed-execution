@@ -7,11 +7,13 @@ use crate::{
     execution::ExecutionSpec,
 };
 use dispatch_protocol::v1::{
-    ArtifactKind, AttemptState, CreateUploadRequest, CreateUploadResponse, FinalizeUploadRequest,
-    FinalizeUploadResponse, ObjectVersion,
+    ArtifactKind, AttemptState, CompletedPart, CreateUploadRequest, CreateUploadResponse,
+    FinalizeUploadRequest, FinalizeUploadResponse, ObjectVersion,
 };
 use prost::Message;
 use std::{collections::HashSet, fmt};
+
+mod multipart;
 
 #[derive(Clone, PartialEq, Message)]
 #[prost(skip_debug)]
@@ -26,6 +28,8 @@ pub struct OutputUpload {
     finalization: Option<FinalizeUploadRequest>,
     #[prost(message, optional, tag = "5")]
     response: Option<FinalizeUploadResponse>,
+    #[prost(message, repeated, tag = "6")]
+    parts: Vec<CompletedPart>,
 }
 impl fmt::Debug for OutputUpload {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -48,6 +52,9 @@ impl OutputUpload {
     pub fn response(&self) -> Option<&FinalizeUploadResponse> {
         self.response.as_ref()
     }
+    pub fn parts(&self) -> &[CompletedPart] {
+        &self.parts
+    }
 }
 
 impl Journal {
@@ -58,9 +65,30 @@ impl Journal {
         size: u64,
         sha256: &str,
     ) -> Result<CreateUploadRequest, JournalError> {
+        self.prepare_output_plan(id, name, size, sha256, 0)
+    }
+
+    pub fn prepare_output_plan(
+        &mut self,
+        id: &str,
+        name: &str,
+        size: u64,
+        sha256: &str,
+        part_size: u64,
+    ) -> Result<CreateUploadRequest, JournalError> {
+        let count = if part_size == 0 {
+            1
+        } else {
+            1 + size.saturating_sub(1) / part_size
+        };
+        let count = u32::try_from(count).map_err(|_| JournalError::Invalid)?;
         let mut record = self.required(id)?;
         if let Some(saved) = record.outputs.iter().find(|u| u.declaration.name == name) {
-            return if saved.declaration.size_bytes == size && saved.declaration.sha256 == sha256 {
+            return if saved.declaration.size_bytes == size
+                && saved.declaration.sha256 == sha256
+                && saved.declaration.part_size_bytes == part_size
+                && saved.declaration.part_count == count
+            {
                 Ok(saved.declaration.clone())
             } else {
                 Err(JournalError::Conflict)
@@ -78,8 +106,8 @@ impl Journal {
             kind: ArtifactKind::Output as i32,
             size_bytes: size,
             sha256: sha256.into(),
-            part_count: 1,
-            part_size_bytes: 0,
+            part_count: count,
+            part_size_bytes: part_size,
         };
         record.outputs.push(OutputUpload {
             declaration: request.clone(),
@@ -87,6 +115,7 @@ impl Journal {
             object_key: String::new(),
             finalization: None,
             response: None,
+            parts: Vec::new(),
         });
         self.save(id, &record)?;
         Ok(request)
@@ -212,6 +241,7 @@ impl Record {
         for output in &self.outputs {
             let r = &output.declaration;
             validate_create(r).map_err(|_| JournalError::Invalid)?;
+            output.validate_parts()?;
             let declared = execution
                 .job()
                 .spec
@@ -229,6 +259,7 @@ impl Record {
             }
             if output.upload_id.is_empty() {
                 if !output.object_key.is_empty()
+                    || !output.parts.is_empty()
                     || output.finalization.is_some()
                     || output.response.is_some()
                 {
@@ -257,6 +288,10 @@ impl Record {
                 || object.size_bytes != r.size_bytes
                 || object.sha256 != r.sha256
                 || !requests.insert(&finalize.request_id)
+                || (r.part_count == 1 && !finalize.parts.is_empty())
+                || (r.part_count > 1
+                    && (finalize.parts != output.parts
+                        || finalize.parts.len() != r.part_count as usize))
             {
                 return Err(JournalError::Invalid);
             }

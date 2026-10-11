@@ -5,7 +5,7 @@ The storage lifecycle is implemented and verified against the local versioned
 backend. Part plans, initialization identities, and completion intent/version
 are durable. The authenticated worker API coordinates multipart initialization,
 individual part grants, completion recovery, and verified publication. Paired
-Rust client contracts are implemented; automatic journaled delivery, larger
+Rust client contracts and durable part evidence are implemented; automatic delivery, larger
 object limits, and the submitted-job demonstration remain required. Public
 uploads retain the 64 MiB cap; R02 is not complete.
 
@@ -143,6 +143,27 @@ Single-part requests retain their existing version-bearing contract.
 Rust's control client validates these requests and responses, including plan
 consistency, consecutive parts, checksums, capability bounds, and returned exact
 versions. The current worker transfer loop still requests single-part uploads.
+
+## Rust journal
+
+`prepare_output_plan` persists immutable part sizing with the declaration.
+`prepare_output_part` saves a part checksum before any grant or PUT, and
+`record_output_part` records its ETag once after a successful transfer. Part
+evidence is sorted by number, so independent acknowledgements can arrive out of
+order. Changed checksums, ETags, plans, or authority conflict. Empty ETags identify
+prepared parts whose PUT outcome still needs resolving with the same bytes.
+
+`prepare_multipart_finalization` requires every part's checksum and ETag, then
+seals one ordered versionless request for the coordinator's exact-version
+completion path. Reopening retains the same request ID and payload. The verified
+reply subsequently saves the returned exact version and artifact ID. Preparing
+or acknowledging new parts after finalization or attempt completion is sealed
+fails; equal historical retries remain readable.
+
+Only stable evidence is journaled; signed capabilities are never persisted.
+Existing single-part journal records remain readable with an empty part list.
+The execution loop still uses single-part transfers until multipart HTTP delivery
+and plan selection are connected.
 
 ## Remaining R02 implementation
 

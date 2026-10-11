@@ -190,7 +190,7 @@ fn valid_completion_parts(r: &FinalizeUploadRequest) -> bool {
     r.parts.is_empty()
         || ((2..=10000).contains(&r.parts.len())
             && r.parts.iter().enumerate().all(|(i, p)| {
-                p.number == i as u32 + 1 && valid_version(&p.etag) && lower_hash(&p.sha256)
+                p.number == i as u32 + 1 && valid_etag(&p.etag) && lower_hash(&p.sha256)
             }))
 }
 
@@ -210,7 +210,7 @@ fn bounded_capability(
             <= 64 << 10
 }
 
-fn validate_part_request(r: &GrantUploadPartRequest) -> Result<(), ClientError> {
+pub(crate) fn validate_part_request(r: &GrantUploadPartRequest) -> Result<(), ClientError> {
     if !r.authority.as_ref().is_some_and(valid_authority)
         || !canonical_uuid(&r.upload_id)
         || !(1..=10000).contains(&r.number)
@@ -228,10 +228,11 @@ fn validate_part_grant(r: &GrantUploadPartRequest, g: &UploadPart) -> Result<(),
     Ok(())
 }
 pub(crate) fn valid_version(version: &str) -> bool {
-    !version.is_empty()
-        && version != "null"
-        && version.len() <= 1024
-        && version.bytes().all(|b| (33..=126).contains(&b))
+    version != "null" && valid_etag(version)
+}
+
+pub(crate) fn valid_etag(value: &str) -> bool {
+    !value.is_empty() && value.len() <= 1024 && value.bytes().all(|b| (33..=126).contains(&b))
 }
 
 #[cfg(test)]

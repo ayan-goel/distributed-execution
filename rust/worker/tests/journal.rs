@@ -28,6 +28,8 @@ const ATTEMPT: &str = "00000000-0000-0000-0000-000000000004";
 
 #[path = "journal/log_cases.rs"]
 mod log_cases;
+#[path = "journal/multipart_cases.rs"]
+mod multipart_cases;
 #[path = "journal/upload_cases.rs"]
 mod upload_cases;
 

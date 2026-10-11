@@ -4090,3 +4090,24 @@ This recorded gap is resolved by D17l/D17m below; the live sweep gate remains op
   automatic journaled Rust transfers, configurable thresholds, larger size policy,
   cleanup, and a submitted-job fault demonstration. Public uploads remain capped
   at 64 MiB.
+
+### R02g: Durable Rust multipart part and completion evidence
+
+- Added immutable journaled part sizing, checksum preparation before a grant,
+  set-once ETags after PUT, and one sealed ordered multipart finalization request.
+  Reopen validation checks scope, ordering, declared bounds, and exact part-list
+  equality. URLs and signed headers are never persisted. Existing single-part
+  records retain their original behavior and encoding when part evidence is empty.
+- The async journal serializes independent acknowledgements without losing a
+  part. Completion/finalization sealing blocks new evidence while equal retries
+  remain readable. ETags are opaque printable evidence; the separate version
+  validator continues to reject null object versions.
+- Five new journal cases passed: partial/reopened evidence and exact finalization
+  replay, changed/incomplete evidence rejection, concurrent acknowledgements,
+  completion sealing, and corruption rejection even with a recomputed frame hash.
+  The full journal suite passed 33 tests with one existing ignored test in 1.43
+  seconds. Read-only review found no blockers; `make test lint smoke` passed.
+  Evidence: `.local/verification/multipart-journal-{red,green,regression,gate}.log`.
+- Updated README, multipart/worker transfer guides, and release checklist.
+  Automatic HTTP part delivery, threshold selection, larger size policy, cleanup,
+  and submitted-job fault demonstration remain required for R02 and v0.1.
